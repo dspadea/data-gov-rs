@@ -38,7 +38,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 **Environment (please complete the following information):**
 - OS: [e.g. Ubuntu 22.04, macOS 13.0, Windows 11]
 - Rust version: [e.g. 1.70.0] (run `rustc --version`)
-- Library version: [e.g. 3.0.0]
+- Library version: [e.g. 0.1.0]
 - CKAN instance: [e.g. data.gov, demo.ckan.org, other]
 
 **Error output**

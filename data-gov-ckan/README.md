@@ -23,7 +23,7 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-data-gov-ckan = "3.0.0"
+data-gov-ckan = "0.1.0"
 tokio = { version = "1.0", features = ["full"] }
 ```
 
@@ -263,7 +263,8 @@ This project is licensed under the AGPL v3.0 License - see the [LICENSE](../LICE
 
 ## Changelog
 
-### v3.0.0
+### v0.1.0
+- Initial release with comprehensive CKAN API support
 - Major refactoring for idiomatic Rust code
 - Moved configuration types to client module
 - Simplified import paths

@@ -303,7 +303,7 @@ dependencies = [
 
 [[package]]
 name = "data-gov-ckan"
-version = "3.0.0"
+version = "0.1.0"
 dependencies = [
  "async-trait",
  "futures",

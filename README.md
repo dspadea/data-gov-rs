@@ -74,7 +74,7 @@ Add the CKAN client to your project:
 
 ```toml
 [dependencies]
-data-gov-ckan = "3.0.0"
+data-gov-ckan = "0.1.0"
 tokio = { version = "1.0", features = ["full"] }
 ```
 
