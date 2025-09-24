@@ -15,12 +15,28 @@ A comprehensive Rust client library and interactive REPL for exploring and downl
 
 ## Installation
 
+### As a Library
+
 Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
 data-gov = { path = "../data-gov" }  # Will be published to crates.io
 ```
+
+### As a CLI Tool
+
+Install the `data-gov` command-line tool:
+
+```bash
+# From source (in this repository)
+cargo install --path .
+
+# Once published to crates.io
+cargo install data-gov
+```
+
+After installation, the `data-gov` command will be available in your PATH.
 
 ## Quick Start
 
@@ -61,19 +77,56 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 Run the interactive REPL for exploring data.gov:
 
 ```bash
-# Basic usage
-cargo run --bin data-gov-repl
+# Basic usage (interactive mode, downloads to ~/Downloads/<dataset-name>/)
+data-gov
 
-# With custom download directory
-cargo run --bin data-gov-repl -- --download-dir ./my-downloads
+# With custom base directory (files go to ./my-downloads/<dataset-name>/)
+data-gov --download-dir ./my-downloads
 
 # With API key for higher rate limits
-cargo run --bin data-gov-repl -- --api-key YOUR_API_KEY
+data-gov --api-key YOUR_API_KEY
 ```
 
-## REPL Commands
+### CLI Mode
 
-The interactive REPL provides these commands:
+Execute commands directly without entering interactive mode:
+
+```bash
+# Search for datasets
+data-gov search "climate change" 10
+
+# Show dataset details
+data-gov show consumer-complaint-database
+
+# Download specific resource
+data-gov download consumer-complaint-database 0
+
+# Download all resources from a dataset
+data-gov download my-dataset
+
+# List government organizations
+data-gov list organizations
+
+# Show client information
+data-gov info
+
+# Get help
+data-gov --help
+```
+
+### Download Directory Behavior
+
+The tool automatically organizes downloads by dataset:
+
+- **Interactive REPL mode**: Downloads go to `~/Downloads/<dataset-name>/` by default
+- **CLI mode**: Downloads go to `./<dataset-name>/` (current directory) by default
+- **Custom directory**: When using `--download-dir`, files go to `<custom-dir>/<dataset-name>/`
+
+This ensures that files from different datasets are kept organized and don't overwrite each other.
+
+## Commands
+
+Both interactive REPL and CLI modes support these commands:
 
 | Command | Description | Example |
 |---------|-------------|---------|
@@ -86,9 +139,10 @@ The interactive REPL provides these commands:
 | `help` | Show help message | `help` |
 | `quit` | Exit the REPL | `quit` |
 
-### REPL Examples
+### Interactive REPL Examples
 
-```
+```bash
+$ data-gov
 🇺🇸 Data.gov Interactive Explorer
 Type 'help' for available commands, 'quit' to exit
 
@@ -138,6 +192,100 @@ Government organizations:
  5. department-of-education
 ```
 
+## Scripting with Shebang
+
+The interactive REPL can be used in shebang scripts to create automated data.gov workflows. The tool automatically ignores comment lines (starting with `#`) and processes commands from stdin.
+
+### Creating a Script
+
+Create an executable script with a shebang line:
+
+```bash
+#!/usr/bin/env data-gov
+# Automated climate data download
+# This script searches for and downloads EPA climate data
+
+# Search for climate datasets
+search climate EPA 3
+
+# Show details of a specific dataset
+show supply-chain-greenhouse-gas-emission-factors-v1-3-by-naics-6
+
+# Download the first resource
+download supply-chain-greenhouse-gas-emission-factors-v1-3-by-naics-6 0
+
+# Show final info
+info
+quit
+```
+
+### Running Scripts
+
+Make the script executable and run it:
+
+```bash
+chmod +x climate-download.sh
+./climate-download.sh
+```
+
+### Script Features
+
+- **Comments**: Lines starting with `#` are ignored (including shebang)
+- **Automation**: No interactive prompts - runs commands sequentially
+- **REPL Mode**: Uses interactive mode defaults (downloads to `~/Downloads/<dataset>/`)
+- **Error Handling**: Continues execution even if individual commands fail
+- **Clean Output**: Same colorized output as interactive mode
+
+### Example Scripts
+
+See the [`examples/`](./examples/) directory for sample scripts:
+- `climate-search.sh` - Search and explore climate datasets
+- `download-epa-climate.sh` - Download EPA climate data
+- `list-orgs.sh` - List all government organizations
+- `auto-download.sh` - Automated dataset download
+
+### CLI Examples
+
+```bash
+# Search for climate datasets (limit to 5 results)
+$ data-gov search "climate change" 5
+Searching for 'climate change 5'...
+
+Found 15432 results:
+
+ 1. climate-data-online Climate Data Online
+   Climate Data Online provides access to data from weather stations, 
+   climate monitoring networks...
+
+ 2. global-climate-change-impacts Global Climate Change Impacts
+   The U.S. Global Change Research Program coordinates federal research...
+
+# Show detailed information about a specific dataset
+$ data-gov show climate-data-online
+Fetching dataset 'climate-data-online'...
+
+📦 Dataset Details
+Name: climate-data-online
+Title: Climate Data Online
+
+# Quick organization listing
+$ data-gov list organizations | head -10
+Fetching organizations...
+
+Government organizations:
+ 1. agency-for-international-development
+ 2. department-of-agriculture
+ 3. department-of-commerce
+
+# Download a dataset (creates ./consumer-complaint-database/ directory)
+$ data-gov download consumer-complaint-database
+Fetching dataset 'consumer-complaint-database'...
+Downloading 2 resources...
+  ✓ Resource 0: ./consumer-complaint-database/complaints.csv
+  ✓ Resource 1: ./consumer-complaint-database/data-dictionary.xlsx
+Summary: 2 downloaded, 0 errors
+```
+
 ## Configuration
 
 ### Basic Configuration
@@ -157,7 +305,7 @@ let client = DataGovClient::with_config(config)?;
 
 ### Available Configuration Options
 
-- **Download Directory**: Where to save downloaded files
+- **Base Download Directory**: Base directory for downloads (defaults to system Downloads directory in REPL mode, current directory in CLI mode)
 - **API Key**: For higher rate limits (optional)
 - **User Agent**: Custom user agent string
 - **Max Concurrent Downloads**: Number of simultaneous downloads
@@ -248,3 +396,4 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 - Built for the U.S. government's [data.gov](https://data.gov) platform
 - Uses the CKAN API for data access
 - Inspired by the need for better programmatic access to government data
+- CLI design inspired by modern tools like `kubectl`, `gh`, and `aws`

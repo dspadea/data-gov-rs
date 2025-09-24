@@ -2,13 +2,24 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use data_gov_ckan::{Configuration as CkanConfiguration, ApiKey};
 
+/// Operating mode for the client
+#[derive(Debug, Clone, PartialEq)]
+pub enum OperatingMode {
+    /// Interactive REPL mode - downloads to system Downloads directory
+    Interactive,
+    /// Command-line mode - downloads to current directory
+    CommandLine,
+}
+
 /// Configuration for the Data.gov client
 #[derive(Debug, Clone)]
 pub struct DataGovConfig {
     /// CKAN client configuration
     pub ckan_config: Arc<CkanConfiguration>,
-    /// Default download directory for files
-    pub download_dir: PathBuf,
+    /// Operating mode (affects base download directory)
+    pub mode: OperatingMode,
+    /// Base download directory for files (before dataset subdirectory)
+    pub base_download_dir: PathBuf,
     /// User agent for HTTP requests
     pub user_agent: String,
     /// Maximum concurrent downloads
@@ -23,7 +34,8 @@ impl Default for DataGovConfig {
     fn default() -> Self {
         Self {
             ckan_config: Arc::new(CkanConfiguration::default()),
-            download_dir: std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
+            mode: OperatingMode::Interactive, // Default to interactive mode
+            base_download_dir: Self::get_default_download_dir(),
             user_agent: "data-gov-rs/1.0".to_string(),
             max_concurrent_downloads: 3,
             download_timeout_secs: 300, // 5 minutes
@@ -33,15 +45,52 @@ impl Default for DataGovConfig {
 }
 
 impl DataGovConfig {
+    /// Get the default download directory (system Downloads folder)
+    fn get_default_download_dir() -> PathBuf {
+        // Try to get the user's Downloads directory
+        if let Some(download_dir) = dirs::download_dir() {
+            download_dir
+        } else {
+            // Fallback to home directory + Downloads
+            let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
+            home.join("Downloads")
+        }
+    }
+    
     /// Create a new configuration for data.gov
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Create configuration with custom download directory
+    /// Create configuration with custom base download directory
     pub fn with_download_dir<P: Into<PathBuf>>(mut self, dir: P) -> Self {
-        self.download_dir = dir.into();
+        self.base_download_dir = dir.into();
         self
+    }
+
+    /// Set the operating mode
+    pub fn with_mode(mut self, mode: OperatingMode) -> Self {
+        self.mode = mode;
+        self
+    }
+
+    /// Get the base download directory based on operating mode
+    pub fn get_base_download_dir(&self) -> PathBuf {
+        match self.mode {
+            OperatingMode::Interactive => {
+                // Use the configured base directory (usually system Downloads)
+                self.base_download_dir.clone()
+            }
+            OperatingMode::CommandLine => {
+                // Use current working directory for CLI mode
+                std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
+            }
+        }
+    }
+
+    /// Get the full download directory for a specific dataset
+    pub fn get_dataset_download_dir(&self, dataset_name: &str) -> PathBuf {
+        self.get_base_download_dir().join(dataset_name)
     }
 
     /// Add API key for higher rate limits

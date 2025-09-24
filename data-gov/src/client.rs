@@ -175,11 +175,35 @@ impl DataGovClient {
     
     // === File Downloads ===
     
+    /// Download a resource from a dataset to its dataset-specific directory
+    /// 
+    /// # Arguments
+    /// * `resource` - The resource to download
+    /// * `dataset_name` - Name of the dataset (used for subdirectory)
+    /// 
+    /// Returns the path where the file was saved
+    pub async fn download_dataset_resource(
+        &self,
+        resource: &Resource,
+        dataset_name: &str,
+    ) -> Result<PathBuf> {
+        let dataset_dir = self.config.get_dataset_download_dir(dataset_name);
+        let filename = Self::get_resource_filename(resource, None);
+        let output_path = dataset_dir.join(filename);
+        
+        let url = resource.url
+            .as_ref()
+            .ok_or_else(|| DataGovError::resource_not_found("Resource has no URL"))?;
+        
+        self.download_file(url, &output_path, resource.name.as_deref()).await?;
+        Ok(output_path)
+    }
+    
     /// Download a resource to a file
     /// 
     /// # Arguments
     /// * `resource` - The resource to download
-    /// * `output_path` - Where to save the file (if None, uses default download directory)
+    /// * `output_path` - Where to save the file (if None, uses base download directory)
     /// 
     /// Returns the path where the file was saved
     pub async fn download_resource(
@@ -195,7 +219,7 @@ impl DataGovClient {
             Some(path) => path,
             None => {
                 let filename = Self::get_resource_filename(resource, None);
-                self.config.download_dir.join(filename)
+                self.config.get_base_download_dir().join(filename)
             }
         };
         
@@ -211,7 +235,7 @@ impl DataGovClient {
         resources: &[Resource],
         output_dir: Option<&Path>,
     ) -> Vec<Result<PathBuf>> {
-        let output_dir = output_dir.unwrap_or(&self.config.download_dir).to_path_buf();
+        let output_dir = output_dir.map(|p| p.to_path_buf()).unwrap_or_else(|| self.config.get_base_download_dir());
         let semaphore = Arc::new(tokio::sync::Semaphore::new(self.config.max_concurrent_downloads));
         
         // Create futures for all downloads
@@ -238,6 +262,46 @@ impl DataGovClient {
                 };
                 
                 temp_client.download_resource(&resource, Some(output_path)).await
+            };
+            
+            futures.push(future);
+        }
+        
+        // Execute all downloads concurrently
+        futures::future::join_all(futures).await
+    }
+    
+    /// Download multiple resources from a dataset to its dataset-specific directory
+    /// 
+    /// Returns a vector of results, each containing either the download path or an error
+    pub async fn download_dataset_resources(
+        &self,
+        resources: &[Resource],
+        dataset_name: &str,
+    ) -> Vec<Result<PathBuf>> {
+        let semaphore = Arc::new(tokio::sync::Semaphore::new(self.config.max_concurrent_downloads));
+        
+        // Create futures for all downloads
+        let mut futures = Vec::new();
+        
+        for resource in resources {
+            let resource = resource.clone();
+            let dataset_name = dataset_name.to_string();
+            let semaphore = semaphore.clone();
+            let http_client = self.http_client.clone();
+            let config = self.config.clone();
+            
+            let future = async move {
+                let _permit = semaphore.acquire().await.unwrap();
+                
+                // Create a temporary client for this download
+                let temp_client = DataGovClient {
+                    ckan: CkanClient::new(config.ckan_config.clone()),
+                    config,
+                    http_client,
+                };
+                
+                temp_client.download_dataset_resource(&resource, &dataset_name).await
             };
             
             futures.push(future);
@@ -305,29 +369,31 @@ impl DataGovClient {
     
     // === Utility Methods ===
     
-    /// Check if the download directory exists and is writable
+    /// Check if the base download directory exists and is writable
     pub async fn validate_download_dir(&self) -> Result<()> {
-        if !self.config.download_dir.exists() {
-            tokio::fs::create_dir_all(&self.config.download_dir).await?;
+        let base_dir = self.config.get_base_download_dir();
+        
+        if !base_dir.exists() {
+            tokio::fs::create_dir_all(&base_dir).await?;
         }
         
-        if !self.config.download_dir.is_dir() {
+        if !base_dir.is_dir() {
             return Err(DataGovError::config_error(
-                format!("Download path is not a directory: {:?}", self.config.download_dir)
+                format!("Download path is not a directory: {:?}", base_dir)
             ));
         }
         
         // Test write permissions by creating a temporary file
-        let test_file = self.config.download_dir.join(".write_test");
+        let test_file = base_dir.join(".write_test");
         tokio::fs::write(&test_file, b"test").await?;
         tokio::fs::remove_file(&test_file).await?;
         
         Ok(())
     }
     
-    /// Get the current download directory
-    pub fn download_dir(&self) -> &Path {
-        &self.config.download_dir
+    /// Get the current base download directory
+    pub fn download_dir(&self) -> PathBuf {
+        self.config.get_base_download_dir()
     }
     
     /// Get the underlying CKAN client for advanced operations

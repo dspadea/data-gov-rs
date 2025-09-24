@@ -9,12 +9,37 @@ A collection of Rust crates for working with US government open data, with a foc
 This workspace provides Rust libraries for accessing government open data programmatically. The primary focus is on data.gov, the US government's open data portal, which runs on CKAN (Comprehensive Knowledge Archive Network).
 
 **Current crates:**
-- [`data-gov-ckan`](./data-gov-ckan/) - CKAN API client for data.gov and other CKAN instances
-
-**Planned crates:**
-- `data-gov` - Higher-level utilities and cross-agency data tools
+- [`data-gov-ckan`](./data-gov-ckan/) - Low-level CKAN API client for data.gov and other CKAN instances  
+- [`data-gov`](./data-gov/) - High-level client library and CLI tool for exploring and downloading data
 
 ## Getting Started
+
+### Command Line Tool
+
+Install and use the `data-gov` CLI:
+
+```bash
+# Install from source
+cd data-gov && cargo install --path .
+
+# Search for datasets
+data-gov search "climate change" 10
+
+# Get dataset details
+data-gov show consumer-complaint-database
+
+# Download resources
+data-gov download consumer-complaint-database 0
+
+# Interactive mode
+data-gov
+
+# Use in scripts with shebang
+echo '#!/usr/bin/env data-gov\nsearch climate 5\nquit' > script.sh
+chmod +x script.sh && ./script.sh
+```
+
+### Library Usage
 
 Add the CKAN client to your project:
 
@@ -98,6 +123,34 @@ A comprehensive, type-safe CKAN API client optimized for data.gov.
 
 [**→ Full documentation**](./data-gov-ckan/README.md)
 
+### data-gov
+
+A high-level client library and command-line tool built on top of `data-gov-ckan`.
+
+**Key features:**
+- Interactive REPL for exploring data.gov
+- CLI commands for scripting and automation  
+- File download with progress tracking and concurrent downloads
+- Higher-level search and discovery APIs
+- Configuration management for download directories and API keys
+
+**CLI Usage:**
+```bash
+data-gov search "energy efficiency" 5
+data-gov show electric-vehicle-population-data
+data-gov download my-dataset 0
+```
+
+**Library Usage:**
+```rust
+use data_gov::DataGovClient;
+
+let client = DataGovClient::new()?;
+let results = client.search("climate", Some(10), None, None, None).await?;
+```
+
+[**→ Full documentation**](./data-gov/README.md)
+
 ## Development
 
 This is a Cargo workspace. To work with it:
@@ -126,7 +179,7 @@ data-gov-rs/
 │   ├── tests/               # Tests
 │   ├── examples/            # Usage examples
 │   └── README.md            # Detailed CKAN client docs
-├── data-gov/                # Future: higher-level utilities  
+├── data-gov/                # High-level client and CLI tool  
 ├── Cargo.toml               # Workspace configuration
 └── README.md                # This file
 ```
@@ -143,7 +196,7 @@ Contributions are welcome! Please:
 
 ## License
 
-This project is licensed under the AGPL v3.0 License - see the [LICENSE](LICENSE) file for details.
+This project is licensed under the Apache 2.0 License - see the [LICENSE](LICENSE) file for details.
 
 ## Resources
 

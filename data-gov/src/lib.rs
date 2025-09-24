@@ -10,7 +10,7 @@ pub mod client;
 
 // Re-export main types for convenience
 pub use client::DataGovClient;
-pub use config::DataGovConfig;
+pub use config::{DataGovConfig, OperatingMode};
 pub use error::{DataGovError, Result};
 
 // pub trait CKANResponse: serde::de::DeserializeOwned {}

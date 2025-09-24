@@ -58,14 +58,14 @@ async fn main() -> Result<(), Box<dyn Error>> {
     println!();
     
     println!("✅ Demo completed! Try the interactive REPL with:");
-    println!("   cargo run --bin data-gov-repl");
+    println!("   data-gov");
     println!();
-    println!("Example REPL commands:");
-    println!("  search climate data");
-    println!("  show consumer-complaint-database");
-    println!("  download consumer-complaint-database 0");
-    println!("  list organizations");
-    println!("  help");
+    println!("Example CLI commands:");
+    println!("  data-gov search \"climate data\"");
+    println!("  data-gov show consumer-complaint-database");
+    println!("  data-gov download consumer-complaint-database 0");
+    println!("  data-gov list organizations");
+    println!("  data-gov --help");
     
     Ok(())
 }
