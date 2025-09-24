@@ -2,6 +2,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use futures::StreamExt;
 use indicatif::{ProgressBar, ProgressStyle};
+use is_terminal::IsTerminal;
 use tokio::fs::File;
 use tokio::io::AsyncWriteExt;
 use url::Url;
@@ -331,8 +332,8 @@ impl DataGovClient {
         let total_size = response.content_length();
         let display_name = display_name.unwrap_or("file");
         
-        // Setup progress bar if enabled
-        let progress_bar = if self.config.show_progress {
+        // Setup progress bar if enabled and stdout is a TTY
+        let progress_bar = if self.config.show_progress && std::io::stdout().is_terminal() {
             let pb = ProgressBar::new(total_size.unwrap_or(0));
             pb.set_style(
                 ProgressStyle::default_bar()
@@ -343,6 +344,10 @@ impl DataGovClient {
             pb.set_message(format!("Downloading {}", display_name));
             Some(pb)
         } else {
+            // For non-TTY environments, we might want to show simple text progress
+            if self.config.show_progress {
+                println!("Downloading {} ...", display_name);
+            }
             None
         };
         

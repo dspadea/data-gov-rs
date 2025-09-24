@@ -7,11 +7,13 @@ pub use data_gov_ckan as ckan;
 pub mod config;
 pub mod error;
 pub mod client;
+pub mod colors;
 
 // Re-export main types for convenience
 pub use client::DataGovClient;
 pub use config::{DataGovConfig, OperatingMode};
 pub use error::{DataGovError, Result};
+pub use colors::{ColorHelper, ColorMode};
 
 // pub trait CKANResponse: serde::de::DeserializeOwned {}
 

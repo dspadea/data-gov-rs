@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 use data_gov_ckan::{Configuration as CkanConfiguration, ApiKey};
+use crate::colors::ColorMode;
 
 /// Operating mode for the client
 #[derive(Debug, Clone, PartialEq)]
@@ -28,6 +29,8 @@ pub struct DataGovConfig {
     pub download_timeout_secs: u64,
     /// Enable progress bars for downloads
     pub show_progress: bool,
+    /// Color mode for output
+    pub color_mode: ColorMode,
 }
 
 impl Default for DataGovConfig {
@@ -40,6 +43,7 @@ impl Default for DataGovConfig {
             max_concurrent_downloads: 3,
             download_timeout_secs: 300, // 5 minutes
             show_progress: true,
+            color_mode: ColorMode::default(),
         }
     }
 }
@@ -128,6 +132,12 @@ impl DataGovConfig {
     /// Enable or disable progress bars
     pub fn with_progress(mut self, show_progress: bool) -> Self {
         self.show_progress = show_progress;
+        self
+    }
+
+    /// Set color mode
+    pub fn with_color_mode(mut self, color_mode: ColorMode) -> Self {
+        self.color_mode = color_mode;
         self
     }
 }
