@@ -213,6 +213,12 @@ data-gov-rs/
 └── README.md                # This file
 ```
 
+## Disclaimer
+
+**Independent Project**: This is a personal hobby project and I am not affiliated with, employed by, or paid by data.gov, the US government, or any government agency in any way. While I'd certainly appreciate it if they wanted to throw some of my tax dollars back my way, this project is developed independently with best-effort support.
+
+This project is provided as-is for educational and research purposes. For official government data access, please refer to the official [data.gov](https://www.data.gov/) website and APIs.
+
 ## Contributing
 
 Contributions are welcome! Please:
