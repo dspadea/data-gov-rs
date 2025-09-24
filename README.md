@@ -39,6 +39,35 @@ echo '#!/usr/bin/env data-gov\nsearch climate 5\nquit' > script.sh
 chmod +x script.sh && ./script.sh
 ```
 
+#### TTY-Aware Behavior
+
+The CLI automatically adapts to different environments:
+
+**Colors:**
+- **Interactive terminals**: Full color output for better readability
+- **Piped/redirected output**: Plain text without ANSI codes
+- **Control options**: `--color=auto|always|never`
+- **NO_COLOR**: Respects the `NO_COLOR` environment variable
+
+**Progress Indicators:**
+- **Interactive terminals**: Animated progress bars with download speed and ETA
+- **Non-interactive**: Simple text progress messages
+- **Control options**: `NO_PROGRESS=1` to disable all progress indication
+- **Force simple**: `FORCE_SIMPLE_PROGRESS=1` for basic text even in terminals
+
+```bash
+# Examples:
+data-gov search "climate" 10                    # Colors in terminal
+data-gov search "climate" 10 > results.txt      # No colors in file
+NO_COLOR=1 data-gov search "climate" 10         # Force no colors
+data-gov --color=always search "climate" 10     # Force colors
+
+# Progress bars during downloads:
+data-gov download dataset-id                    # Fancy progress in terminal  
+data-gov download dataset-id > log.txt          # Simple text progress
+NO_PROGRESS=1 data-gov download dataset-id      # No progress indication
+```
+
 ### Library Usage
 
 Add the CKAN client to your project:

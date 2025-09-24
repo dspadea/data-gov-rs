@@ -59,14 +59,25 @@ impl DataGovClient {
     /// # Examples
     /// 
     /// Basic search:
-    /// ```rust
+    /// ```rust,no_run
+    /// # use data_gov::DataGovClient;
+    /// # #[tokio::main]
+    /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// let client = DataGovClient::new()?;
     /// let results = client.search("climate data", Some(20), None, None, None).await?;
+    /// # Ok(())
+    /// # }
     /// ```
     /// 
     /// Search with filters:
-    /// ```rust
+    /// ```rust,no_run
+    /// # use data_gov::DataGovClient;
+    /// # #[tokio::main]
+    /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// # let client = DataGovClient::new()?;
     /// let results = client.search("energy", Some(10), None, Some("doe-gov"), Some("CSV")).await?;
+    /// # Ok(())
+    /// # }
     /// ```
     pub async fn search(
         &self,
@@ -332,23 +343,46 @@ impl DataGovClient {
         let total_size = response.content_length();
         let display_name = display_name.unwrap_or("file");
         
-        // Setup progress bar if enabled and stdout is a TTY
-        let progress_bar = if self.config.show_progress && std::io::stdout().is_terminal() {
-            let pb = ProgressBar::new(total_size.unwrap_or(0));
-            pb.set_style(
-                ProgressStyle::default_bar()
-                    .template("{msg} [{bar:40.cyan/blue}] {bytes}/{total_bytes} ({bytes_per_sec}, {eta})")
-                    .unwrap_or_else(|_| ProgressStyle::default_bar())
-                    .progress_chars("#>-")
-            );
-            pb.set_message(format!("Downloading {}", display_name));
-            Some(pb)
-        } else {
-            // For non-TTY environments, we might want to show simple text progress
-            if self.config.show_progress {
-                println!("Downloading {} ...", display_name);
+        // Setup progress indication based on TTY and environment
+        let should_show_progress = self.config.show_progress && 
+            std::env::var("NO_PROGRESS").is_err(); // Respect NO_PROGRESS env var
+        
+        let (progress_bar, show_simple_progress) = if should_show_progress {
+            if std::io::stdout().is_terminal() && std::env::var("FORCE_SIMPLE_PROGRESS").is_err() {
+                // TTY: Show fancy progress bar (unless forced simple)
+                let pb = ProgressBar::new(total_size.unwrap_or(0));
+                
+                // More robust template with fallback
+                let template = if total_size.is_some() {
+                    "{msg} [{bar:40.cyan/blue}] {bytes}/{total_bytes} ({bytes_per_sec}, {eta})"
+                } else {
+                    "{msg} [{bar:40.cyan/blue}] {bytes} ({bytes_per_sec})"
+                };
+                
+                pb.set_style(
+                    ProgressStyle::default_bar()
+                        .template(template)
+                        .unwrap_or_else(|_| {
+                            // Ultimate fallback if template parsing fails
+                            ProgressStyle::default_bar()
+                                .progress_chars("#>-")
+                        })
+                        .progress_chars("█▉▊▋▌▍▎▏ ")
+                );
+                pb.set_message(format!("Downloading {}", display_name));
+                (Some(pb), false)
+            } else {
+                // Non-TTY or forced simple: Show simple text progress
+                if total_size.is_some() {
+                    println!("Downloading {} ({} bytes)...", display_name, total_size.unwrap());
+                } else {
+                    println!("Downloading {} ...", display_name);
+                }
+                (None, true)
             }
-            None
+        } else {
+            // Progress disabled
+            (None, false)
         };
         
         let mut file = File::create(output_path).await?;
@@ -367,6 +401,9 @@ impl DataGovClient {
         
         if let Some(pb) = progress_bar {
             pb.finish_with_message(format!("Downloaded {}", display_name));
+        } else if show_simple_progress {
+            // For non-TTY, show completion message
+            println!("✓ Downloaded {}", display_name);
         }
         
         Ok(())
