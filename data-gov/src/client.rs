@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use futures::StreamExt;
-use indicatif::{ProgressBar, ProgressStyle};
+use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use is_terminal::IsTerminal;
 use tokio::fs::File;
 use tokio::io::AsyncWriteExt;
@@ -239,6 +239,30 @@ impl DataGovClient {
         Ok(output_path)
     }
     
+    /// Download a single resource with multi-progress support for concurrent downloads
+    /// Returns the path where the file was saved
+    async fn download_resource_with_multi_progress(
+        &self,
+        resource: &Resource,
+        output_path: Option<PathBuf>,
+        multi_progress: Option<Arc<MultiProgress>>,
+    ) -> Result<PathBuf> {
+        let url = resource.url
+            .as_ref()
+            .ok_or_else(|| DataGovError::resource_not_found("Resource has no URL"))?;
+        
+        let output_path = match output_path {
+            Some(path) => path,
+            None => {
+                let filename = Self::get_resource_filename(resource, None);
+                self.config.get_base_download_dir().join(filename)
+            }
+        };
+        
+        self.download_file_with_multi_progress(url, &output_path, resource.name.as_deref(), multi_progress).await?;
+        Ok(output_path)
+    }
+    
     /// Download multiple resources concurrently
     /// 
     /// Returns a vector of results, each containing either the download path or an error
@@ -250,6 +274,16 @@ impl DataGovClient {
         let output_dir = output_dir.map(|p| p.to_path_buf()).unwrap_or_else(|| self.config.get_base_download_dir());
         let semaphore = Arc::new(tokio::sync::Semaphore::new(self.config.max_concurrent_downloads));
         
+        // For multiple concurrent downloads, use simple progress to avoid MultiProgress conflicts
+        let should_show_progress = self.config.show_progress && 
+            std::env::var("NO_PROGRESS").is_err();
+        
+        let use_simple_progress = should_show_progress && resources.len() > 1;
+        
+        if use_simple_progress {
+            println!("Downloading {} resources...", resources.len());
+        }
+        
         // Create futures for all downloads
         let mut futures = Vec::new();
         
@@ -259,21 +293,41 @@ impl DataGovClient {
             let semaphore = semaphore.clone();
             let http_client = self.http_client.clone();
             let config = self.config.clone();
+            let use_simple = use_simple_progress;
             
             let future = async move {
                 let _permit = semaphore.acquire().await.unwrap();
                 
-                let filename = Self::get_resource_filename(&resource, None);
-                let output_path = output_dir.join(filename);
-                
-                // Create a temporary client for this download
-                let temp_client = DataGovClient {
-                    ckan: CkanClient::new(config.ckan_config.clone()),
-                    config,
-                    http_client,
+                let url = match &resource.url {
+                    Some(url) => url,
+                    None => return Err(DataGovError::resource_not_found("Resource has no URL")),
                 };
                 
-                temp_client.download_resource(&resource, Some(output_path)).await
+                let filename = DataGovClient::get_resource_filename(&resource, None);
+                let output_path = output_dir.join(filename);
+                
+                if use_simple {
+                    // Simple text progress for concurrent downloads
+                    DataGovClient::download_file_simple(
+                        &http_client,
+                        &config,
+                        url,
+                        &output_path,
+                        resource.name.as_deref(),
+                    ).await?;
+                } else {
+                    // Single progress bar (when only one resource)
+                    DataGovClient::download_file_static(
+                        &http_client,
+                        &config,
+                        url,
+                        &output_path,
+                        resource.name.as_deref(),
+                        None,
+                    ).await?;
+                }
+                
+                Ok(output_path)
             };
             
             futures.push(future);
@@ -293,6 +347,16 @@ impl DataGovClient {
     ) -> Vec<Result<PathBuf>> {
         let semaphore = Arc::new(tokio::sync::Semaphore::new(self.config.max_concurrent_downloads));
         
+        // For multiple concurrent downloads, use simple progress to avoid MultiProgress conflicts
+        let should_show_progress = self.config.show_progress && 
+            std::env::var("NO_PROGRESS").is_err();
+        
+        let use_simple_progress = should_show_progress && resources.len() > 1;
+        
+        if use_simple_progress {
+            println!("Downloading {} resources...", resources.len());
+        }
+        
         // Create futures for all downloads
         let mut futures = Vec::new();
         
@@ -302,18 +366,42 @@ impl DataGovClient {
             let semaphore = semaphore.clone();
             let http_client = self.http_client.clone();
             let config = self.config.clone();
+            let use_simple = use_simple_progress;
             
             let future = async move {
                 let _permit = semaphore.acquire().await.unwrap();
                 
-                // Create a temporary client for this download
-                let temp_client = DataGovClient {
-                    ckan: CkanClient::new(config.ckan_config.clone()),
-                    config,
-                    http_client,
+                let url = match &resource.url {
+                    Some(url) => url,
+                    None => return Err(DataGovError::resource_not_found("Resource has no URL")),
                 };
                 
-                temp_client.download_dataset_resource(&resource, &dataset_name).await
+                let dataset_dir = config.get_base_download_dir().join(dataset_name);
+                let filename = DataGovClient::get_resource_filename(&resource, None);
+                let output_path = dataset_dir.join(filename);
+                
+                if use_simple {
+                    // Simple text progress for concurrent downloads
+                    DataGovClient::download_file_simple(
+                        &http_client,
+                        &config,
+                        url,
+                        &output_path,
+                        resource.name.as_deref(),
+                    ).await?;
+                } else {
+                    // Single progress bar (when only one resource)
+                    DataGovClient::download_file_static(
+                        &http_client,
+                        &config,
+                        url,
+                        &output_path,
+                        resource.name.as_deref(),
+                        None,
+                    ).await?;
+                }
+                
+                Ok(output_path)
             };
             
             futures.push(future);
@@ -403,6 +491,321 @@ impl DataGovClient {
             pb.finish_with_message(format!("Downloaded {}", display_name));
         } else if show_simple_progress {
             // For non-TTY, show completion message
+            println!("✓ Downloaded {}", display_name);
+        }
+        
+        Ok(())
+    }
+    
+    /// Download a file from a URL with multi-progress support for concurrent downloads
+    async fn download_file_with_multi_progress(
+        &self, 
+        url: &str, 
+        output_path: &Path, 
+        display_name: Option<&str>,
+        multi_progress: Option<Arc<MultiProgress>>,
+    ) -> Result<()> {
+        // Create parent directories if they don't exist
+        if let Some(parent) = output_path.parent() {
+            tokio::fs::create_dir_all(parent).await?;
+        }
+        
+        let response = self.http_client.get(url).send().await?;
+        
+        if !response.status().is_success() {
+            return Err(DataGovError::download_error(format!(
+                "HTTP {} while downloading {}", 
+                response.status(),
+                url
+            )));
+        }
+        
+        let total_size = response.content_length();
+        let display_name = display_name.unwrap_or("file");
+        
+        // Setup progress indication based on TTY and environment
+        let should_show_progress = self.config.show_progress && 
+            std::env::var("NO_PROGRESS").is_err();
+        
+        let (progress_bar, show_simple_progress) = if should_show_progress {
+            if let Some(multi) = &multi_progress {
+                // Multi-progress mode: Create a progress bar and add it to multi-progress
+                let pb = if let Some(size) = total_size {
+                    ProgressBar::new(size)
+                } else {
+                    // For unknown size, create a spinner-style progress bar
+                    ProgressBar::new_spinner()
+                };
+                
+                let template = if total_size.is_some() {
+                    "{msg} [{bar:30.cyan/blue}] {bytes}/{total_bytes} ({bytes_per_sec}, {eta})"
+                } else {
+                    "{msg} [{spinner:.cyan/blue}] {bytes} ({bytes_per_sec})"
+                };
+                
+                pb.set_style(
+                    ProgressStyle::default_bar()
+                        .template(template)
+                        .unwrap_or_else(|_| {
+                            // Fallback for unknown size
+                            if total_size.is_some() {
+                                ProgressStyle::default_bar().progress_chars("█▉▊▋▌▍▎▏ ")
+                            } else {
+                                ProgressStyle::default_spinner()
+                            }
+                        })
+                        .progress_chars("█▉▊▋▌▍▎▏ ")
+                );
+                pb.set_message(format!("Downloading {}", display_name));
+                
+                // Add to multi-progress and get the managed progress bar
+                let managed_pb = multi.add(pb);
+                (Some(managed_pb), false)
+            } else if std::io::stdout().is_terminal() && std::env::var("FORCE_SIMPLE_PROGRESS").is_err() {
+                // Single progress mode: Use regular progress bar
+                let pb = if let Some(size) = total_size {
+                    ProgressBar::new(size)
+                } else {
+                    ProgressBar::new_spinner()
+                };
+                
+                let template = if total_size.is_some() {
+                    "{msg} [{bar:40.cyan/blue}] {bytes}/{total_bytes} ({bytes_per_sec}, {eta})"
+                } else {
+                    "{msg} [{spinner:.cyan/blue}] {bytes} ({bytes_per_sec})"
+                };
+                
+                pb.set_style(
+                    ProgressStyle::default_bar()
+                        .template(template)
+                        .unwrap_or_else(|_| {
+                            if total_size.is_some() {
+                                ProgressStyle::default_bar().progress_chars("█▉▊▋▌▍▎▏ ")
+                            } else {
+                                ProgressStyle::default_spinner()
+                            }
+                        })
+                        .progress_chars("█▉▊▋▌▍▎▏ ")
+                );
+                pb.set_message(format!("Downloading {}", display_name));
+                (Some(pb), false)
+            } else {
+                // Non-TTY or forced simple: Show simple text progress
+                if total_size.is_some() {
+                    println!("Downloading {} ({} bytes)...", display_name, total_size.unwrap());
+                } else {
+                    println!("Downloading {} ...", display_name);
+                }
+                (None, true)
+            }
+        } else {
+            // Progress disabled
+            (None, false)
+        };
+        
+        let mut file = File::create(output_path).await?;
+        let mut stream = response.bytes_stream();
+        let mut downloaded = 0u64;
+        
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk?;
+            file.write_all(&chunk).await?;
+            downloaded += chunk.len() as u64;
+            
+            if let Some(pb) = &progress_bar {
+                pb.set_position(downloaded);
+            }
+        }
+        
+        if let Some(pb) = progress_bar {
+            // For unknown size downloads, set the final position before finishing
+            if total_size.is_none() {
+                pb.set_length(downloaded);
+                pb.set_position(downloaded);
+            }
+            pb.finish_with_message(format!("✓ {}", display_name));
+        } else if show_simple_progress {
+            // For non-TTY, show completion message
+            println!("✓ Downloaded {}", display_name);
+        }
+        
+        Ok(())
+    }
+    
+    /// Static method for downloading files to avoid client instance conflicts in concurrent scenarios
+    async fn download_file_static(
+        http_client: &reqwest::Client,
+        config: &DataGovConfig,
+        url: &str,
+        output_path: &Path,
+        display_name: Option<&str>,
+        multi_progress: Option<Arc<MultiProgress>>,
+    ) -> Result<()> {
+        // Create parent directories if they don't exist
+        if let Some(parent) = output_path.parent() {
+            tokio::fs::create_dir_all(parent).await?;
+        }
+        
+        let response = http_client.get(url).send().await?;
+        
+        if !response.status().is_success() {
+            return Err(DataGovError::download_error(format!(
+                "HTTP {} while downloading {}", 
+                response.status(),
+                url
+            )));
+        }
+        
+        let total_size = response.content_length();
+        let display_name = display_name.unwrap_or("file");
+        
+        // Setup progress indication based on TTY and environment
+        let should_show_progress = config.show_progress && 
+            std::env::var("NO_PROGRESS").is_err();
+        
+        let (progress_bar, show_simple_progress) = if should_show_progress {
+            if let Some(multi) = &multi_progress {
+                // Multi-progress mode: Create a progress bar and add it to multi-progress
+                let pb = if let Some(size) = total_size {
+                    ProgressBar::new(size)
+                } else {
+                    ProgressBar::new_spinner()
+                };
+                
+                let template = if total_size.is_some() {
+                    "{msg} [{bar:30.cyan/blue}] {bytes}/{total_bytes} ({bytes_per_sec}, {eta})"
+                } else {
+                    "{msg} [{spinner:.cyan/blue}] {bytes} ({bytes_per_sec})"
+                };
+                
+                pb.set_style(
+                    ProgressStyle::default_bar()
+                        .template(template)
+                        .unwrap_or_else(|_| {
+                            if total_size.is_some() {
+                                ProgressStyle::default_bar().progress_chars("█▉▊▋▌▍▎▏ ")
+                            } else {
+                                ProgressStyle::default_spinner()
+                            }
+                        })
+                        .progress_chars("█▉▊▋▌▍▎▏ ")
+                );
+                pb.set_message(format!("Downloading {}", display_name));
+                
+                // Add to multi-progress and get the managed progress bar
+                let managed_pb = multi.add(pb);
+                (Some(managed_pb), false)
+            } else if std::io::stdout().is_terminal() && std::env::var("FORCE_SIMPLE_PROGRESS").is_err() {
+                // Single progress mode: Use regular progress bar
+                let pb = if let Some(size) = total_size {
+                    ProgressBar::new(size)
+                } else {
+                    ProgressBar::new_spinner()
+                };
+                
+                let template = if total_size.is_some() {
+                    "{msg} [{bar:40.cyan/blue}] {bytes}/{total_bytes} ({bytes_per_sec}, {eta})"
+                } else {
+                    "{msg} [{spinner:.cyan/blue}] {bytes} ({bytes_per_sec})"
+                };
+                
+                pb.set_style(
+                    ProgressStyle::default_bar()
+                        .template(template)
+                        .unwrap_or_else(|_| {
+                            if total_size.is_some() {
+                                ProgressStyle::default_bar().progress_chars("█▉▊▋▌▍▎▏ ")
+                            } else {
+                                ProgressStyle::default_spinner()
+                            }
+                        })
+                        .progress_chars("█▉▊▋▌▍▎▏ ")
+                );
+                pb.set_message(format!("Downloading {}", display_name));
+                (Some(pb), false)
+            } else {
+                // Non-TTY or forced simple: Show simple text progress
+                if total_size.is_some() {
+                    println!("Downloading {} ({} bytes)...", display_name, total_size.unwrap());
+                } else {
+                    println!("Downloading {} ...", display_name);
+                }
+                (None, true)
+            }
+        } else {
+            // Progress disabled
+            (None, false)
+        };
+        
+        let mut file = File::create(output_path).await?;
+        let mut stream = response.bytes_stream();
+        let mut downloaded = 0u64;
+        
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk?;
+            file.write_all(&chunk).await?;
+            downloaded += chunk.len() as u64;
+            
+            if let Some(pb) = &progress_bar {
+                pb.set_position(downloaded);
+            }
+        }
+        
+        if let Some(pb) = progress_bar {
+            // For unknown size downloads, set the final position before finishing
+            if total_size.is_none() {
+                pb.set_length(downloaded);
+                pb.set_position(downloaded);
+            }
+            pb.finish_with_message(format!("✓ {}", display_name));
+        } else if show_simple_progress {
+            // For non-TTY, show completion message
+            println!("✓ Downloaded {}", display_name);
+        }
+        
+        Ok(())
+    }
+    
+    /// Simple download method for concurrent downloads (no progress bars to avoid conflicts)
+    async fn download_file_simple(
+        http_client: &reqwest::Client,
+        config: &DataGovConfig,
+        url: &str,
+        output_path: &Path,
+        display_name: Option<&str>,
+    ) -> Result<()> {
+        // Create parent directories if they don't exist
+        if let Some(parent) = output_path.parent() {
+            tokio::fs::create_dir_all(parent).await?;
+        }
+        
+        let display_name = display_name.unwrap_or("file");
+        
+        // Show simple text progress for concurrent downloads
+        if config.show_progress && std::env::var("NO_PROGRESS").is_err() {
+            println!("Downloading {} ...", display_name);
+        }
+        
+        let response = http_client.get(url).send().await?;
+        
+        if !response.status().is_success() {
+            return Err(DataGovError::download_error(format!(
+                "HTTP {} while downloading {}", 
+                response.status(),
+                url
+            )));
+        }
+        
+        let mut file = File::create(output_path).await?;
+        let mut stream = response.bytes_stream();
+        
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk?;
+            file.write_all(&chunk).await?;
+        }
+        
+        // Show completion message
+        if config.show_progress && std::env::var("NO_PROGRESS").is_err() {
             println!("✓ Downloaded {}", display_name);
         }
         

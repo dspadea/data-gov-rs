@@ -517,9 +517,7 @@ fn execute_command(
                     );
                 }
                 None => {
-                    // Download all resources
-                    println!("{} {} resources...", color_cyan("Downloading"), resources.len());
-                    
+                    // Download all resources - message will be shown by the download method
                     let results = rt.block_on(
                         client.download_dataset_resources(&resources, &dataset_id)
                     );
