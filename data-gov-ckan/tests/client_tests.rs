@@ -1,4 +1,4 @@
-use data_gov_ckan::{CkanClient, CkanError, apis::configuration::{Configuration, ApiKey}};
+use data_gov_ckan::{CkanClient, CkanError, Configuration, ApiKey};
 use std::sync::Arc;
 
 /// Test that we can create a client and it has expected debug output

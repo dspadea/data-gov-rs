@@ -3,7 +3,7 @@
 //! These tests validate that our client works correctly with the live data.gov
 //! CKAN API and provide examples of real-world usage patterns.
 
-use data_gov_ckan::{CkanClient, CkanError, apis::configuration::Configuration};
+use data_gov_ckan::{CkanClient, CkanError, Configuration};
 use std::sync::Arc;
 
 /// Helper function to create a test client configured for data.gov

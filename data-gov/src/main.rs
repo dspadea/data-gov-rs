@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use data_gov::{DATA_GOV_BASE_URL, ckan::{CkanClient, apis::configuration::Configuration}};
+use data_gov::{DATA_GOV_BASE_URL, ckan::{CkanClient, Configuration}};
 
 #[tokio::main]
 pub async fn main() -> Result<(), Box<dyn std::error::Error>> {

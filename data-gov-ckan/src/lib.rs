@@ -6,9 +6,9 @@ extern crate serde;
 extern crate serde_json;
 extern crate url;
 
-pub mod apis;
+//pub mod apis;
 pub mod models;
 pub mod client;
 
-// Re-export the ergonomic client for easy access
-pub use client::{CkanClient, CkanError};
+// Re-export the ergonomic client and configuration for easy access
+pub use client::{CkanClient, CkanError, Configuration, ApiKey, BasicAuth};

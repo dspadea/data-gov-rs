@@ -1,4 +1,4 @@
-use data_gov_ckan::apis::configuration::Configuration;
+use data_gov_ckan::Configuration;
 use std::sync::Arc;
 use serde_json::Value;
 

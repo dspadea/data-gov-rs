@@ -1,7 +1,59 @@
 use std::sync::Arc;
 use serde::{Serialize, Deserialize, de::DeserializeOwned};
 use serde_json::Value;
-use crate::{apis::{self, Api, configuration::Configuration}, models};
+use crate::models;
+
+/// Configuration for the CKAN client
+#[derive(Debug, Clone)]
+pub struct Configuration {
+    /// Base URL for the CKAN API (e.g., "https://catalog.data.gov/api/3")
+    pub base_path: String,
+    /// User agent string for HTTP requests
+    pub user_agent: Option<String>,
+    /// HTTP client instance
+    pub client: reqwest::Client,
+    /// Basic authentication credentials (username, optional password)
+    pub basic_auth: Option<BasicAuth>,
+    /// OAuth access token
+    pub oauth_access_token: Option<String>,
+    /// Bearer token for authentication
+    pub bearer_access_token: Option<String>,
+    /// API key for CKAN authentication
+    pub api_key: Option<ApiKey>,
+}
+
+/// Basic authentication credentials
+pub type BasicAuth = (String, Option<String>);
+
+/// API key configuration
+#[derive(Debug, Clone)]
+pub struct ApiKey {
+    /// Optional prefix for the API key (e.g., "Bearer")
+    pub prefix: Option<String>,
+    /// The actual API key value
+    pub key: String,
+}
+
+impl Configuration {
+    /// Create a new configuration with default values
+    pub fn new() -> Configuration {
+        Configuration::default()
+    }
+}
+
+impl Default for Configuration {
+    fn default() -> Self {
+        Configuration {
+            base_path: "https://catalog.data.gov/api/3".to_owned(),
+            user_agent: Some("data-gov-rs/1.0".to_owned()),
+            client: reqwest::Client::new(),
+            basic_auth: None,
+            oauth_access_token: None,
+            bearer_access_token: None,
+            api_key: None,
+        }
+    }
+}
 
 /// # CKAN Client
 /// 
@@ -22,7 +74,7 @@ use crate::{apis::{self, Api, configuration::Configuration}, models};
 /// ## Usage
 /// 
 /// ```rust
-/// use data_gov_ckan::{CkanClient, apis::configuration::Configuration};
+/// use data_gov_ckan::{CkanClient, Configuration};
 /// use std::sync::Arc;
 /// 
 /// #[tokio::main]
@@ -149,7 +201,7 @@ impl CkanClient {
     /// # Examples
     /// 
     /// ```rust
-    /// # use data_gov_ckan::{CkanClient, apis::configuration::{Configuration, ApiKey}};
+    /// # use data_gov_ckan::{CkanClient, Configuration, ApiKey};
     /// # use std::sync::Arc;
     /// 
     /// // Basic client for read-only operations
@@ -207,7 +259,7 @@ impl CkanClient {
     /// # Examples
     /// 
     /// ```rust
-    /// # use data_gov_ckan::{CkanClient, apis::configuration::Configuration};
+    /// # use data_gov_ckan::{CkanClient, Configuration};
     /// # use std::sync::Arc;
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// # let client = CkanClient::new(Arc::new(Configuration {
@@ -380,7 +432,7 @@ impl CkanClient {
     /// # Examples
     /// 
     /// ```rust
-    /// # use data_gov_ckan::{CkanClient, apis::configuration::Configuration};
+    /// # use data_gov_ckan::{CkanClient, Configuration};
     /// # use std::sync::Arc;
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// # let client = CkanClient::new(Arc::new(Configuration {
@@ -662,7 +714,7 @@ impl CkanClient {
     /// # Examples
     /// 
     /// ```rust
-    /// # use data_gov_ckan::{CkanClient, apis::configuration::Configuration};
+    /// # use data_gov_ckan::{CkanClient, Configuration};
     /// # use std::sync::Arc;
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// # let client = CkanClient::new(Arc::new(Configuration {
@@ -900,7 +952,7 @@ impl CkanClient {
     /// # Examples
     /// 
     /// ```rust
-    /// # use data_gov_ckan::{CkanClient, apis::configuration::Configuration};
+    /// # use data_gov_ckan::{CkanClient, Configuration};
     /// # use std::sync::Arc;
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// # let client = CkanClient::new(Arc::new(Configuration {

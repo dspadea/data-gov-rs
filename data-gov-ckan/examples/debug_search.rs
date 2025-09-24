@@ -1,4 +1,4 @@
-use data_gov_ckan::{CkanClient, apis::configuration::Configuration};
+use data_gov_ckan::{CkanClient, Configuration};
 use std::sync::Arc;
 
 #[tokio::main]
