@@ -1,0 +1,12 @@
+[package]
+name = "data-gov"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+data-gov-ckan = { path = "../data-gov-ckan"}
+reqwest = { version = "0.12.23", features = ["json"] }
+serde = { version = "1.0.226", features = ["derive"] }
+serde_json = "1.0.145"
+tokio = { version = "1.47.1", features = ["full"] }
+
