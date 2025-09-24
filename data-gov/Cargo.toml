@@ -1,12 +1,30 @@
 [package]
 name = "data-gov"
 version = "0.1.0"
-edition = "2024"
+edition = "2021"
+
+[[bin]]
+name = "data-gov-repl"
+path = "src/main.rs"
 
 [dependencies]
 data-gov-ckan = { path = "../data-gov-ckan"}
-reqwest = { version = "0.12.23", features = ["json"] }
+reqwest = { version = "0.12.23", features = ["json", "stream"] }
 serde = { version = "1.0.226", features = ["derive"] }
 serde_json = "1.0.145"
 tokio = { version = "1.47.1", features = ["full"] }
+# REPL and CLI dependencies
+rustyline = "14.0"
+clap = { version = "4.5", features = ["derive"] }
+colored = "2.1"
+# File I/O and async
+tokio-util = { version = "0.7", features = ["codec"] }
+futures = "0.3"
+# Error handling
+thiserror = "2.0"
+anyhow = "1.0"
+# Progress bars and user experience
+indicatif = { version = "0.17", features = ["tokio"] }
+# URL parsing
+url = "2.5"
 

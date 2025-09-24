@@ -1,7 +1,17 @@
 pub const DATA_GOV_BASE_URL: &str = "https://catalog.data.gov/api/3";
 
+// Re-export the CKAN crate for direct access
 pub use data_gov_ckan as ckan;
+
+// Public modules
 pub mod config;
+pub mod error;
+pub mod client;
+
+// Re-export main types for convenience
+pub use client::DataGovClient;
+pub use config::DataGovConfig;
+pub use error::{DataGovError, Result};
 
 // pub trait CKANResponse: serde::de::DeserializeOwned {}
 
