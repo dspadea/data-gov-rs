@@ -138,4 +138,8 @@ data-gov-rs/
 
 This is an independent project and is not affiliated with data.gov or any government agency. For authoritative information, refer to the official [data.gov](https://www.data.gov/) portal.
 
+> ℹ️ **Heads-up:** Large portions of this codebase were AI-assisted. The APIs
+> appear to work well in informal testing, but thorough human review and
+> hardening is still pending. Use at your own risk.
+
 Licensed under the [Apache License 2.0](LICENSE).

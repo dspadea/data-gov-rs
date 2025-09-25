@@ -149,3 +149,7 @@ The crate re-exports `data-gov-ckan` as `data_gov::ckan`, making the lower-level
 
 - Fork, branch, add tests, run `cargo test`, open a PR
 - Licensed under [Apache 2.0](../LICENSE)
+
+> ⚠️ **AI-assisted code:** Significant portions of this crate were generated
+> with AI tooling. While the library behaves well in ad-hoc testing, it still
+> needs careful human review and polish before production use.

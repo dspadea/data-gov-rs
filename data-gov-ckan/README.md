@@ -8,6 +8,11 @@ Async Rust client for CKAN APIs with first-class support for [data.gov](https://
 > work with other CKAN deployments that follow the same API surface, but those
 > combinations have not been officially tested.
 
+> ⚠️ **AI-assisted implementation:** Much of this crate was produced with AI
+> tooling. The client performs well in informal exercises, yet a thorough
+> human audit and cleanup pass is still on the roadmap. Integrate it with
+> awareness of that caveat.
+
 ## Requirements
 
 - Rust **1.85+** (Rust 2024 edition)
