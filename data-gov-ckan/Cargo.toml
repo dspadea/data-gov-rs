@@ -6,6 +6,7 @@ version = "0.1.0"
 authors = ["David Spadea"]
 description = "Client for Data.Gov CKAN"
 edition = "2024"
+homepage = "https://github.com/dspadea/data-gov-rs"
 
 
 [dependencies]

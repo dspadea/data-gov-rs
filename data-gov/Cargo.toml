@@ -8,6 +8,7 @@ repository = "https://github.com/dspadea/data-gov-rs"
 keywords = ["data", "government", "api", "ckan", "cli"]
 categories = ["api-bindings", "command-line-utilities", "web-programming"]
 authors = ["David Spadea"]
+homepage = "https://github.com/dspadea/data-gov-rs"
 
 [[bin]]
 name = "data-gov"
