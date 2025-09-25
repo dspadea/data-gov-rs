@@ -6,3 +6,6 @@ members = [
 "data-gov-ckan",
 "data-gov"
 ]
+
+[patch.crates-io]
+data-gov-ckan = { path = "data-gov-ckan" }
