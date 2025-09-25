@@ -286,7 +286,7 @@ dependencies = [
  "anyhow",
  "clap",
  "colored",
- "data-gov-ckan",
+ "data-gov-ckan 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "dirs",
  "futures",
  "indicatif",
@@ -313,6 +313,22 @@ dependencies = [
  "serde_repr",
  "tokio",
  "tokio-test",
+ "url",
+ "urlencoding",
+ "uuid",
+]
+
+[[package]]
+name = "data-gov-ckan"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8ad2bd8eeb1b42f4f42bc7148608a81886764715300fe841ee7d15e7ee6557a4"
+dependencies = [
+ "async-trait",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "serde_repr",
  "url",
  "urlencoding",
  "uuid",

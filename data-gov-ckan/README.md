@@ -1,63 +1,70 @@
 # data-gov-ckan
 
-A Rust library for interacting with the CKAN API, specifically designed for accessing data.gov and other CKAN-powered open data portals.
+Async Rust client for CKAN APIs with first-class support for [data.gov](https://data.gov). It provides typed models, ergonomic helpers, and works with any CKAN-compatible portal.
 
-[![Crates.io](https://img.shields.io/crates/v/data-gov-ckan)](https://crates.io/crates/data-gov-ckan)
-[![Documentation](https://docs.rs/data-gov-ckan/badge.svg)](https://docs.rs/data-gov-ckan)
-[![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](../LICENSE)
 
-## Features
+## Requirements
 
-- **Complete CKAN API Coverage**: Access datasets, organizations, groups, users, and more
-- **Type-Safe**: Full Rust type system support with serde serialization
-- **Async/Await**: Built on tokio and reqwest for efficient async operations  
-- **Data.gov Optimized**: Specifically tested and optimized for the US government's data.gov portal
-- **Error Handling**: Comprehensive error types with detailed error information
-- **Flexible Authentication**: Support for API keys, basic auth, and unauthenticated access
-- **Search & Discovery**: Powerful search functionality with filtering and pagination
-- **Autocomplete**: Built-in support for dataset, organization, and tag autocomplete
+- Rust **1.85+** (Rust 2024 edition)
+- Cargo and git
 
-## Quick Start
+```bash
+rustup toolchain install stable
+rustup default stable
+```
 
-Add this to your `Cargo.toml`:
+## Install / depend
+
+Until the crate is published, depend directly on the repository:
 
 ```toml
 [dependencies]
-data-gov-ckan = "0.1.0"
-tokio = { version = "1.0", features = ["full"] }
+data-gov-ckan = { git = "https://github.com/dspadea/data-gov-rs", package = "data-gov-ckan" }
+tokio = { version = "1", features = ["full"] }
 ```
 
-### Basic Usage
+Inside this workspace you can simply use `data-gov-ckan = { path = "../data-gov-ckan" }`.
+
+## Highlights
+
+- 🔁 Full coverage of CKAN `action/*` endpoints used by data.gov
+- ✅ Strongly typed models generated from the official OpenAPI spec
+- 🌐 Configurable base URL, authentication, and user-agent handling
+- ⚙️ Async support via `reqwest` + `tokio`
+- 🧪 Integration tests that target the live data.gov API
+
+## Quick start
 
 ```rust
 use data_gov_ckan::{CkanClient, Configuration};
+use std::sync::Arc;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Create a client for data.gov
-    let client = CkanClient::new_data_gov(None)?;
-    
-    // Search for climate-related datasets
+    let client = CkanClient::new(Arc::new(Configuration::default()));
+
     let results = client.package_search(Some("climate"), Some(10), Some(0), None).await?;
-    
-    println!("Found {} datasets", results.count);
-    
+    println!("Found {} datasets", results.count.unwrap_or(0));
+
     if let Some(datasets) = results.results {
         for dataset in datasets.iter().take(3) {
-            println!("- {} ({})", dataset.title.as_deref().unwrap_or("Untitled"), dataset.name);
+            let title = dataset.title.as_deref().unwrap_or(&dataset.name);
+            println!("• {title}");
         }
     }
-    
+
     Ok(())
 }
 ```
 
-### With Custom Configuration
+### Custom configuration & auth
 
 ```rust
-use data_gov_ckan::{CkanClient, Configuration, ApiKey};
+use data_gov_ckan::{ApiKey, CkanClient, Configuration};
+use std::sync::Arc;
 
-#[tokio::main] 
+#[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = Configuration {
         base_path: "https://demo.ckan.org/api/3".to_string(),
@@ -67,216 +74,47 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }),
         ..Configuration::default()
     };
-    
-    let client = CkanClient::new(config)?;
-    
-    // Now you can make authenticated requests
+
+    let client = CkanClient::new(Arc::new(config));
     let dataset = client.package_show("example-dataset").await?;
-    println!("Dataset: {}", dataset.title.as_deref().unwrap_or("Untitled"));
-    
+    println!("Dataset: {}", dataset.title.as_deref().unwrap_or(&dataset.name));
+
     Ok(())
 }
 ```
 
-### Search with Filters
+Filtering with Solr-style query strings:
 
 ```rust
-use data_gov_ckan::{CkanClient, Configuration};
-use serde_json::json;
-
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let client = CkanClient::new_data_gov(None)?;
-    
-    // Search with filters
-    let filter_query = json!({
-        "organization": "gsa-gov",
-        "res_format": "CSV"
-    });
-    
-    let results = client.package_search(
-        Some("budget"),        // query
-        Some(20),             // rows
-        Some(0),              // start
-        Some(filter_query)    // filter query
-    ).await?;
-    
-    println!("Found {} CSV datasets from GSA about budget", results.count);
-    
-    Ok(())
-}
+let fq = r#"organization:"gsa-gov" AND res_format:"CSV""#;
+let results = client.package_search(Some("budget"), Some(20), Some(0), Some(fq)).await?;
 ```
 
-## API Reference
+## API surface
 
-### Core Client Methods
-
-- **`package_search()`** - Search for datasets with filtering and pagination
-- **`package_show()`** - Get detailed information about a specific dataset
-- **`organization_list()`** - List all organizations
-- **`group_list()`** - List all groups  
-- **`tag_list()`** - List all tags
-
-### Autocomplete Methods
-
-- **`dataset_autocomplete()`** - Autocomplete dataset names
-- **`organization_autocomplete()`** - Autocomplete organization names
-- **`group_autocomplete()`** - Autocomplete group names
-- **`tag_autocomplete()`** - Autocomplete tag names
-- **`user_autocomplete()`** - Autocomplete user names
-
-### Error Handling
-
-The library provides detailed error information through the `CkanError` enum:
-
-```rust
-use data_gov_ckan::{CkanClient, CkanError};
-
-match client.package_show("nonexistent").await {
-    Ok(dataset) => println!("Found: {}", dataset.name),
-    Err(CkanError::NotFound { message, .. }) => {
-        println!("Dataset not found: {}", message);
-    }
-    Err(CkanError::NetworkError(e)) => {
-        println!("Network error: {}", e);
-    }
-    Err(e) => {
-        println!("Other error: {}", e);
-    }
-}
-```
+Core methods include `package_search`, `package_show`, `organization_list`, `group_list`, `tag_list`, and `user_list`. Autocomplete helpers cover datasets, organisations, groups, tags, and users. Errors are surfaced through the `CkanError` enum with variants for request, parse, and API failures.
 
 ## Development
-
-### Prerequisites
-
-- Rust 1.70 or later
-- Git
-
-### Building
 
 ```bash
 git clone https://github.com/dspadea/data-gov-rs.git
 cd data-gov-rs/data-gov-ckan
 cargo build
-```
-
-### Running Tests
-
-```bash
-# Run unit tests
-cargo test --lib
-
-# Run integration tests (requires network access)
-cargo test --test integration_tests
-
-# Run all tests
-cargo test
-```
-
-### Running Examples
-
-```bash
-# Basic search example
+cargo test        # includes integration tests hitting data.gov
 cargo run --example debug_search
-
-# Raw response example
 cargo run --example raw_response
 ```
 
-### Code Generation
+Integration tests require network access. Use `cargo test -- --ignored` to skip or select them as needed.
 
-This library was initially generated from the CKAN OpenAPI specification but has been significantly refactored for better Rust idioms:
+## Authentication options
 
-```bash
-# Regenerate API models (if needed)
-../codegen-api.sh
-```
+- API keys: set `Configuration.api_key = Some(ApiKey { .. })`
+- Basic auth: populate `Configuration.basic_auth`
+- Custom headers: configure the inner `reqwest::Client` before passing the configuration into `CkanClient`
 
-### Testing Against Real APIs
+Reuse the same `CkanClient` for multiple requests to benefit from connection pooling. Combine async calls with `tokio::try_join!` for improved throughput.
 
-The integration tests run against the real data.gov API. To run them:
+## License & support
 
-```bash
-cargo test --test integration_tests -- --nocapture
-```
-
-Note: These tests may be slower and could fail if the API is unavailable.
-
-## Authentication
-
-### API Keys
-
-For write operations or higher rate limits, you'll need an API key from your CKAN instance:
-
-```rust
-use data_gov_ckan::{Configuration, ApiKey};
-
-let config = Configuration {
-    api_key: Some(ApiKey {
-        prefix: None,  // Some APIs require "Bearer" or other prefix
-        key: "your-api-key-here".to_string(),
-    }),
-    ..Configuration::default()
-};
-```
-
-### Basic Authentication
-
-Some CKAN instances support basic authentication:
-
-```rust
-use data_gov_ckan::{Configuration, BasicAuth};
-
-let config = Configuration {
-    basic_auth: Some(("username".to_string(), Some("password".to_string()))),
-    ..Configuration::default()
-};
-```
-
-## Performance Tips
-
-1. **Reuse Clients**: Create one client and reuse it for multiple requests
-2. **Pagination**: Use pagination for large result sets rather than fetching everything at once
-3. **Filtering**: Use specific filters to reduce the amount of data transferred
-4. **Async**: Take advantage of the async API for concurrent operations
-
-```rust
-// Good: Reuse client for multiple requests
-let client = CkanClient::new_data_gov(None)?;
-
-let (search_results, orgs) = tokio::try_join!(
-    client.package_search(Some("climate"), Some(10), Some(0), None),
-    client.organization_list()
-)?;
-```
-
-## License
-
-This project is licensed under the Apache 2.0 License - see the [LICENSE](../LICENSE) file for details.
-
-## Acknowledgments
-
-- Built on the CKAN API specification
-- Uses [reqwest](https://github.com/seanmonstar/reqwest) for HTTP client functionality
-- Data models generated from OpenAPI specification
-
-## Changelog
-
-### v0.1.0
-- Initial release with comprehensive CKAN API support
-- Major refactoring for idiomatic Rust code
-- Moved configuration types to client module
-- Simplified import paths
-- Improved error handling
-- Added comprehensive tests and documentation
-
-### v2.x
-- Generated OpenAPI client (deprecated)
-
-## Support
-
-For questions, issues, or contributions:
-
-- [GitHub Issues](https://github.com/dspadea/data-gov-rs/issues)
-- [Documentation](https://docs.rs/data-gov-ckan)
+Distributed under the [Apache 2.0 license](../LICENSE). Please open issues or pull requests on [GitHub](https://github.com/dspadea/data-gov-rs) for questions and contributions.

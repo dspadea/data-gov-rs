@@ -1,0 +1,8 @@
+[workspace]
+
+resolver = "3"
+
+members = [
+"data-gov-ckan",
+"data-gov"
+]
