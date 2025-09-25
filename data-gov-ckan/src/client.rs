@@ -1,7 +1,7 @@
-use std::sync::Arc;
-use serde::{Serialize, Deserialize, de::DeserializeOwned};
-use serde_json::Value;
 use crate::models;
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
+use serde_json::Value;
+use std::sync::Arc;
 
 /// Configuration for the CKAN client
 #[derive(Debug, Clone)]
@@ -56,12 +56,12 @@ impl Default for Configuration {
 }
 
 /// # CKAN Client
-/// 
+///
 /// An ergonomic Rust client for interacting with CKAN (Comprehensive Knowledge Archive Network) APIs,
 /// specifically designed for data.gov but compatible with any CKAN instance.
-/// 
+///
 /// ## Features
-/// 
+///
 /// - **Dataset Management**: Search, retrieve, create, update, and delete datasets (packages)
 /// - **Resource Management**: Handle files and data resources within datasets  
 /// - **Organization & Groups**: Manage organizational structures and groupings
@@ -70,13 +70,13 @@ impl Default for Configuration {
 /// - **Autocomplete**: Type-ahead functionality for datasets, tags, users, organizations
 /// - **Metadata Support**: Rich metadata and taxonomy support
 /// - **Async/Await**: Built on modern async Rust for high performance
-/// 
+///
 /// ## Usage
-/// 
+///
 /// ```rust
 /// use data_gov_ckan::{CkanClient, Configuration};
 /// use std::sync::Arc;
-/// 
+///
 /// #[tokio::main]
 /// async fn main() -> Result<(), Box<dyn std::error::Error>> {
 ///     // Create configuration for data.gov
@@ -89,9 +89,9 @@ impl Default for Configuration {
 ///         bearer_access_token: None,
 ///         api_key: None,
 ///     });
-/// 
+///
 ///     let client = CkanClient::new(config);
-/// 
+///
 ///     // Search for climate-related datasets
 ///     let results = client.package_search(
 ///         Some("climate change"),
@@ -99,12 +99,12 @@ impl Default for Configuration {
 ///         Some(0),
 ///         None
 ///     ).await?;
-/// 
+///
 ///     println!("Found {} datasets", results.count.unwrap_or(0));
 ///     for package in results.results.unwrap_or_default() {
 ///         println!("Dataset: {}", package.title.unwrap_or_default());
 ///     }
-/// 
+///
 ///     Ok(())
 /// }
 /// ```
@@ -121,12 +121,12 @@ impl std::fmt::Debug for CkanClient {
 }
 
 /// Errors that can occur when interacting with the CKAN API
-/// 
+///
 /// This enum provides detailed error information for different types of failures
 /// that can occur during CKAN API operations.
-/// 
+///
 /// # Examples
-/// 
+///
 /// ```rust
 /// # use data_gov_ckan::{CkanClient, CkanError};
 /// # async fn example() {
@@ -148,19 +148,19 @@ impl std::fmt::Debug for CkanClient {
 #[derive(Debug)]
 pub enum CkanError {
     /// Network, HTTP, or other request-level errors
-    /// 
+    ///
     /// This includes connection failures, timeouts, DNS resolution issues,
     /// and HTTP protocol errors (like 500 Internal Server Error).
     RequestError(Box<dyn std::error::Error + Send + Sync>),
-    
+
     /// JSON parsing or deserialization errors
-    /// 
+    ///
     /// Occurs when the CKAN API returns data that doesn't match expected schema,
     /// invalid JSON, or when response format has changed.
     ParseError(serde_json::Error),
-    
+
     /// CKAN-specific API errors with status codes
-    /// 
+    ///
     /// These are semantic errors from CKAN itself, like:
     /// - 404: Dataset not found
     /// - 403: Insufficient permissions
@@ -190,20 +190,20 @@ impl std::error::Error for CkanError {}
 
 impl CkanClient {
     /// Create a new CKAN client instance
-    /// 
+    ///
     /// Creates a client configured to work with a specific CKAN instance.
     /// For data.gov, use the base URL: `https://catalog.data.gov/api/3`
-    /// 
+    ///
     /// # Arguments
-    /// 
+    ///
     /// * `configuration` - API configuration including base URL, user agent, and credentials
-    /// 
+    ///
     /// # Examples
-    /// 
+    ///
     /// ```rust
     /// # use data_gov_ckan::{CkanClient, Configuration, ApiKey};
     /// # use std::sync::Arc;
-    /// 
+    ///
     /// // Basic client for read-only operations
     /// let config = Arc::new(Configuration {
     ///     base_path: "https://catalog.data.gov/api/3".to_string(),
@@ -214,9 +214,9 @@ impl CkanClient {
     ///     bearer_access_token: None,
     ///     api_key: None,
     /// });
-    /// 
+    ///
     /// let client = CkanClient::new(config);
-    /// 
+    ///
     /// // Client with API key for write operations
     /// let authenticated_config = Arc::new(Configuration {
     ///     base_path: "https://catalog.data.gov/api/3".to_string(),
@@ -230,34 +230,32 @@ impl CkanClient {
     ///         key: "your-api-key-here".to_string(),
     ///     }),
     /// });
-    /// 
+    ///
     /// let auth_client = CkanClient::new(authenticated_config);
     /// ```
     pub fn new(configuration: Arc<Configuration>) -> Self {
-        Self {
-            configuration,
-        }
+        Self { configuration }
     }
 
     /// Search for datasets (packages) with advanced filtering and faceting
-    /// 
+    ///
     /// This is the primary method for discovering datasets in the CKAN catalog.
     /// It provides powerful search capabilities with full-text search, filtering,
     /// faceting, and pagination.
-    /// 
+    ///
     /// # Arguments
-    /// 
+    ///
     /// * `q` - Search query string (searches title, description, tags, etc.)
     /// * `rows` - Maximum number of results to return (default: 10, max typically: 1000)
     /// * `start` - Starting offset for pagination (0-based)
     /// * `fq` - Additional filter queries in Solr format
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// Returns search results with datasets, facets, and pagination information.
-    /// 
+    ///
     /// # Examples
-    /// 
+    ///
     /// ```rust
     /// # use data_gov_ckan::{CkanClient, Configuration};
     /// # use std::sync::Arc;
@@ -268,7 +266,7 @@ impl CkanClient {
     /// #     client: reqwest::Client::new(),
     /// #     basic_auth: None, oauth_access_token: None, bearer_access_token: None, api_key: None,
     /// # }));
-    /// 
+    ///
     /// // Basic text search
     /// let results = client.package_search(
     ///     Some("climate change"),
@@ -276,7 +274,7 @@ impl CkanClient {
     ///     Some(0),
     ///     None
     /// ).await?;
-    /// 
+    ///
     /// println!("Found {} total datasets", results.count.unwrap_or(0));
     /// for package in results.results.unwrap_or_default() {
     ///     println!("Title: {}", package.title.unwrap_or_default());
@@ -284,7 +282,7 @@ impl CkanClient {
     ///         .and_then(|org| org.title.as_deref())
     ///         .unwrap_or("Unknown"));
     /// }
-    /// 
+    ///
     /// // Search with organization filter
     /// let epa_datasets = client.package_search(
     ///     Some("water quality"),
@@ -292,7 +290,7 @@ impl CkanClient {
     ///     Some(0),
     ///     Some("organization:epa-gov")
     /// ).await?;
-    /// 
+    ///
     /// // Search with multiple filters
     /// let recent_climate_data = client.package_search(
     ///     Some("climate"),
@@ -303,14 +301,14 @@ impl CkanClient {
     /// # Ok(())
     /// # }
     /// ```
-    /// 
+    ///
     /// # Pagination
-    /// 
+    ///
     /// ```rust,ignore
     /// // Paginate through all results
     /// let mut start = 0;
     /// let page_size = 50;
-    /// 
+    ///
     /// loop {
     ///     let results = client.package_search(
     ///         Some("energy"),
@@ -332,22 +330,28 @@ impl CkanClient {
     ///     start += page_size;
     /// }
     /// ```
-    /// 
+    ///
     /// # Advanced Filtering
-    /// 
+    ///
     /// The `fq` parameter supports Solr query syntax for advanced filtering:
-    /// 
+    ///
     /// - `organization:epa-gov` - Filter by organization
     /// - `res_format:CSV` - Filter by resource format
     /// - `tags:healthcare` - Filter by tags
     /// - `metadata_modified:[2020-01-01T00:00:00Z TO NOW]` - Date ranges
     /// - Combine with `AND`, `OR`, `NOT` operators
-    pub async fn package_search(&self, q: Option<&str>, rows: Option<i32>, start: Option<i32>, fq: Option<&str>) -> Result<models::PackageSearchResult, CkanError> {
+    pub async fn package_search(
+        &self,
+        q: Option<&str>,
+        rows: Option<i32>,
+        start: Option<i32>,
+        fq: Option<&str>,
+    ) -> Result<models::PackageSearchResult, CkanError> {
         // Build query string for package_search action
         let mut query_params = Vec::new();
         let rows_str = rows.map(|r| r.to_string());
         let start_str = start.map(|s| s.to_string());
-        
+
         if let Some(q) = q {
             query_params.push(("q", q));
         }
@@ -364,10 +368,11 @@ impl CkanClient {
         // Build the complete URL manually since we need to add query parameters
         let base_url = &self.configuration.base_path;
         let mut url = format!("{}/action/package_search", base_url);
-        
+
         if !query_params.is_empty() {
             url.push('?');
-            let query_string = query_params.iter()
+            let query_string = query_params
+                .iter()
                 .map(|(k, v)| format!("{}={}", k, urlencoding::encode(v)))
                 .collect::<Vec<_>>()
                 .join("&");
@@ -375,7 +380,9 @@ impl CkanClient {
         }
 
         // Use the HTTP client directly
-        let response = self.configuration.client
+        let response = self
+            .configuration
+            .client
             .get(&url)
             .send()
             .await
@@ -383,54 +390,58 @@ impl CkanClient {
 
         if response.status().is_success() {
             // Parse the CKAN API wrapper response first
-            let wrapper_response: models::ActionResponse = response.json().await
+            let wrapper_response: models::ActionResponse = response
+                .json()
+                .await
                 .map_err(|e| CkanError::RequestError(Box::new(e)))?;
-            
+
             // Check if the API call itself was successful
             if !wrapper_response.success {
-                return Err(CkanError::ApiError { 
-                    status: 400, 
-                    message: "CKAN API reported failure".to_string() 
+                return Err(CkanError::ApiError {
+                    status: 400,
+                    message: "CKAN API reported failure".to_string(),
                 });
             }
-            
+
             // Extract and parse the result field as PackageSearchResult
             if let Some(result_value) = wrapper_response.result {
-                let search_result: models::PackageSearchResult = serde_json::from_value(result_value)
-                    .map_err(|e| CkanError::ParseError(e))?;
+                let search_result: models::PackageSearchResult =
+                    serde_json::from_value(result_value).map_err(|e| CkanError::ParseError(e))?;
                 Ok(search_result)
             } else {
-                Err(CkanError::ApiError { 
-                    status: 500, 
-                    message: "No result data in API response".to_string() 
+                Err(CkanError::ApiError {
+                    status: 500,
+                    message: "No result data in API response".to_string(),
                 })
             }
         } else {
             let status = response.status().as_u16();
-            let error_text = response.text().await
+            let error_text = response
+                .text()
+                .await
                 .unwrap_or_else(|_| "Unknown error".to_string());
-            Err(CkanError::ApiError { 
-                status, 
-                message: error_text 
+            Err(CkanError::ApiError {
+                status,
+                message: error_text,
             })
         }
     }
 
     /// Retrieve a specific dataset by its ID or name
-    /// 
+    ///
     /// Fetches complete metadata for a single dataset, including all resources,
     /// tags, organization details, and custom metadata fields.
-    /// 
+    ///
     /// # Arguments
-    /// 
+    ///
     /// * `id` - Dataset ID (UUID) or name (URL-friendly slug)
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// Returns the complete dataset record with all metadata and resources.
-    /// 
+    ///
     /// # Examples
-    /// 
+    ///
     /// ```rust
     /// # use data_gov_ckan::{CkanClient, Configuration};
     /// # use std::sync::Arc;
@@ -441,17 +452,17 @@ impl CkanClient {
     /// #     client: reqwest::Client::new(),
     /// #     basic_auth: None, oauth_access_token: None, bearer_access_token: None, api_key: None,
     /// # }));
-    /// 
+    ///
     /// // Get dataset by name
     /// let dataset = client.package_show("consumer-complaint-database").await?;
-    /// 
+    ///
     /// println!("Dataset: {}", dataset.title.unwrap_or_default());
     /// println!("Description: {}", dataset.notes.unwrap_or_default());
-    /// 
+    ///
     /// // List all resources in the dataset
     /// println!("Resources:");
     /// for resource in dataset.resources.unwrap_or_default() {
-    ///     println!("  - {} ({})", 
+    ///     println!("  - {} ({})",
     ///         resource.name.as_deref().unwrap_or("Unnamed"),
     ///         resource.format.as_deref().unwrap_or("Unknown format")
     ///     );
@@ -464,7 +475,7 @@ impl CkanClient {
     ///         println!("    Size: {} bytes", size);
     ///     }
     /// }
-    /// 
+    ///
     /// // Show dataset tags
     /// if let Some(tags) = dataset.tags {
     ///     let tag_names: Vec<String> = tags.into_iter()
@@ -472,20 +483,20 @@ impl CkanClient {
     ///         .collect();
     ///     println!("Tags: {}", tag_names.join(", "));
     /// }
-    /// 
+    ///
     /// // Show organization
     /// if let Some(org) = dataset.organization {
     ///     println!("Organization: {}", org.title.unwrap_or_default());
     /// }
-    /// 
+    ///
     /// // Get dataset by UUID
     /// let dataset_by_id = client.package_show("a1b2c3d4-e5f6-7890-abcd-ef1234567890").await?;
     /// # Ok(())
     /// # }
     /// ```
-    /// 
+    ///
     /// # Error Handling
-    /// 
+    ///
     /// ```rust,ignore
     /// match client.package_show("nonexistent-dataset").await {
     ///     Ok(dataset) => {
@@ -499,11 +510,11 @@ impl CkanClient {
     ///     }
     /// }
     /// ```
-    /// 
+    ///
     /// # Dataset Metadata
-    /// 
+    ///
     /// The returned dataset includes rich metadata:
-    /// 
+    ///
     /// - **Basic Info**: Title, description, notes, license
     /// - **Resources**: Files, APIs, documentation associated with dataset
     /// - **Organization**: Publishing agency/department information  
@@ -513,12 +524,15 @@ impl CkanClient {
     /// - **Custom Fields**: Agency-specific metadata extensions
     pub async fn package_show(&self, id: &str) -> Result<models::Package, CkanError> {
         // Build URL with package ID as query parameter
-        let url = format!("{}/action/package_show?id={}", 
-            self.configuration.base_path, 
+        let url = format!(
+            "{}/action/package_show?id={}",
+            self.configuration.base_path,
             urlencoding::encode(id)
         );
 
-        let response = self.configuration.client
+        let response = self
+            .configuration
+            .client
             .get(&url)
             .send()
             .await
@@ -526,46 +540,55 @@ impl CkanClient {
 
         if response.status().is_success() {
             // Parse the CKAN API wrapper response first
-            let wrapper_response: models::ActionResponse = response.json().await
+            let wrapper_response: models::ActionResponse = response
+                .json()
+                .await
                 .map_err(|e| CkanError::RequestError(Box::new(e)))?;
-            
+
             // Check if the API call itself was successful
             if !wrapper_response.success {
-                return Err(CkanError::ApiError { 
-                    status: 400, 
-                    message: "CKAN API reported failure".to_string() 
+                return Err(CkanError::ApiError {
+                    status: 400,
+                    message: "CKAN API reported failure".to_string(),
                 });
             }
-            
+
             // Extract and parse the result field as Package
             if let Some(result_value) = wrapper_response.result {
-                let package: models::Package = serde_json::from_value(result_value)
-                    .map_err(|e| CkanError::ParseError(e))?;
+                let package: models::Package =
+                    serde_json::from_value(result_value).map_err(|e| CkanError::ParseError(e))?;
                 Ok(package)
             } else {
-                Err(CkanError::ApiError { 
-                    status: 500, 
-                    message: "No result data in API response".to_string() 
+                Err(CkanError::ApiError {
+                    status: 500,
+                    message: "No result data in API response".to_string(),
                 })
             }
         } else {
             let status = response.status().as_u16();
-            let error_text = response.text().await
+            let error_text = response
+                .text()
+                .await
                 .unwrap_or_else(|_| "Unknown error".to_string());
-            Err(CkanError::ApiError { 
-                status, 
-                message: error_text 
+            Err(CkanError::ApiError {
+                status,
+                message: error_text,
             })
         }
     }
 
     /// List all organizations in the CKAN instance
-    pub async fn organization_list(&self, sort: Option<&str>, limit: Option<i32>, offset: Option<i32>) -> Result<Vec<String>, CkanError> {
+    pub async fn organization_list(
+        &self,
+        sort: Option<&str>,
+        limit: Option<i32>,
+        offset: Option<i32>,
+    ) -> Result<Vec<String>, CkanError> {
         // Build query string for organization_list action
         let mut query_params = Vec::new();
         let limit_str = limit.map(|l| l.to_string());
         let offset_str = offset.map(|o| o.to_string());
-        
+
         if let Some(sort) = sort {
             query_params.push(("sort", sort));
         }
@@ -577,17 +600,20 @@ impl CkanClient {
         }
 
         let mut url = format!("{}/action/organization_list", self.configuration.base_path);
-        
+
         if !query_params.is_empty() {
             url.push('?');
-            let query_string = query_params.iter()
+            let query_string = query_params
+                .iter()
                 .map(|(k, v)| format!("{}={}", k, urlencoding::encode(v)))
                 .collect::<Vec<_>>()
                 .join("&");
             url.push_str(&query_string);
         }
 
-        let response = self.configuration.client
+        let response = self
+            .configuration
+            .client
             .get(&url)
             .send()
             .await
@@ -595,46 +621,55 @@ impl CkanClient {
 
         if response.status().is_success() {
             // Parse the CKAN API wrapper response first
-            let wrapper_response: models::ActionResponse = response.json().await
+            let wrapper_response: models::ActionResponse = response
+                .json()
+                .await
                 .map_err(|e| CkanError::RequestError(Box::new(e)))?;
-            
+
             // Check if the API call itself was successful
             if !wrapper_response.success {
-                return Err(CkanError::ApiError { 
-                    status: 400, 
-                    message: "CKAN API reported failure".to_string() 
+                return Err(CkanError::ApiError {
+                    status: 400,
+                    message: "CKAN API reported failure".to_string(),
                 });
             }
-            
+
             // Extract and parse the result field as Vec<String>
             if let Some(result_value) = wrapper_response.result {
-                let organizations: Vec<String> = serde_json::from_value(result_value)
-                    .map_err(|e| CkanError::ParseError(e))?;
+                let organizations: Vec<String> =
+                    serde_json::from_value(result_value).map_err(|e| CkanError::ParseError(e))?;
                 Ok(organizations)
             } else {
-                Err(CkanError::ApiError { 
-                    status: 500, 
-                    message: "No result data in API response".to_string() 
+                Err(CkanError::ApiError {
+                    status: 500,
+                    message: "No result data in API response".to_string(),
                 })
             }
         } else {
             let status = response.status().as_u16();
-            let error_text = response.text().await
+            let error_text = response
+                .text()
+                .await
                 .unwrap_or_else(|_| "Unknown error".to_string());
-            Err(CkanError::ApiError { 
-                status, 
-                message: error_text 
+            Err(CkanError::ApiError {
+                status,
+                message: error_text,
             })
         }
     }
 
     /// List all groups in the CKAN instance
-    pub async fn group_list(&self, sort: Option<&str>, limit: Option<i32>, offset: Option<i32>) -> Result<Vec<String>, CkanError> {
+    pub async fn group_list(
+        &self,
+        sort: Option<&str>,
+        limit: Option<i32>,
+        offset: Option<i32>,
+    ) -> Result<Vec<String>, CkanError> {
         // Build query string for group_list action
         let mut query_params = Vec::new();
         let limit_str = limit.map(|l| l.to_string());
         let offset_str = offset.map(|o| o.to_string());
-        
+
         if let Some(sort) = sort {
             query_params.push(("sort", sort));
         }
@@ -646,17 +681,20 @@ impl CkanClient {
         }
 
         let mut url = format!("{}/action/group_list", self.configuration.base_path);
-        
+
         if !query_params.is_empty() {
             url.push('?');
-            let query_string = query_params.iter()
+            let query_string = query_params
+                .iter()
                 .map(|(k, v)| format!("{}={}", k, urlencoding::encode(v)))
                 .collect::<Vec<_>>()
                 .join("&");
             url.push_str(&query_string);
         }
 
-        let response = self.configuration.client
+        let response = self
+            .configuration
+            .client
             .get(&url)
             .send()
             .await
@@ -664,55 +702,59 @@ impl CkanClient {
 
         if response.status().is_success() {
             // Parse the CKAN API wrapper response first
-            let wrapper_response: models::ActionResponse = response.json().await
+            let wrapper_response: models::ActionResponse = response
+                .json()
+                .await
                 .map_err(|e| CkanError::RequestError(Box::new(e)))?;
-            
+
             // Check if the API call itself was successful
             if !wrapper_response.success {
-                return Err(CkanError::ApiError { 
-                    status: 400, 
-                    message: "CKAN API reported failure".to_string() 
+                return Err(CkanError::ApiError {
+                    status: 400,
+                    message: "CKAN API reported failure".to_string(),
                 });
             }
-            
+
             // Extract and parse the result field as Vec<String>
             if let Some(result_value) = wrapper_response.result {
-                let groups: Vec<String> = serde_json::from_value(result_value)
-                    .map_err(|e| CkanError::ParseError(e))?;
+                let groups: Vec<String> =
+                    serde_json::from_value(result_value).map_err(|e| CkanError::ParseError(e))?;
                 Ok(groups)
             } else {
-                Err(CkanError::ApiError { 
-                    status: 500, 
-                    message: "No result data in API response".to_string() 
+                Err(CkanError::ApiError {
+                    status: 500,
+                    message: "No result data in API response".to_string(),
                 })
             }
         } else {
             let status = response.status().as_u16();
-            let error_text = response.text().await
+            let error_text = response
+                .text()
+                .await
                 .unwrap_or_else(|_| "Unknown error".to_string());
-            Err(CkanError::ApiError { 
-                status, 
-                message: error_text 
+            Err(CkanError::ApiError {
+                status,
+                message: error_text,
             })
         }
     }
 
     /// Get dataset autocomplete suggestions for type-ahead functionality
-    /// 
+    ///
     /// Provides quick dataset name/title suggestions as the user types, perfect for
     /// implementing search boxes with autocomplete dropdowns.
-    /// 
+    ///
     /// # Arguments
-    /// 
+    ///
     /// * `incomplete` - Partial dataset name or title to search for (e.g., "climat")
     /// * `limit` - Maximum number of suggestions to return (default: 10, reasonable max: 20)
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// Returns suggestions containing dataset names and titles that match the input.
-    /// 
+    ///
     /// # Examples
-    /// 
+    ///
     /// ```rust
     /// # use data_gov_ckan::{CkanClient, Configuration};
     /// # use std::sync::Arc;
@@ -723,23 +765,23 @@ impl CkanClient {
     /// #     client: reqwest::Client::new(),
     /// #     basic_auth: None, oauth_access_token: None, bearer_access_token: None, api_key: None,
     /// # }));
-    /// 
+    ///
     /// // Get suggestions as user types "elect"
     /// let suggestions = client.dataset_autocomplete(Some("elect"), Some(5)).await?;
-    /// 
+    ///
     /// for suggestion in &suggestions {
-    ///     println!("Dataset: {} - {}", 
+    ///     println!("Dataset: {} - {}",
     ///         suggestion.name.as_deref().unwrap_or("Unknown"),
     ///         suggestion.title.as_deref().unwrap_or("No title"));
     /// }
     /// # Ok(())
     /// # }
     /// ```
-    /// 
+    ///
     /// # UI Integration
-    /// 
+    ///
     /// This is designed for real-time search suggestions:
-    /// 
+    ///
     /// ```rust,ignore
     /// // In your web frontend or CLI app
     /// async fn on_search_input_change(input: &str, client: &CkanClient) -> Result<(), Box<dyn std::error::Error>> {
@@ -753,10 +795,14 @@ impl CkanClient {
     ///     Ok(())
     /// }
     /// ```
-    pub async fn dataset_autocomplete(&self, incomplete: Option<&str>, limit: Option<i32>) -> Result<Vec<models::DatasetAutocomplete>, CkanError> {
+    pub async fn dataset_autocomplete(
+        &self,
+        incomplete: Option<&str>,
+        limit: Option<i32>,
+    ) -> Result<Vec<models::DatasetAutocomplete>, CkanError> {
         let base_url = &self.configuration.base_path;
         let mut url = format!("{}/action/package_autocomplete", base_url);
-        
+
         let mut params = Vec::new();
         if let Some(incomplete) = incomplete {
             params.push(format!("q={}", urlencoding::encode(incomplete)));
@@ -764,13 +810,15 @@ impl CkanClient {
         if let Some(limit) = limit {
             params.push(format!("limit={}", limit));
         }
-        
+
         if !params.is_empty() {
             url.push('?');
             url.push_str(&params.join("&"));
         }
 
-        let response = self.configuration.client
+        let response = self
+            .configuration
+            .client
             .get(&url)
             .send()
             .await
@@ -778,44 +826,53 @@ impl CkanClient {
 
         if response.status().is_success() {
             // Parse the CKAN API wrapper response first
-            let wrapper_response: models::ActionResponse = response.json().await
+            let wrapper_response: models::ActionResponse = response
+                .json()
+                .await
                 .map_err(|e| CkanError::RequestError(Box::new(e)))?;
-            
+
             // Check if the API call itself was successful
             if !wrapper_response.success {
-                return Err(CkanError::ApiError { 
-                    status: 400, 
-                    message: "CKAN API reported failure".to_string() 
+                return Err(CkanError::ApiError {
+                    status: 400,
+                    message: "CKAN API reported failure".to_string(),
                 });
             }
-            
+
             // Extract and parse the result field as Vec<DatasetAutocomplete>
             if let Some(result_value) = wrapper_response.result {
-                let autocomplete_results: Vec<models::DatasetAutocomplete> = serde_json::from_value(result_value)
-                    .map_err(|e| CkanError::ParseError(e))?;
+                let autocomplete_results: Vec<models::DatasetAutocomplete> =
+                    serde_json::from_value(result_value).map_err(|e| CkanError::ParseError(e))?;
                 Ok(autocomplete_results)
             } else {
-                Err(CkanError::ApiError { 
-                    status: 500, 
-                    message: "No result data in API response".to_string() 
+                Err(CkanError::ApiError {
+                    status: 500,
+                    message: "No result data in API response".to_string(),
                 })
             }
         } else {
             let status = response.status().as_u16();
-            let error_text = response.text().await
+            let error_text = response
+                .text()
+                .await
                 .unwrap_or_else(|_| "Unknown error".to_string());
-            Err(CkanError::ApiError { 
-                status, 
-                message: error_text 
+            Err(CkanError::ApiError {
+                status,
+                message: error_text,
             })
         }
     }
 
     /// Get tag autocomplete suggestions
-    pub async fn tag_autocomplete(&self, incomplete: Option<&str>, limit: Option<i32>, vocabulary_id: Option<&str>) -> Result<Vec<String>, CkanError> {
+    pub async fn tag_autocomplete(
+        &self,
+        incomplete: Option<&str>,
+        limit: Option<i32>,
+        vocabulary_id: Option<&str>,
+    ) -> Result<Vec<String>, CkanError> {
         let base_url = &self.configuration.base_path;
         let mut url = format!("{}/action/tag_autocomplete", base_url);
-        
+
         let mut params = Vec::new();
         if let Some(incomplete) = incomplete {
             params.push(format!("q={}", urlencoding::encode(incomplete)));
@@ -824,15 +881,20 @@ impl CkanClient {
             params.push(format!("limit={}", limit));
         }
         if let Some(vocabulary_id) = vocabulary_id {
-            params.push(format!("vocabulary_id={}", urlencoding::encode(vocabulary_id)));
+            params.push(format!(
+                "vocabulary_id={}",
+                urlencoding::encode(vocabulary_id)
+            ));
         }
-        
+
         if !params.is_empty() {
             url.push('?');
             url.push_str(&params.join("&"));
         }
 
-        let response = self.configuration.client
+        let response = self
+            .configuration
+            .client
             .get(&url)
             .send()
             .await
@@ -840,44 +902,53 @@ impl CkanClient {
 
         if response.status().is_success() {
             // Parse the CKAN API wrapper response first
-            let wrapper_response: models::ActionResponse = response.json().await
+            let wrapper_response: models::ActionResponse = response
+                .json()
+                .await
                 .map_err(|e| CkanError::RequestError(Box::new(e)))?;
-            
+
             // Check if the API call itself was successful
             if !wrapper_response.success {
-                return Err(CkanError::ApiError { 
-                    status: 400, 
-                    message: "CKAN API reported failure".to_string() 
+                return Err(CkanError::ApiError {
+                    status: 400,
+                    message: "CKAN API reported failure".to_string(),
                 });
             }
-            
+
             // Extract and parse the result field as Vec<String>
             if let Some(result_value) = wrapper_response.result {
-                let tags: Vec<String> = serde_json::from_value(result_value)
-                    .map_err(|e| CkanError::ParseError(e))?;
+                let tags: Vec<String> =
+                    serde_json::from_value(result_value).map_err(|e| CkanError::ParseError(e))?;
                 Ok(tags)
             } else {
-                Err(CkanError::ApiError { 
-                    status: 500, 
-                    message: "No result data in API response".to_string() 
+                Err(CkanError::ApiError {
+                    status: 500,
+                    message: "No result data in API response".to_string(),
                 })
             }
         } else {
             let status = response.status().as_u16();
-            let error_text = response.text().await
+            let error_text = response
+                .text()
+                .await
                 .unwrap_or_else(|_| "Unknown error".to_string());
-            Err(CkanError::ApiError { 
-                status, 
-                message: error_text 
+            Err(CkanError::ApiError {
+                status,
+                message: error_text,
             })
         }
     }
 
     /// Get user autocomplete suggestions
-    pub async fn user_autocomplete(&self, q: Option<&str>, limit: Option<i32>, ignore_self: Option<bool>) -> Result<Vec<models::UserAutocomplete>, CkanError> {
+    pub async fn user_autocomplete(
+        &self,
+        q: Option<&str>,
+        limit: Option<i32>,
+        ignore_self: Option<bool>,
+    ) -> Result<Vec<models::UserAutocomplete>, CkanError> {
         let base_url = &self.configuration.base_path;
         let mut url = format!("{}/action/user_autocomplete", base_url);
-        
+
         let mut params = Vec::new();
         if let Some(q) = q {
             params.push(format!("q={}", urlencoding::encode(q)));
@@ -888,13 +959,15 @@ impl CkanClient {
         if let Some(ignore_self) = ignore_self {
             params.push(format!("ignore_self={}", ignore_self));
         }
-        
+
         if !params.is_empty() {
             url.push('?');
             url.push_str(&params.join("&"));
         }
 
-        let response = self.configuration.client
+        let response = self
+            .configuration
+            .client
             .get(&url)
             .send()
             .await
@@ -902,55 +975,59 @@ impl CkanClient {
 
         if response.status().is_success() {
             // Parse the CKAN API wrapper response first
-            let wrapper_response: models::ActionResponse = response.json().await
+            let wrapper_response: models::ActionResponse = response
+                .json()
+                .await
                 .map_err(|e| CkanError::RequestError(Box::new(e)))?;
-            
+
             // Check if the API call itself was successful
             if !wrapper_response.success {
-                return Err(CkanError::ApiError { 
-                    status: 400, 
-                    message: "CKAN API reported failure".to_string() 
+                return Err(CkanError::ApiError {
+                    status: 400,
+                    message: "CKAN API reported failure".to_string(),
                 });
             }
-            
+
             // Extract and parse the result field as Vec<UserAutocomplete>
             if let Some(result_value) = wrapper_response.result {
-                let users: Vec<models::UserAutocomplete> = serde_json::from_value(result_value)
-                    .map_err(|e| CkanError::ParseError(e))?;
+                let users: Vec<models::UserAutocomplete> =
+                    serde_json::from_value(result_value).map_err(|e| CkanError::ParseError(e))?;
                 Ok(users)
             } else {
-                Err(CkanError::ApiError { 
-                    status: 500, 
-                    message: "No result data in API response".to_string() 
+                Err(CkanError::ApiError {
+                    status: 500,
+                    message: "No result data in API response".to_string(),
                 })
             }
         } else {
             let status = response.status().as_u16();
-            let error_text = response.text().await
+            let error_text = response
+                .text()
+                .await
                 .unwrap_or_else(|_| "Unknown error".to_string());
-            Err(CkanError::ApiError { 
-                status, 
-                message: error_text 
+            Err(CkanError::ApiError {
+                status,
+                message: error_text,
             })
         }
     }
 
     /// Get group autocomplete suggestions for filtering and organization
-    /// 
+    ///
     /// Groups in CKAN represent thematic collections of datasets. This endpoint
     /// provides autocomplete functionality for group names and titles.
-    /// 
+    ///
     /// # Arguments
-    /// 
+    ///
     /// * `q` - Partial group name or title to search for (e.g., "agri")
     /// * `limit` - Maximum number of suggestions to return (default: 10)
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// Returns group suggestions with names, display names, and metadata.
-    /// 
+    ///
     /// # Examples
-    /// 
+    ///
     /// ```rust
     /// # use data_gov_ckan::{CkanClient, Configuration};
     /// # use std::sync::Arc;
@@ -961,33 +1038,37 @@ impl CkanClient {
     /// #     client: reqwest::Client::new(),
     /// #     basic_auth: None, oauth_access_token: None, bearer_access_token: None, api_key: None,
     /// # }));
-    /// 
+    ///
     /// // Find agriculture-related groups
     /// let groups = client.group_autocomplete(Some("agri"), Some(5)).await?;
-    /// 
+    ///
     /// println!("Found {} groups", groups.len());
     /// for group in groups {
-    ///     println!("Group: {} ({})", 
-    ///         group.title.as_deref().unwrap_or("Unknown"), 
+    ///     println!("Group: {} ({})",
+    ///         group.title.as_deref().unwrap_or("Unknown"),
     ///         group.name.as_deref().unwrap_or("Unknown"));
     /// }
     /// # Ok(())
     /// # }
     /// ```
-    /// 
+    ///
     /// # Common Use Cases
-    /// 
+    ///
     /// ```rust,ignore
     /// // Building category filters for search UI
     /// let science_groups = client.group_autocomplete(Some("science"), Some(10)).await?;
-    /// 
+    ///
     /// // Finding groups for dataset categorization
     /// let energy_groups = client.group_autocomplete(Some("energy"), Some(5)).await?;
     /// ```
-    pub async fn group_autocomplete(&self, q: Option<&str>, limit: Option<i32>) -> Result<Vec<models::GroupAutocomplete>, CkanError> {
+    pub async fn group_autocomplete(
+        &self,
+        q: Option<&str>,
+        limit: Option<i32>,
+    ) -> Result<Vec<models::GroupAutocomplete>, CkanError> {
         let base_url = &self.configuration.base_path;
         let mut url = format!("{}/action/group_autocomplete", base_url);
-        
+
         let mut params = Vec::new();
         if let Some(q) = q {
             params.push(format!("q={}", urlencoding::encode(q)));
@@ -995,13 +1076,15 @@ impl CkanClient {
         if let Some(limit) = limit {
             params.push(format!("limit={}", limit));
         }
-        
+
         if !params.is_empty() {
             url.push('?');
             url.push_str(&params.join("&"));
         }
 
-        let response = self.configuration.client
+        let response = self
+            .configuration
+            .client
             .get(&url)
             .send()
             .await
@@ -1009,44 +1092,52 @@ impl CkanClient {
 
         if response.status().is_success() {
             // Parse the CKAN API wrapper response first
-            let wrapper_response: models::ActionResponse = response.json().await
+            let wrapper_response: models::ActionResponse = response
+                .json()
+                .await
                 .map_err(|e| CkanError::RequestError(Box::new(e)))?;
-            
+
             // Check if the API call itself was successful
             if !wrapper_response.success {
-                return Err(CkanError::ApiError { 
-                    status: 400, 
-                    message: "CKAN API reported failure".to_string() 
+                return Err(CkanError::ApiError {
+                    status: 400,
+                    message: "CKAN API reported failure".to_string(),
                 });
             }
-            
+
             // Extract and parse the result field as Vec<GroupAutocomplete>
             if let Some(result_value) = wrapper_response.result {
-                let groups: Vec<models::GroupAutocomplete> = serde_json::from_value(result_value)
-                    .map_err(|e| CkanError::ParseError(e))?;
+                let groups: Vec<models::GroupAutocomplete> =
+                    serde_json::from_value(result_value).map_err(|e| CkanError::ParseError(e))?;
                 Ok(groups)
             } else {
-                Err(CkanError::ApiError { 
-                    status: 500, 
-                    message: "No result data in API response".to_string() 
+                Err(CkanError::ApiError {
+                    status: 500,
+                    message: "No result data in API response".to_string(),
                 })
             }
         } else {
             let status = response.status().as_u16();
-            let error_text = response.text().await
+            let error_text = response
+                .text()
+                .await
                 .unwrap_or_else(|_| "Unknown error".to_string());
-            Err(CkanError::ApiError { 
-                status, 
-                message: error_text 
+            Err(CkanError::ApiError {
+                status,
+                message: error_text,
             })
         }
     }
 
     /// Get organization autocomplete suggestions
-    pub async fn organization_autocomplete(&self, q: Option<&str>, limit: Option<i32>) -> Result<Vec<models::OrganizationAutocomplete>, CkanError> {
+    pub async fn organization_autocomplete(
+        &self,
+        q: Option<&str>,
+        limit: Option<i32>,
+    ) -> Result<Vec<models::OrganizationAutocomplete>, CkanError> {
         let base_url = &self.configuration.base_path;
         let mut url = format!("{}/action/organization_autocomplete", base_url);
-        
+
         let mut params = Vec::new();
         if let Some(q) = q {
             params.push(format!("q={}", urlencoding::encode(q)));
@@ -1054,13 +1145,15 @@ impl CkanClient {
         if let Some(limit) = limit {
             params.push(format!("limit={}", limit));
         }
-        
+
         if !params.is_empty() {
             url.push('?');
             url.push_str(&params.join("&"));
         }
 
-        let response = self.configuration.client
+        let response = self
+            .configuration
+            .client
             .get(&url)
             .send()
             .await
@@ -1068,44 +1161,52 @@ impl CkanClient {
 
         if response.status().is_success() {
             // Parse the CKAN API wrapper response first
-            let wrapper_response: models::ActionResponse = response.json().await
+            let wrapper_response: models::ActionResponse = response
+                .json()
+                .await
                 .map_err(|e| CkanError::RequestError(Box::new(e)))?;
-            
+
             // Check if the API call itself was successful
             if !wrapper_response.success {
-                return Err(CkanError::ApiError { 
-                    status: 400, 
-                    message: "CKAN API reported failure".to_string() 
+                return Err(CkanError::ApiError {
+                    status: 400,
+                    message: "CKAN API reported failure".to_string(),
                 });
             }
-            
+
             // Extract and parse the result field as Vec<OrganizationAutocomplete>
             if let Some(result_value) = wrapper_response.result {
-                let orgs: Vec<models::OrganizationAutocomplete> = serde_json::from_value(result_value)
-                    .map_err(|e| CkanError::ParseError(e))?;
+                let orgs: Vec<models::OrganizationAutocomplete> =
+                    serde_json::from_value(result_value).map_err(|e| CkanError::ParseError(e))?;
                 Ok(orgs)
             } else {
-                Err(CkanError::ApiError { 
-                    status: 500, 
-                    message: "No result data in API response".to_string() 
+                Err(CkanError::ApiError {
+                    status: 500,
+                    message: "No result data in API response".to_string(),
                 })
             }
         } else {
             let status = response.status().as_u16();
-            let error_text = response.text().await
+            let error_text = response
+                .text()
+                .await
                 .unwrap_or_else(|_| "Unknown error".to_string());
-            Err(CkanError::ApiError { 
-                status, 
-                message: error_text 
+            Err(CkanError::ApiError {
+                status,
+                message: error_text,
             })
         }
     }
 
     /// Get resource format autocomplete suggestions
-    pub async fn resource_format_autocomplete(&self, incomplete: Option<&str>, limit: Option<i32>) -> Result<Vec<String>, CkanError> {
+    pub async fn resource_format_autocomplete(
+        &self,
+        incomplete: Option<&str>,
+        limit: Option<i32>,
+    ) -> Result<Vec<String>, CkanError> {
         let base_url = &self.configuration.base_path;
         let mut url = format!("{}/action/format_autocomplete", base_url);
-        
+
         let mut params = Vec::new();
         if let Some(incomplete) = incomplete {
             params.push(format!("q={}", urlencoding::encode(incomplete)));
@@ -1113,13 +1214,15 @@ impl CkanClient {
         if let Some(limit) = limit {
             params.push(format!("limit={}", limit));
         }
-        
+
         if !params.is_empty() {
             url.push('?');
             url.push_str(&params.join("&"));
         }
 
-        let response = self.configuration.client
+        let response = self
+            .configuration
+            .client
             .get(&url)
             .send()
             .await
@@ -1127,35 +1230,39 @@ impl CkanClient {
 
         if response.status().is_success() {
             // Parse the CKAN API wrapper response first
-            let wrapper_response: models::ActionResponse = response.json().await
+            let wrapper_response: models::ActionResponse = response
+                .json()
+                .await
                 .map_err(|e| CkanError::RequestError(Box::new(e)))?;
-            
+
             // Check if the API call itself was successful
             if !wrapper_response.success {
-                return Err(CkanError::ApiError { 
-                    status: 400, 
-                    message: "CKAN API reported failure".to_string() 
+                return Err(CkanError::ApiError {
+                    status: 400,
+                    message: "CKAN API reported failure".to_string(),
                 });
             }
-            
+
             // Extract and parse the result field as Vec<String>
             if let Some(result_value) = wrapper_response.result {
-                let formats: Vec<String> = serde_json::from_value(result_value)
-                    .map_err(|e| CkanError::ParseError(e))?;
+                let formats: Vec<String> =
+                    serde_json::from_value(result_value).map_err(|e| CkanError::ParseError(e))?;
                 Ok(formats)
             } else {
-                Err(CkanError::ApiError { 
-                    status: 500, 
-                    message: "No result data in API response".to_string() 
+                Err(CkanError::ApiError {
+                    status: 500,
+                    message: "No result data in API response".to_string(),
                 })
             }
         } else {
             let status = response.status().as_u16();
-            let error_text = response.text().await
+            let error_text = response
+                .text()
+                .await
                 .unwrap_or_else(|_| "Unknown error".to_string());
-            Err(CkanError::ApiError { 
-                status, 
-                message: error_text 
+            Err(CkanError::ApiError {
+                status,
+                message: error_text,
             })
         }
     }

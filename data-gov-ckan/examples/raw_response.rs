@@ -1,6 +1,6 @@
 use data_gov_ckan::Configuration;
-use std::sync::Arc;
 use serde_json::Value;
+use std::sync::Arc;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -13,18 +13,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         bearer_access_token: None,
         api_key: None,
     });
-    
+
     // Make the request manually to see the actual structure
-    let url = format!("{}/action/package_search?q=climate&rows=1", config.base_path);
-    
-    let response = config.client
-        .get(&url)
-        .send()
-        .await?;
-    
+    let url = format!(
+        "{}/action/package_search?q=climate&rows=1",
+        config.base_path
+    );
+
+    let response = config.client.get(&url).send().await?;
+
     let json: Value = response.json().await?;
     println!("Raw JSON structure:");
     println!("{}", serde_json::to_string_pretty(&json)?);
-    
+
     Ok(())
 }

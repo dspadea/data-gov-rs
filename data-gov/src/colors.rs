@@ -1,7 +1,7 @@
-use std::io::{stdout, stderr};
-use std::env;
-use colored::{Colorize, ColoredString};
+use colored::{ColoredString, Colorize};
 use is_terminal::IsTerminal;
+use std::env;
+use std::io::{stderr, stdout};
 
 /// Color mode configuration
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -25,7 +25,10 @@ impl std::str::FromStr for ColorMode {
             "auto" => Ok(ColorMode::Auto),
             "always" => Ok(ColorMode::Always),
             "never" => Ok(ColorMode::Never),
-            _ => Err(format!("Invalid color mode: '{}'. Valid options: auto, always, never", s)),
+            _ => Err(format!(
+                "Invalid color mode: '{}'. Valid options: auto, always, never",
+                s
+            )),
         }
     }
 }
@@ -46,7 +49,8 @@ impl ColorHelper {
             mode,
             stdout_is_terminal: stdout().is_terminal(),
             stderr_is_terminal: stderr().is_terminal(),
-            no_color: env::var("NO_COLOR").is_ok() && !env::var("NO_COLOR").unwrap_or_default().is_empty(),
+            no_color: env::var("NO_COLOR").is_ok()
+                && !env::var("NO_COLOR").unwrap_or_default().is_empty(),
         }
     }
 

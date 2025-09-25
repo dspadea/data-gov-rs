@@ -1,7 +1,7 @@
+use crate::colors::ColorMode;
+use data_gov_ckan::{ApiKey, Configuration as CkanConfiguration};
 use std::path::PathBuf;
 use std::sync::Arc;
-use data_gov_ckan::{Configuration as CkanConfiguration, ApiKey};
-use crate::colors::ColorMode;
 
 /// Operating mode for the client
 #[derive(Debug, Clone, PartialEq)]
@@ -60,7 +60,7 @@ impl DataGovConfig {
             home.join("Downloads")
         }
     }
-    
+
     /// Create a new configuration for data.gov
     pub fn new() -> Self {
         Self::default()

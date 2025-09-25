@@ -4,16 +4,16 @@ pub const DATA_GOV_BASE_URL: &str = "https://catalog.data.gov/api/3";
 pub use data_gov_ckan as ckan;
 
 // Public modules
-pub mod config;
-pub mod error;
 pub mod client;
 pub mod colors;
+pub mod config;
+pub mod error;
 
 // Re-export main types for convenience
 pub use client::DataGovClient;
+pub use colors::{ColorHelper, ColorMode};
 pub use config::{DataGovConfig, OperatingMode};
 pub use error::{DataGovError, Result};
-pub use colors::{ColorHelper, ColorMode};
 
 // pub trait CKANResponse: serde::de::DeserializeOwned {}
 
@@ -33,7 +33,6 @@ pub use colors::{ColorHelper, ColorMode};
 //             .expect("Failed to convert Value to target struct")
 //     }
 // }
-
 
 // #[derive(serde::Deserialize, Debug)]
 // pub struct PackageSearchResult {
@@ -63,7 +62,7 @@ pub use colors::{ColorHelper, ColorMode};
 // }
 
 // impl PackageSearchResultItem {
-    
+
 //     // Metadata contains resource URLs and more
 //     pub fn to_metadata_url(&self) -> String {
 //         format!("https://catalog.data.gov/harvest/object/{}", self.id)

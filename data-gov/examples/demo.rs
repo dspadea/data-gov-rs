@@ -5,28 +5,29 @@ use std::error::Error;
 async fn main() -> Result<(), Box<dyn Error>> {
     println!("🇺🇸 Data.gov Rust Client Demo");
     println!("================================\n");
-    
+
     // Create a client
     let client = DataGovClient::new()?;
-    
+
     // 1. Search for datasets
     println!("🔍 Searching for 'climate' datasets...");
     let search_results = client.search("climate", Some(5), None, None, None).await?;
-    
+
     println!("Found {} results:\n", search_results.count.unwrap_or(0));
-    
+
     if let Some(results) = &search_results.results {
         for (i, dataset) in results.iter().enumerate() {
-            println!("{}. {} ({})", 
-                i + 1, 
+            println!(
+                "{}. {} ({})",
+                i + 1,
                 dataset.title.as_deref().unwrap_or(&dataset.name),
                 dataset.name
             );
-            
+
             // Show resource count
             let resources = DataGovClient::get_downloadable_resources(dataset);
             println!("   📁 {} downloadable resources", resources.len());
-            
+
             if let Some(notes) = &dataset.notes {
                 let truncated = if notes.len() > 100 {
                     format!("{}...", &notes[..100])
@@ -38,7 +39,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             println!();
         }
     }
-    
+
     // 2. Get organizations
     println!("🏛️  Listing government organizations...");
     let orgs = client.list_organizations(Some(10)).await?;
@@ -47,7 +48,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         println!("  {}. {}", i + 1, org);
     }
     println!();
-    
+
     // 3. Autocomplete example
     println!("🔍 Autocomplete for 'energy'...");
     let suggestions = client.autocomplete_datasets("energy", Some(5)).await?;
@@ -56,7 +57,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         println!("  • {}", suggestion);
     }
     println!();
-    
+
     println!("✅ Demo completed! Try the interactive REPL with:");
     println!("   data-gov");
     println!();
@@ -66,6 +67,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
     println!("  data-gov download consumer-complaint-database 0");
     println!("  data-gov list organizations");
     println!("  data-gov --help");
-    
+
     Ok(())
 }
