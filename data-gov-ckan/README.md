@@ -4,6 +4,10 @@ Async Rust client for CKAN APIs with first-class support for [data.gov](https://
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](../LICENSE)
 
+> **Note:** The client targets data.gov and its public API first. The code should
+> work with other CKAN deployments that follow the same API surface, but those
+> combinations have not been officially tested.
+
 ## Requirements
 
 - Rust **1.85+** (Rust 2024 edition)
