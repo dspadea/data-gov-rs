@@ -4,7 +4,7 @@ A Rust library for interacting with the CKAN API, specifically designed for acce
 
 [![Crates.io](https://img.shields.io/crates/v/data-gov-ckan)](https://crates.io/crates/data-gov-ckan)
 [![Documentation](https://docs.rs/data-gov-ckan/badge.svg)](https://docs.rs/data-gov-ckan)
-[![License: AGPL v3](https://img.shields.io/badge/License-AGPL%20v3-blue.svg)](LICENSE)
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 
 ## Features
 
@@ -156,7 +156,7 @@ match client.package_show("nonexistent").await {
 ### Building
 
 ```bash
-git clone https://github.com/your-username/data-gov-rs.git
+git clone https://github.com/dspadea/data-gov-rs.git
 cd data-gov-rs/data-gov-ckan
 cargo build
 ```
@@ -253,7 +253,7 @@ let (search_results, orgs) = tokio::try_join!(
 
 ## License
 
-This project is licensed under the AGPL v3.0 License - see the [LICENSE](../LICENSE) file for details.
+This project is licensed under the Apache 2.0 License - see the [LICENSE](../LICENSE) file for details.
 
 ## Acknowledgments
 
@@ -278,5 +278,5 @@ This project is licensed under the AGPL v3.0 License - see the [LICENSE](../LICE
 
 For questions, issues, or contributions:
 
-- [GitHub Issues](https://github.com/your-username/data-gov-rs/issues)
+- [GitHub Issues](https://github.com/dspadea/data-gov-rs/issues)
 - [Documentation](https://docs.rs/data-gov-ckan)

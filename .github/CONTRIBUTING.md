@@ -15,7 +15,7 @@ Thank you for your interest in contributing to data-gov-rs! This project provide
 1. Fork the repository on GitHub
 2. Clone your fork locally:
    ```bash
-   git clone https://github.com/your-username/data-gov-rs.git
+   git clone https://github.com/dspadea/data-gov-rs.git
    cd data-gov-rs
    ```
 

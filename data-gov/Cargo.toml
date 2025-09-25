@@ -1,12 +1,13 @@
 [package]
 name = "data-gov"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 description = "Rust client library and CLI for data.gov - search, explore, and download U.S. government datasets"
-license = "MIT OR Apache-2.0"
-repository = "https://github.com/your-username/data-gov-rs"
+license = "Apache-2.0"
+repository = "https://github.com/dspadea/data-gov-rs"
 keywords = ["data", "government", "api", "ckan", "cli"]
 categories = ["api-bindings", "command-line-utilities", "web-programming"]
+authors = ["David Spadea"]
 
 [[bin]]
 name = "data-gov"

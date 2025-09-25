@@ -2,7 +2,7 @@
 
 A collection of Rust crates for working with US government open data, with a focus on data.gov and CKAN-powered data portals.
 
-[![License: AGPL v3](https://img.shields.io/badge/License-AGPL%20v3-blue.svg)](LICENSE)
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 
 ## Overview
 
@@ -186,7 +186,7 @@ This is a Cargo workspace. To work with it:
 
 ```bash
 # Clone the repository
-git clone https://github.com/your-username/data-gov-rs.git
+git clone https://github.com/dspadea/data-gov-rs.git
 cd data-gov-rs
 
 # Build all crates
