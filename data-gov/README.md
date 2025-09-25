@@ -18,7 +18,7 @@ Use the published crate from crates.io:
 
 ```toml
 [dependencies]
-data-gov = "0.1.0"
+data-gov = "0.1.1"
 tokio = { version = "1", features = ["full"] }
 ```
 

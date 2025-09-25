@@ -1,6 +1,6 @@
 [package]
 name = "data-gov"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 description = "Rust client library and CLI for data.gov - search, explore, and download U.S. government datasets"
 license = "Apache-2.0"
@@ -15,7 +15,7 @@ name = "data-gov"
 path = "src/main.rs"
 
 [dependencies]
-data-gov-ckan = "0.1.0"
+data-gov-ckan = "0.1.1"
 reqwest = { version = "0.12.23", features = ["json", "stream"] }
 serde = { version = "1.0.226", features = ["derive"] }
 serde_json = "1.0.145"

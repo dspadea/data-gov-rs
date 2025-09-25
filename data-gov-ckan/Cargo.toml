@@ -2,7 +2,7 @@
 license = "Apache-2.0"
 repository = "https://github.com/dspadea/data-gov-rs"
 name = "data-gov-ckan"
-version = "0.1.0"
+version = "0.1.1"
 authors = ["David Spadea"]
 description = "Client for Data.Gov CKAN"
 edition = "2024"
