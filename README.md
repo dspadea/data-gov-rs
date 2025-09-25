@@ -57,7 +57,7 @@ Add the crate via a git dependency until it is published on crates.io:
 
 ```toml
 [dependencies]
-data-gov = { git = "https://github.com/dspadea/data-gov-rs", package = "data-gov" }
+data-gov = "0.1.0"
 tokio = { version = "1", features = ["full"] }
 ```
 
