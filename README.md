@@ -87,7 +87,7 @@ async fn main() -> data_gov::Result<()> {
 
 ```toml
 [dependencies]
-data-gov-ckan = { git = "https://github.com/dspadea/data-gov-rs", package = "data-gov-ckan" }
+data-gov-ckan = "0.1.0"
 tokio = { version = "1", features = ["full"] }
 ```
 

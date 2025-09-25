@@ -16,15 +16,15 @@ rustup default stable
 
 ## Install / depend
 
-Until the crate is published, depend directly on the repository:
+Use the published crate from crates.io:
 
 ```toml
 [dependencies]
-data-gov-ckan = { git = "https://github.com/dspadea/data-gov-rs", package = "data-gov-ckan" }
+data-gov-ckan = "0.1.0"
 tokio = { version = "1", features = ["full"] }
 ```
 
-Inside this workspace you can simply use `data-gov-ckan = { path = "../data-gov-ckan" }`.
+Working inside this repository? Point to the local path instead: `data-gov-ckan = { path = "../data-gov-ckan" }`. If you need the bleeding edge between releases, swap in the git dependency form: `data-gov-ckan = { git = "https://github.com/dspadea/data-gov-rs", package = "data-gov-ckan" }`.
 
 ## Highlights
 

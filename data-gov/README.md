@@ -14,18 +14,24 @@ rustup default stable
 
 ## Add to your project
 
-Until the crate is published on crates.io, depend on the git repository:
+Use the published crate from crates.io:
 
 ```toml
 [dependencies]
-data-gov = { git = "https://github.com/dspadea/data-gov-rs", package = "data-gov" }
+data-gov = "0.1.0"
 tokio = { version = "1", features = ["full"] }
 ```
 
-Or, when working inside the workspace, use the path dependency in `Cargo.toml`:
+Working inside this repository? You can still use a path dependency in `Cargo.toml`:
 
 ```toml
 data-gov = { path = "../data-gov" }
+```
+
+Need unreleased features between tags? Swap in the git dependency form instead:
+
+```toml
+data-gov = { git = "https://github.com/dspadea/data-gov-rs", package = "data-gov" }
 ```
 
 ### CLI install
