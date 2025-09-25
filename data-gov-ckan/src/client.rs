@@ -55,58 +55,24 @@ impl Default for Configuration {
     }
 }
 
-/// # CKAN Client
+/// Async CKAN client focused on data.gov's read APIs.
 ///
-/// An ergonomic Rust client for interacting with CKAN (Comprehensive Knowledge Archive Network) APIs,
-/// specifically designed for data.gov but compatible with any CKAN instance.
-///
-/// ## Features
-///
-/// - **Dataset Management**: Search, retrieve, create, update, and delete datasets (packages)
-/// - **Resource Management**: Handle files and data resources within datasets  
-/// - **Organization & Groups**: Manage organizational structures and groupings
-/// - **User Management**: Handle user accounts and permissions
-/// - **Search Functionality**: Powerful search across all data with filtering and faceting
-/// - **Autocomplete**: Type-ahead functionality for datasets, tags, users, organizations
-/// - **Metadata Support**: Rich metadata and taxonomy support
-/// - **Async/Await**: Built on modern async Rust for high performance
-///
-/// ## Usage
+/// `CkanClient` wraps the generated request glue and exposes ergonomic async
+/// methods for popular CKAN endpoints such as `package_search`,
+/// `package_show`, organization listings, and autocomplete helpers. The client
+/// is cheap to clone and share across tasks because it only holds an
+/// [`Arc<Configuration>`].
 ///
 /// ```rust
 /// use data_gov_ckan::{CkanClient, Configuration};
 /// use std::sync::Arc;
 ///
-/// #[tokio::main]
-/// async fn main() -> Result<(), Box<dyn std::error::Error>> {
-///     // Create configuration for data.gov
-///     let config = Arc::new(Configuration {
-///         base_path: "https://catalog.data.gov/api/3".to_string(),
-///         user_agent: Some("my-rust-app/1.0".to_string()),
-///         client: reqwest::Client::new(),
-///         basic_auth: None,
-///         oauth_access_token: None,
-///         bearer_access_token: None,
-///         api_key: None,
-///     });
-///
-///     let client = CkanClient::new(config);
-///
-///     // Search for climate-related datasets
-///     let results = client.package_search(
-///         Some("climate change"),
-///         Some(10),
-///         Some(0),
-///         None
-///     ).await?;
-///
-///     println!("Found {} datasets", results.count.unwrap_or(0));
-///     for package in results.results.unwrap_or_default() {
-///         println!("Dataset: {}", package.title.unwrap_or_default());
-///     }
-///
-///     Ok(())
-/// }
+/// # #[tokio::main]
+/// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// let client = CkanClient::new(Arc::new(Configuration::default()));
+/// let results = client.package_search(Some("climate"), Some(5), None, None).await?;
+/// println!("{} datasets", results.count.unwrap_or(0));
+/// # Ok(()) }
 /// ```
 pub struct CkanClient {
     configuration: Arc<Configuration>,

@@ -14,10 +14,12 @@ use data_gov_ckan::{
     models::{Package, PackageSearchResult, Resource},
 };
 
-/// High-level client for interacting with data.gov
+/// Async client for exploring data.gov datasets.
 ///
-/// This client wraps the CKAN client and provides additional functionality
-/// for downloading resources, managing files, and working with data.gov specifically.
+/// `DataGovClient` layers ergonomic helpers on top of the lower-level
+/// [`data_gov_ckan::CkanClient`]. In addition to search and metadata lookups it
+/// handles download destinations, progress reporting, and colour-aware output
+/// that matches the `data-gov` CLI defaults.
 #[derive(Debug)]
 pub struct DataGovClient {
     ckan: CkanClient,
@@ -50,7 +52,7 @@ impl DataGovClient {
 
     // === Search and Discovery ===
 
-    /// Search for datasets on data.gov
+    /// Search for datasets on data.gov.
     ///
     /// # Arguments
     /// * `query` - Search terms (searches titles, descriptions, tags)
@@ -109,13 +111,13 @@ impl DataGovClient {
         Ok(result)
     }
 
-    /// Get detailed information about a dataset
+    /// Fetch the full `package_show` payload for a dataset.
     pub async fn get_dataset(&self, dataset_id: &str) -> Result<Package> {
         let package = self.ckan.package_show(dataset_id).await?;
         Ok(package)
     }
 
-    /// Get autocomplete suggestions for dataset names
+    /// Fetch dataset name suggestions for interactive prompts.
     pub async fn autocomplete_datasets(
         &self,
         partial: &str,
@@ -125,13 +127,13 @@ impl DataGovClient {
         Ok(suggestions.into_iter().filter_map(|s| s.name).collect())
     }
 
-    /// Get list of organizations (government agencies)
+    /// List the publisher slugs for government organizations.
     pub async fn list_organizations(&self, limit: Option<i32>) -> Result<Vec<String>> {
         let orgs = self.ckan.organization_list(None, limit, None).await?;
         Ok(orgs)
     }
 
-    /// Get autocomplete suggestions for organizations
+    /// Fetch organization name suggestions for interactive prompts.
     pub async fn autocomplete_organizations(
         &self,
         partial: &str,
@@ -146,9 +148,10 @@ impl DataGovClient {
 
     // === Resource Management ===
 
-    /// Find downloadable resources in a dataset
+    /// Return resources that look like downloadable files.
     ///
-    /// Returns a list of resources that have URLs and are likely downloadable files
+    /// The returned list is filtered to resources that expose a direct URL, are
+    /// not marked as API endpoints, and advertise a file format.
     pub fn get_downloadable_resources(package: &Package) -> Vec<Resource> {
         package
             .resources
@@ -165,7 +168,7 @@ impl DataGovClient {
             .collect()
     }
 
-    /// Get the best download filename for a resource
+    /// Pick a filesystem-friendly filename for a resource download.
     pub fn get_resource_filename(resource: &Resource, fallback_name: Option<&str>) -> String {
         // Try resource name first
         if let Some(name) = &resource.name {
@@ -203,7 +206,7 @@ impl DataGovClient {
 
     // === File Downloads ===
 
-    /// Download a resource from a dataset to its dataset-specific directory
+    /// Download a single resource into the dataset-specific directory.
     ///
     /// # Arguments
     /// * `resource` - The resource to download
@@ -229,7 +232,7 @@ impl DataGovClient {
         Ok(output_path)
     }
 
-    /// Download a resource to a file
+    /// Download a single resource to a specific path.
     ///
     /// # Arguments
     /// * `resource` - The resource to download
@@ -259,9 +262,9 @@ impl DataGovClient {
         Ok(output_path)
     }
 
-    /// Download multiple resources concurrently
+    /// Download multiple resources concurrently.
     ///
-    /// Returns a vector of results, each containing either the download path or an error
+    /// Returns one [`Result`] per resource so callers can inspect partial failures.
     pub async fn download_resources(
         &self,
         resources: &[Resource],
@@ -336,9 +339,9 @@ impl DataGovClient {
         }
     }
 
-    /// Download multiple resources from a dataset to its dataset-specific directory
+    /// Download multiple resources into the dataset-specific directory.
     ///
-    /// Returns a vector of results, each containing either the download path or an error
+    /// Returns one [`Result`] per resource so callers can inspect partial failures.
     pub async fn download_dataset_resources(
         &self,
         resources: &[Resource],
