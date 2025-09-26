@@ -143,7 +143,16 @@ impl DataGovMcpServer {
             let params: CallToolParams = parse_required_params(method, params)?;
             let spec = find_tool_spec(&params.name)
                 .ok_or_else(|| ServerError::InvalidMethod(params.name.clone()))?;
-            return self.invoke_method(spec.method_name, params.arguments).await;
+
+            let value = self.invoke_method(spec.method_name, params.arguments).await?;
+            let response = ToolResponse::from_value(value);
+            return serde_json::to_value(response).map_err(ServerError::Serialization);
+        }
+
+        if find_tool_spec_by_method(method).is_some() {
+            let value = self.invoke_method(method, params).await?;
+            let response = ToolResponse::from_value(value);
+            return serde_json::to_value(response).map_err(ServerError::Serialization);
         }
 
         self.invoke_method(method, params).await
@@ -518,6 +527,35 @@ struct ToolDescriptor {
     input_schema: Value,
 }
 
+#[derive(Debug, Serialize)]
+struct ToolResponse {
+    content: Vec<ToolContent>,
+    #[serde(skip_serializing_if = "Option::is_none", rename = "isError")]
+    is_error: Option<bool>,
+}
+
+impl ToolResponse {
+    fn from_value(value: Value) -> Self {
+        let text = serde_json::to_string_pretty(&value).unwrap_or_else(|_| value.to_string());
+        Self {
+            content: vec![
+                ToolContent::Text { text },
+                ToolContent::Json { json: value },
+            ],
+            is_error: None,
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+#[serde(tag = "type")]
+enum ToolContent {
+    #[serde(rename = "json")]
+    Json { json: Value },
+    #[serde(rename = "text")]
+    Text { text: String },
+}
+
 fn tool_descriptors() -> Vec<ToolDescriptor> {
     tool_specs()
         .into_iter()
@@ -531,6 +569,12 @@ fn tool_descriptors() -> Vec<ToolDescriptor> {
 
 fn find_tool_spec(name: &str) -> Option<ToolSpec> {
     tool_specs().into_iter().find(|spec| spec.tool_name == name)
+}
+
+fn find_tool_spec_by_method(method: &str) -> Option<ToolSpec> {
+    tool_specs()
+        .into_iter()
+        .find(|spec| spec.method_name == method)
 }
 
 fn tool_specs() -> Vec<ToolSpec> {

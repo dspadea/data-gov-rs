@@ -1,8 +1,10 @@
 {
-  "servers": {
-    "data-gov-mcp": {
-      "type": "stdio",
-      "command": "data-gov-mcp-server"
-    }
-  }
+	"servers": {
+		"data-gov": {
+			"type": "stdio",
+			"command": "data-gov-mcp-server",
+			"args": []
+		}
+	},
+	"inputs": []
 }
