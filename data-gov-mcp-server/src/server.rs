@@ -4,7 +4,9 @@ use data_gov_ckan::{
 };
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::{json, Value};
+use std::collections::HashSet;
 use std::env;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use thiserror::Error;
 use tokio::io::{self, AsyncBufReadExt, AsyncWriteExt, BufReader, BufWriter};
@@ -18,6 +20,7 @@ const METHODS: &[&str] = &[
     "data_gov.dataset",
     "data_gov.autocompleteDatasets",
     "data_gov.listOrganizations",
+    "data_gov.downloadResources",
     "ckan.packageSearch",
     "ckan.packageShow",
     "ckan.organizationList",

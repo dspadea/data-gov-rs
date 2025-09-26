@@ -2,7 +2,7 @@
 	"servers": {
 		"data-gov": {
 			"type": "stdio",
-			"command": "data-gov-mcp-server",
+			"command": "target/debug/data-gov-mcp-server",
 			"args": []
 		}
 	},
