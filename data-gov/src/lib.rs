@@ -17,15 +17,18 @@ pub use data_gov_ckan as ckan;
 
 // Public modules
 pub mod client;
-pub mod colors;
 pub mod config;
 pub mod error;
+pub mod ui;
 
 // Re-export main types for convenience
 pub use client::DataGovClient;
-pub use colors::{ColorHelper, ColorMode};
 pub use config::{DataGovConfig, OperatingMode};
 pub use error::{DataGovError, Result};
+pub use ui::{
+    DownloadBatch, DownloadFailed, DownloadFinished, DownloadProgress, DownloadStarted,
+    StatusReporter,
+};
 
 // pub trait CKANResponse: serde::de::DeserializeOwned {}
 
