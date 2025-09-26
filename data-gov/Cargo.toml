@@ -13,7 +13,7 @@ homepage = "https://github.com/dspadea/data-gov-rs"
 
 [[bin]]
 name = "data-gov"
-path = "src/main.rs"
+path = "tools/cli/main.rs"
 
 [dependencies]
 data-gov-ckan = "0.1.1"
