@@ -10,6 +10,10 @@ use thiserror::Error;
 use tokio::io::{self, AsyncBufReadExt, AsyncWriteExt, BufReader, BufWriter};
 
 const METHODS: &[&str] = &[
+    "initialize",
+    "initialized",
+    "shutdown",
+    "tools/list",
     "data_gov.search",
     "data_gov.dataset",
     "data_gov.autocompleteDatasets",
@@ -135,7 +139,34 @@ impl DataGovMcpServer {
     }
 
     async fn dispatch(&self, method: &str, params: Option<Value>) -> Result<Value, ServerError> {
+        if method == "tools/call" {
+            let params: CallToolParams = parse_required_params(method, params)?;
+            let spec = find_tool_spec(&params.name)
+                .ok_or_else(|| ServerError::InvalidMethod(params.name.clone()))?;
+            return self.invoke_method(spec.method_name, params.arguments).await;
+        }
+
+        self.invoke_method(method, params).await
+    }
+
+    async fn invoke_method(&self, method: &str, params: Option<Value>) -> Result<Value, ServerError> {
         match method {
+            "initialize" => {
+                let params: InitializeParams = parse_optional_params(method, params)?;
+                let result = InitializeResult::new(params.client_info);
+                Ok(serde_json::to_value(result).map_err(ServerError::Serialization)?)
+            }
+            "initialized" => Ok(Value::Null),
+            "shutdown" => Ok(Value::Null),
+            "tools/list" => {
+                let params: ListToolsParams = parse_optional_params(method, params)?;
+                let _ = params.cursor;
+                let result = ListToolsResult {
+                    tools: tool_descriptors(),
+                    next_cursor: None,
+                };
+                Ok(serde_json::to_value(result).map_err(ServerError::Serialization)?)
+            }
             "data_gov.search" => {
                 let params: SearchParams = parse_required_params(method, params)?;
                 let result = self
@@ -366,6 +397,64 @@ struct AutocompleteParams {
 }
 
 #[derive(Debug, Default, Deserialize)]
+struct InitializeParams {
+    #[serde(default, rename = "clientInfo")]
+    client_info: Option<ClientInfo>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ClientInfo {
+    name: String,
+    #[serde(default)]
+    version: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct InitializeResult {
+    #[serde(rename = "serverInfo")]
+    server_info: ServerInfo,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    capabilities: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none", rename = "clientInfo")]
+    client_info: Option<ClientInfoSummary>,
+}
+
+impl InitializeResult {
+    fn new(client_info: Option<ClientInfo>) -> Self {
+        let client_info = client_info.map(|info| ClientInfoSummary {
+            name: info.name,
+            version: info.version,
+        });
+
+        Self {
+            server_info: ServerInfo {
+                name: "data-gov-mcp-server",
+                version: env!("CARGO_PKG_VERSION"),
+            },
+            capabilities: Some(json!({
+                "tools": {
+                    "list": true
+                }
+            })),
+            client_info,
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+struct ServerInfo {
+    name: &'static str,
+    version: &'static str,
+}
+
+#[derive(Debug, Serialize)]
+struct ClientInfoSummary {
+    name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    version: Option<String>,
+}
+
+#[derive(Debug, Default, Deserialize)]
 struct ListOrganizationsParams {
     #[serde(default)]
     limit: Option<i32>,
@@ -391,4 +480,158 @@ struct OrganizationListParams {
     limit: Option<i32>,
     #[serde(default)]
     offset: Option<i32>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct ListToolsParams {
+    #[serde(default, rename = "cursor")]
+    cursor: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CallToolParams {
+    name: String,
+    #[serde(default)]
+    arguments: Option<Value>,
+}
+
+#[derive(Debug, Serialize)]
+struct ToolSpec {
+    tool_name: &'static str,
+    method_name: &'static str,
+    description: &'static str,
+    input_schema: Value,
+}
+
+#[derive(Debug, Serialize)]
+struct ListToolsResult {
+    tools: Vec<ToolDescriptor>,
+    #[serde(skip_serializing_if = "Option::is_none", rename = "nextCursor")]
+    next_cursor: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct ToolDescriptor {
+    name: &'static str,
+    description: &'static str,
+    #[serde(rename = "inputSchema")]
+    input_schema: Value,
+}
+
+fn tool_descriptors() -> Vec<ToolDescriptor> {
+    tool_specs()
+        .into_iter()
+        .map(|spec| ToolDescriptor {
+            name: spec.tool_name,
+            description: spec.description,
+            input_schema: spec.input_schema,
+        })
+        .collect()
+}
+
+fn find_tool_spec(name: &str) -> Option<ToolSpec> {
+    tool_specs().into_iter().find(|spec| spec.tool_name == name)
+}
+
+fn tool_specs() -> Vec<ToolSpec> {
+    vec![
+        ToolSpec {
+            tool_name: "data_gov_search",
+            method_name: "data_gov.search",
+            description: "Search datasets on data.gov with optional filters",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Full-text search query"},
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 1000, "description": "Maximum number of results"},
+                    "offset": {"type": "integer", "minimum": 0, "description": "Result offset for pagination"},
+                    "organization": {"type": "string", "description": "Filter results to a specific organization"},
+                    "format": {"type": "string", "description": "Filter results by resource format e.g. CSV"}
+                },
+                "required": ["query"],
+                "additionalProperties": false
+            }),
+        },
+        ToolSpec {
+            tool_name: "data_gov_dataset",
+            method_name: "data_gov.dataset",
+            description: "Fetch detailed metadata for a dataset by name or ID",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "id": {"type": "string", "description": "Dataset identifier or name"}
+                },
+                "required": ["id"],
+                "additionalProperties": false
+            }),
+        },
+        ToolSpec {
+            tool_name: "data_gov_autocomplete_datasets",
+            method_name: "data_gov.autocompleteDatasets",
+            description: "Autocomplete dataset names based on a partial query",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "partial": {"type": "string", "description": "Partial dataset name"},
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 100, "description": "Maximum suggestions to return"}
+                },
+                "required": ["partial"],
+                "additionalProperties": false
+            }),
+        },
+        ToolSpec {
+            tool_name: "data_gov_list_organizations",
+            method_name: "data_gov.listOrganizations",
+            description: "List publishing organizations (agencies) on data.gov",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 1000, "description": "Maximum number of organizations to return"}
+                },
+                "additionalProperties": false
+            }),
+        },
+        ToolSpec {
+            tool_name: "ckan_package_search",
+            method_name: "ckan.packageSearch",
+            description: "Perform a low-level CKAN package_search request",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "query": {"type": ["string", "null"], "description": "Full-text search query"},
+                    "rows": {"type": ["integer", "null"], "minimum": 1, "maximum": 1000, "description": "Number of rows to return"},
+                    "start": {"type": ["integer", "null"], "minimum": 0, "description": "Offset into result set"},
+                    "filter": {"type": ["string", "null"], "description": "Filter query in CKAN syntax"}
+                },
+                "additionalProperties": false
+            }),
+        },
+        ToolSpec {
+            tool_name: "ckan_package_show",
+            method_name: "ckan.packageShow",
+            description: "Retrieve detailed metadata for a dataset using CKAN",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "id": {"type": "string", "description": "Dataset identifier or name"}
+                },
+                "required": ["id"],
+                "additionalProperties": false
+            }),
+        },
+        ToolSpec {
+            tool_name: "ckan_organization_list",
+            method_name: "ckan.organizationList",
+            description: "List CKAN organizations with optional sorting and pagination",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "sort": {"type": ["string", "null"], "description": "Sort expression e.g. name asc"},
+                    "limit": {"type": ["integer", "null"], "minimum": 1, "maximum": 1000, "description": "Maximum organizations to return"},
+                    "offset": {"type": ["integer", "null"], "minimum": 0, "description": "Offset for pagination"}
+                },
+                "additionalProperties": false
+            }),
+        },
+    ]
 }
