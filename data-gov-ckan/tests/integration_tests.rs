@@ -18,8 +18,8 @@ fn create_test_client() -> CkanClient {
         api_key: None,
     });
 
-    CkanClient::new(config)
-}
+        CkanClient::new(config)
+    }
 
 #[tokio::test]
 async fn test_basic_search() {
@@ -96,10 +96,10 @@ async fn test_pagination() {
             first_results.len() <= 2,
             "First page should have ≤2 results"
         );
-        assert!(second_results.len() > 0, "Second page should have results");
+    assert!(!second_results.is_empty(), "Second page should have results");
 
         // Results should be different (if we have enough total results)
-        if first_results.len() > 0 && second_results.len() > 0 {
+    if !first_results.is_empty() && !second_results.is_empty() {
             assert_ne!(
                 first_results[0].id, second_results[0].id,
                 "Different pages should have different results"
@@ -118,20 +118,16 @@ async fn test_package_show() {
         .await
         .expect("Search should succeed");
 
-    if let Some(results) = search.results {
-        if let Some(first_result) = results.first() {
-            if let Some(ref dataset_id) = first_result.id {
-                // Now get the full dataset details
-                let package = client
-                    .package_show(&dataset_id.to_string())
-                    .await
-                    .expect("Package show should succeed");
+    if let Some(results) = search.results && let Some(first_result) = results.first() && let Some(ref dataset_id) = first_result.id {
+        // Now get the full dataset details
+        let package = client
+            .package_show(&dataset_id.to_string())
+            .await
+            .expect("Package show should succeed");
 
-                // Verify we got a valid package with basic fields
-                assert!(!package.name.is_empty(), "Package should have a name");
-                assert!(package.title.is_some(), "Package should have a title");
-            }
-        }
+        // Verify we got a valid package with basic fields
+        assert!(!package.name.is_empty(), "Package should have a name");
+        assert!(package.title.is_some(), "Package should have a title");
     }
 }
 
@@ -283,7 +279,7 @@ async fn test_group_autocomplete() {
     // Check results
     for group in result {
         assert!(
-            group.name.as_ref().map_or(false, |n| !n.is_empty()),
+            group.name.as_ref().is_some_and(|n| !n.is_empty()),
             "Group should have a name"
         );
     }
@@ -304,7 +300,7 @@ async fn test_organization_autocomplete() {
     // Check results
     for org in result {
         assert!(
-            org.name.as_ref().map_or(false, |n| !n.is_empty()),
+            org.name.as_ref().is_some_and(|n| !n.is_empty()),
             "Organization should have a name"
         );
     }

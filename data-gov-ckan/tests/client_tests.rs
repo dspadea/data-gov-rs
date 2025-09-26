@@ -49,8 +49,7 @@ fn test_authenticated_client_creation() {
 #[test]
 fn test_error_types() {
     // Test RequestError
-    let req_error = CkanError::RequestError(Box::new(std::io::Error::new(
-        std::io::ErrorKind::Other,
+    let req_error = CkanError::RequestError(Box::new(std::io::Error::other(
         "test error",
     )));
 

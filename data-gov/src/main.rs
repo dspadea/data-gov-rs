@@ -121,7 +121,7 @@ impl FromStr for ReplCommand {
     type Err = String;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let parts: Vec<&str> = s.trim().split_whitespace().collect();
+        let parts: Vec<&str> = s.split_whitespace().collect();
 
         if parts.is_empty() {
             return Err("Empty command".to_string());
@@ -190,7 +190,7 @@ impl FromStr for ReplCommand {
 struct DataGovRepl {
     client: DataGovClient,
     rt: Runtime,
-    color_helper: ColorHelper,
+    _color_helper: ColorHelper,
 }
 
 impl DataGovRepl {
@@ -199,7 +199,7 @@ impl DataGovRepl {
         Ok(Self {
             client,
             rt,
-            color_helper,
+            _color_helper: color_helper,
         })
     }
 
@@ -263,36 +263,30 @@ impl DataGovRepl {
 
     fn handle_command(&mut self, command: ReplCommand) -> Result<(), Box<dyn std::error::Error>> {
         // Handle REPL-specific commands
-        match &command {
-            ReplCommand::SetDir { path } => {
-                // Create new config with updated directory
-                let new_config = DataGovConfig::new().with_download_dir(path.clone());
+        if let ReplCommand::SetDir { path } = &command {
+            // Create new config with updated directory
+            let new_config = DataGovConfig::new().with_download_dir(path.clone());
 
-                // Validate directory
-                self.rt.block_on(async {
-                    let temp_client = DataGovClient::with_config(new_config.clone())?;
-                    temp_client.validate_download_dir().await?;
-                    self.client = temp_client;
-                    Ok::<(), data_gov::DataGovError>(())
-                })?;
+            // Validate directory
+            self.rt.block_on(async {
+                let temp_client = DataGovClient::with_config(new_config.clone())?;
+                temp_client.validate_download_dir().await?;
+                self.client = temp_client;
+                Ok::<(), data_gov::DataGovError>(())
+            })?;
 
-                println!(
-                    "{} Download directory set to: {}",
-                    color_green_bold("Success!"),
-                    color_blue(&path.display().to_string())
-                );
-                return Ok(());
-            }
-            _ => {}
+            println!(
+                "{} Download directory set to: {}",
+                color_green_bold("Success!"),
+                color_blue(&path.display().to_string())
+            );
+            return Ok(());
         }
 
         // Handle Help command specially for REPL mode
-        match &command {
-            ReplCommand::Help => {
-                self.print_repl_help();
-                return Ok(());
-            }
-            _ => {}
+        if let ReplCommand::Help = &command {
+            self.print_repl_help();
+            return Ok(());
         }
 
         // Use shared command execution logic for other commands
@@ -483,7 +477,7 @@ fn run_cli_mode(
     client: DataGovClient,
     command: &str,
     matches: &clap::ArgMatches,
-    color_helper: &ColorHelper,
+    _color_helper: &ColorHelper,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let rt = Runtime::new()?;
 
@@ -803,16 +797,15 @@ fn print_package_details(package: &Package) {
                 .unwrap_or_default();
 
             println!(
-                "  {}. {} {} {}{}",
+                "  {}. {} {} {}",
                 color_blue_bold(&i.to_string()),
                 color_yellow(name),
                 color_green(&format!("[{}]", format)),
-                color_dimmed(&size),
-                ""
+                color_dimmed(&size)
             );
 
-            if let Some(desc) = &resource.description {
-                if !desc.is_empty() {
+            if let Some(desc) = &resource.description
+                && !desc.is_empty() {
                     let truncated = if desc.len() > 80 {
                         format!("{}...", &desc[..80])
                     } else {
@@ -820,7 +813,6 @@ fn print_package_details(package: &Package) {
                     };
                     println!("     {}", color_dimmed(&truncated));
                 }
-            }
         }
 
         println!(

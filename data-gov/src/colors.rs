@@ -5,17 +5,14 @@ use std::io::{stderr, stdout};
 
 /// Color mode configuration
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Default)]
 pub enum ColorMode {
+    #[default]
     Auto,   // Use TTY detection
     Always, // Always use colors
     Never,  // Never use colors
 }
 
-impl Default for ColorMode {
-    fn default() -> Self {
-        ColorMode::Auto
-    }
-}
 
 impl std::str::FromStr for ColorMode {
     type Err = String;
