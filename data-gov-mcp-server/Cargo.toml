@@ -1,7 +1,16 @@
 [package]
 name = "data-gov-mcp-server"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
+
+description = "MCP Server for AI integration with Data.Gov"
+license = "Apache-2.0"
+repository = "https://github.com/dspadea/data-gov-rs"
+keywords = ["data", "government", "api", "ckan", "cli", "mcp", "ai"]
+categories = ["api-bindings", "command-line-utilities", "web-programming", "ai", "mcp"]
+authors = ["David Spadea"]
+homepage = "https://github.com/dspadea/data-gov-rs"
+
 
 [dependencies]
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "io-std", "io-util", "sync"] }
