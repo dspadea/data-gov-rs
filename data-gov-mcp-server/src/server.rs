@@ -6,7 +6,7 @@ use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashSet;
 use std::env;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 use thiserror::Error;
 use tokio::io::{self, AsyncBufReadExt, AsyncWriteExt, BufReader, BufWriter};
@@ -210,6 +210,228 @@ impl DataGovMcpServer {
                 let params: ListOrganizationsParams = parse_optional_params(method, params)?;
                 let result = self.data_gov.list_organizations(params.limit).await?;
                 Ok(serde_json::to_value(result).map_err(ServerError::Serialization)?)
+            }
+            "data_gov.downloadResources" => {
+                let params: DownloadResourcesParams = parse_required_params(method, params)?;
+                let dataset = self.data_gov.get_dataset(&params.dataset_id).await?;
+
+                let dataset_slug = dataset.name.clone();
+                let dataset_title = dataset.title.clone();
+                let dataset_id = dataset
+                    .id
+                    .as_ref()
+                    .map(|id| id.to_string());
+
+                let mut missing_resource_ids: Vec<String> = Vec::new();
+                let mut unavailable_formats: Vec<String> = Vec::new();
+
+                if params.resource_ids.as_ref().map(|ids| ids.is_empty()).unwrap_or(false) {
+                    return Err(ServerError::InvalidParams(
+                        "data_gov.downloadResources: resourceIds cannot be empty".to_string(),
+                    ));
+                }
+
+                let mut resources = DataGovClient::get_downloadable_resources(&dataset);
+
+                if let Some(resource_ids) = params.resource_ids.as_ref() {
+                    let normalized: Vec<(String, String)> = resource_ids
+                        .iter()
+                        .map(|id| {
+                            let trimmed = id.trim().to_string();
+                            let normalized = trimmed.to_ascii_lowercase();
+                            (trimmed, normalized)
+                        })
+                        .collect();
+
+                    let available_ids: HashSet<String> = resources
+                        .iter()
+                        .filter_map(|resource| {
+                            resource
+                                .id
+                                .as_ref()
+                                .map(|uuid| uuid.to_string().to_ascii_lowercase())
+                        })
+                        .collect();
+
+                    for (original, normalized) in &normalized {
+                        if !available_ids.contains(normalized) {
+                            missing_resource_ids.push(original.clone());
+                        }
+                    }
+
+                    let id_filter: HashSet<String> = normalized
+                        .into_iter()
+                        .map(|(_, normalized)| normalized)
+                        .collect();
+
+                    resources.retain(|resource| {
+                        resource
+                            .id
+                            .as_ref()
+                            .map(|uuid| id_filter.contains(&uuid.to_string().to_ascii_lowercase()))
+                            .unwrap_or(false)
+                    });
+                }
+
+                if let Some(formats) = params.formats.as_ref() {
+                    let normalized: Vec<(String, String)> = formats
+                        .iter()
+                        .map(|fmt| {
+                            let trimmed = fmt.trim().to_string();
+                            let normalized = trimmed.to_ascii_lowercase();
+                            (trimmed, normalized)
+                        })
+                        .collect();
+
+                    let available_formats: HashSet<String> = resources
+                        .iter()
+                        .filter_map(|resource| {
+                            resource
+                                .format
+                                .as_ref()
+                                .map(|fmt| fmt.to_ascii_lowercase())
+                        })
+                        .collect();
+
+                    for (original, normalized) in &normalized {
+                        if !available_formats.contains(normalized) {
+                            unavailable_formats.push(original.clone());
+                        }
+                    }
+
+                    let format_filter: HashSet<String> = normalized
+                        .into_iter()
+                        .map(|(_, normalized)| normalized)
+                        .collect();
+
+                    resources.retain(|resource| {
+                        resource
+                            .format
+                            .as_ref()
+                            .map(|fmt| format_filter.contains(&fmt.to_ascii_lowercase()))
+                            .unwrap_or(false)
+                    });
+                }
+
+                if resources.is_empty() {
+                    let mut message = "data_gov.downloadResources: no matching downloadable resources".to_string();
+                    if !missing_resource_ids.is_empty() {
+                        message.push_str(&format!(
+                            "; missing resourceIds: {}",
+                            missing_resource_ids.join(", ")
+                        ));
+                    }
+                    if !unavailable_formats.is_empty() {
+                        message.push_str(&format!(
+                            "; unavailable formats: {}",
+                            unavailable_formats.join(", ")
+                        ));
+                    }
+                    return Err(ServerError::InvalidParams(message));
+                }
+
+                if params.output_dir.is_none() {
+                    self.data_gov.validate_download_dir().await?;
+                }
+
+                let use_dataset_subdir = params.dataset_subdirectory.unwrap_or(false);
+
+                let resolved_output_dir = if let Some(dir) = params.output_dir.as_ref() {
+                    let mut path = PathBuf::from(dir);
+                    if !path.is_absolute() {
+                        path = std::env::current_dir().map_err(ServerError::Io)?.join(path);
+                    }
+                    if use_dataset_subdir {
+                        path = path.join(&dataset_slug);
+                    }
+                    Some(path)
+                } else {
+                    None
+                };
+
+                let target_dir = resolved_output_dir
+                    .clone()
+                    .unwrap_or_else(|| self.data_gov.download_dir().join(&dataset_slug));
+
+                let selected_resources = resources;
+
+                let download_results = if let Some(dir) = resolved_output_dir.as_ref() {
+                    self.data_gov
+                        .download_resources(&selected_resources, Some(dir.as_path()))
+                        .await
+                } else {
+                    self.data_gov
+                        .download_dataset_resources(&selected_resources, &dataset_slug)
+                        .await
+                };
+
+                let mut downloads = Vec::with_capacity(selected_resources.len());
+                let mut success_count = 0usize;
+                let mut error_count = 0usize;
+
+                for (resource, result) in selected_resources.iter().zip(download_results.into_iter()) {
+                    let resource_id = resource.id.as_ref().map(|id| id.to_string());
+                    match result {
+                        Ok(path) => {
+                            success_count += 1;
+                            downloads.push(json!({
+                                "resourceId": resource_id,
+                                "name": resource.name,
+                                "format": resource.format,
+                                "url": resource.url,
+                                "status": "success",
+                                "path": path.to_string_lossy(),
+                            }));
+                        }
+                        Err(err) => {
+                            error_count += 1;
+                            downloads.push(json!({
+                                "resourceId": resource_id,
+                                "name": resource.name,
+                                "format": resource.format,
+                                "url": resource.url,
+                                "status": "error",
+                                "error": err.to_string(),
+                            }));
+                        }
+                    }
+                }
+
+                let mut summary = json!({
+                    "dataset": {
+                        "id": dataset_id,
+                        "name": dataset_slug,
+                        "title": dataset_title,
+                    },
+                    "downloadDirectory": target_dir.to_string_lossy(),
+                    "downloadCount": downloads.len(),
+                    "successfulCount": success_count,
+                    "failedCount": error_count,
+                    "hasErrors": error_count > 0,
+                    "downloads": downloads,
+                });
+
+                if !missing_resource_ids.is_empty() {
+                    let values = missing_resource_ids
+                        .into_iter()
+                        .map(Value::String)
+                        .collect::<Vec<_>>();
+                    if let Some(obj) = summary.as_object_mut() {
+                        obj.insert("missingResourceIds".to_string(), Value::Array(values));
+                    }
+                }
+
+                if !unavailable_formats.is_empty() {
+                    let values = unavailable_formats
+                        .into_iter()
+                        .map(Value::String)
+                        .collect::<Vec<_>>();
+                    if let Some(obj) = summary.as_object_mut() {
+                        obj.insert("unavailableFormats".to_string(), Value::Array(values));
+                    }
+                }
+
+                Ok(summary)
             }
             "ckan.packageSearch" => {
                 let params: PackageSearchParams = parse_optional_params(method, params)?;
@@ -466,6 +688,20 @@ struct ClientInfoSummary {
     version: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+struct DownloadResourcesParams {
+    #[serde(rename = "datasetId")]
+    dataset_id: String,
+    #[serde(default, rename = "resourceIds")]
+    resource_ids: Option<Vec<String>>,
+    #[serde(default)]
+    formats: Option<Vec<String>>,
+    #[serde(default, rename = "outputDir")]
+    output_dir: Option<String>,
+    #[serde(default, rename = "datasetSubdirectory")]
+    dataset_subdirectory: Option<bool>,
+}
+
 #[derive(Debug, Default, Deserialize)]
 struct ListOrganizationsParams {
     #[serde(default)]
@@ -635,6 +871,23 @@ fn tool_specs() -> Vec<ToolSpec> {
                 "properties": {
                     "limit": {"type": "integer", "minimum": 1, "maximum": 1000, "description": "Maximum number of organizations to return"}
                 },
+                "additionalProperties": false
+            }),
+        },
+        ToolSpec {
+            tool_name: "data_gov_download_resources",
+            method_name: "data_gov.downloadResources",
+            description: "Download one or more dataset resources to the local filesystem",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "datasetId": {"type": "string", "description": "Dataset identifier or name"},
+                    "resourceIds": {"type": "array", "items": {"type": "string"}, "description": "Optional list of resource IDs to download"},
+                    "formats": {"type": "array", "items": {"type": "string"}, "description": "Optional list of resource formats to include (e.g. CSV, JSON)"},
+                    "outputDir": {"type": "string", "description": "Optional directory to save files. Relative paths resolve against the current working directory."},
+                    "datasetSubdirectory": {"type": "boolean", "description": "If true, create a dataset-named subdirectory inside the output directory."}
+                },
+                "required": ["datasetId"],
                 "additionalProperties": false
             }),
         },
