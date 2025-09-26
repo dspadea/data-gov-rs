@@ -1,0 +1,14 @@
+{
+    "chat.mcp.serverSampling": {
+        "data-gov-rs/.vscode/mcp.json: data-gov": {
+            "allowedModels": [
+                "copilot/claude-sonnet-4",
+                "copilot/gemini-2.5-pro",
+                "copilot/gpt-5",
+                "copilot/gpt-5-mini",
+                "copilot/gpt-5-codex",
+                "copilot/grok-code-fast-1"
+            ]
+        }
+    }
+}

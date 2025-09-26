@@ -1,0 +1,10 @@
+{
+	"servers": {
+		"data-gov": {
+			"type": "stdio",
+			"command": "target/debug/data-gov-mcp-server",
+			"args": []
+		}
+	},
+	"inputs": []
+}

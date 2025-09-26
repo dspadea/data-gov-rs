@@ -372,7 +372,7 @@ impl CkanClient {
             // Extract and parse the result field as PackageSearchResult
             if let Some(result_value) = wrapper_response.result {
                 let search_result: models::PackageSearchResult =
-                    serde_json::from_value(result_value).map_err(|e| CkanError::ParseError(e))?;
+                    serde_json::from_value(result_value).map_err(CkanError::ParseError)?;
                 Ok(search_result)
             } else {
                 Err(CkanError::ApiError {
@@ -522,7 +522,7 @@ impl CkanClient {
             // Extract and parse the result field as Package
             if let Some(result_value) = wrapper_response.result {
                 let package: models::Package =
-                    serde_json::from_value(result_value).map_err(|e| CkanError::ParseError(e))?;
+                    serde_json::from_value(result_value).map_err(CkanError::ParseError)?;
                 Ok(package)
             } else {
                 Err(CkanError::ApiError {
@@ -603,7 +603,7 @@ impl CkanClient {
             // Extract and parse the result field as Vec<String>
             if let Some(result_value) = wrapper_response.result {
                 let organizations: Vec<String> =
-                    serde_json::from_value(result_value).map_err(|e| CkanError::ParseError(e))?;
+                    serde_json::from_value(result_value).map_err(CkanError::ParseError)?;
                 Ok(organizations)
             } else {
                 Err(CkanError::ApiError {
@@ -684,7 +684,7 @@ impl CkanClient {
             // Extract and parse the result field as Vec<String>
             if let Some(result_value) = wrapper_response.result {
                 let groups: Vec<String> =
-                    serde_json::from_value(result_value).map_err(|e| CkanError::ParseError(e))?;
+                    serde_json::from_value(result_value).map_err(CkanError::ParseError)?;
                 Ok(groups)
             } else {
                 Err(CkanError::ApiError {
@@ -808,7 +808,7 @@ impl CkanClient {
             // Extract and parse the result field as Vec<DatasetAutocomplete>
             if let Some(result_value) = wrapper_response.result {
                 let autocomplete_results: Vec<models::DatasetAutocomplete> =
-                    serde_json::from_value(result_value).map_err(|e| CkanError::ParseError(e))?;
+                    serde_json::from_value(result_value).map_err(CkanError::ParseError)?;
                 Ok(autocomplete_results)
             } else {
                 Err(CkanError::ApiError {
@@ -884,7 +884,7 @@ impl CkanClient {
             // Extract and parse the result field as Vec<String>
             if let Some(result_value) = wrapper_response.result {
                 let tags: Vec<String> =
-                    serde_json::from_value(result_value).map_err(|e| CkanError::ParseError(e))?;
+                    serde_json::from_value(result_value).map_err(CkanError::ParseError)?;
                 Ok(tags)
             } else {
                 Err(CkanError::ApiError {
@@ -957,7 +957,7 @@ impl CkanClient {
             // Extract and parse the result field as Vec<UserAutocomplete>
             if let Some(result_value) = wrapper_response.result {
                 let users: Vec<models::UserAutocomplete> =
-                    serde_json::from_value(result_value).map_err(|e| CkanError::ParseError(e))?;
+                    serde_json::from_value(result_value).map_err(CkanError::ParseError)?;
                 Ok(users)
             } else {
                 Err(CkanError::ApiError {
@@ -1074,7 +1074,7 @@ impl CkanClient {
             // Extract and parse the result field as Vec<GroupAutocomplete>
             if let Some(result_value) = wrapper_response.result {
                 let groups: Vec<models::GroupAutocomplete> =
-                    serde_json::from_value(result_value).map_err(|e| CkanError::ParseError(e))?;
+                    serde_json::from_value(result_value).map_err(CkanError::ParseError)?;
                 Ok(groups)
             } else {
                 Err(CkanError::ApiError {
@@ -1143,7 +1143,7 @@ impl CkanClient {
             // Extract and parse the result field as Vec<OrganizationAutocomplete>
             if let Some(result_value) = wrapper_response.result {
                 let orgs: Vec<models::OrganizationAutocomplete> =
-                    serde_json::from_value(result_value).map_err(|e| CkanError::ParseError(e))?;
+                    serde_json::from_value(result_value).map_err(CkanError::ParseError)?;
                 Ok(orgs)
             } else {
                 Err(CkanError::ApiError {
@@ -1212,7 +1212,7 @@ impl CkanClient {
             // Extract and parse the result field as Vec<String>
             if let Some(result_value) = wrapper_response.result {
                 let formats: Vec<String> =
-                    serde_json::from_value(result_value).map_err(|e| CkanError::ParseError(e))?;
+                    serde_json::from_value(result_value).map_err(CkanError::ParseError)?;
                 Ok(formats)
             } else {
                 Err(CkanError::ApiError {

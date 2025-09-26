@@ -1,11 +1,14 @@
 [workspace]
+msrv = "1.90"
 
 resolver = "3"
 
 members = [
 "data-gov-ckan",
-"data-gov"
+"data-gov",
+"data-gov-mcp-server"
 ]
 
 [patch.crates-io]
+data-gov = { path = "data-gov" }
 data-gov-ckan = { path = "data-gov-ckan" }
