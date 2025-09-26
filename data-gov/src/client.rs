@@ -185,11 +185,13 @@ impl DataGovClient {
         // Try to extract filename from URL
         if let Some(url) = &resource.url
             && let Ok(parsed_url) = Url::parse(url)
-                && let Some(mut segments) = parsed_url.path_segments()
-                    && let Some(filename) = segments.next_back()
-                        && !filename.is_empty() && filename.contains('.') {
-                            return filename.to_string();
-                        }
+            && let Some(mut segments) = parsed_url.path_segments()
+            && let Some(filename) = segments.next_back()
+            && !filename.is_empty()
+            && filename.contains('.')
+        {
+            return filename.to_string();
+        }
 
         // Use fallback with format extension
         let base_name = fallback_name.unwrap_or("data");

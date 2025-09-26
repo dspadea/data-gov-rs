@@ -4,15 +4,13 @@ use std::env;
 use std::io::{stderr, stdout};
 
 /// Color mode configuration
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ColorMode {
     #[default]
-    Auto,   // Use TTY detection
+    Auto, // Use TTY detection
     Always, // Always use colors
     Never,  // Never use colors
 }
-
 
 impl std::str::FromStr for ColorMode {
     type Err = String;

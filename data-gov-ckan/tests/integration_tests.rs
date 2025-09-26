@@ -18,8 +18,8 @@ fn create_test_client() -> CkanClient {
         api_key: None,
     });
 
-        CkanClient::new(config)
-    }
+    CkanClient::new(config)
+}
 
 #[tokio::test]
 async fn test_basic_search() {
@@ -96,10 +96,13 @@ async fn test_pagination() {
             first_results.len() <= 2,
             "First page should have ≤2 results"
         );
-    assert!(!second_results.is_empty(), "Second page should have results");
+        assert!(
+            !second_results.is_empty(),
+            "Second page should have results"
+        );
 
         // Results should be different (if we have enough total results)
-    if !first_results.is_empty() && !second_results.is_empty() {
+        if !first_results.is_empty() && !second_results.is_empty() {
             assert_ne!(
                 first_results[0].id, second_results[0].id,
                 "Different pages should have different results"
@@ -118,7 +121,10 @@ async fn test_package_show() {
         .await
         .expect("Search should succeed");
 
-    if let Some(results) = search.results && let Some(first_result) = results.first() && let Some(ref dataset_id) = first_result.id {
+    if let Some(results) = search.results
+        && let Some(first_result) = results.first()
+        && let Some(ref dataset_id) = first_result.id
+    {
         // Now get the full dataset details
         let package = client
             .package_show(&dataset_id.to_string())

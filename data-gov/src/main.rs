@@ -805,14 +805,15 @@ fn print_package_details(package: &Package) {
             );
 
             if let Some(desc) = &resource.description
-                && !desc.is_empty() {
-                    let truncated = if desc.len() > 80 {
-                        format!("{}...", &desc[..80])
-                    } else {
-                        desc.clone()
-                    };
-                    println!("     {}", color_dimmed(&truncated));
-                }
+                && !desc.is_empty()
+            {
+                let truncated = if desc.len() > 80 {
+                    format!("{}...", &desc[..80])
+                } else {
+                    desc.clone()
+                };
+                println!("     {}", color_dimmed(&truncated));
+            }
         }
 
         println!(

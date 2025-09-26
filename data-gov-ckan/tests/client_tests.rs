@@ -49,9 +49,7 @@ fn test_authenticated_client_creation() {
 #[test]
 fn test_error_types() {
     // Test RequestError
-    let req_error = CkanError::RequestError(Box::new(std::io::Error::other(
-        "test error",
-    )));
+    let req_error = CkanError::RequestError(Box::new(std::io::Error::other("test error")));
 
     // Should be able to display and debug
     let _display = format!("{}", req_error);

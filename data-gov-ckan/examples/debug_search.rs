@@ -28,7 +28,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 result.results.as_ref().map(|r| r.len())
             );
 
-            if let Some(results) = &result.results && let Some(first) = results.first() {
+            if let Some(results) = &result.results
+                && let Some(first) = results.first()
+            {
                 println!("First result title: {:?}", first.title);
                 println!("First result name: {}", first.name);
             }
