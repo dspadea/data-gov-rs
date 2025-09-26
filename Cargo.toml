@@ -1,4 +1,5 @@
 [workspace]
+msrv = "1.90"
 
 resolver = "3"
 

@@ -9,14 +9,14 @@ Rust tooling for exploring U.S. government open data. This workspace bundles two
 
 ## Requirements
 
-- Rust **1.85+** (the workspace uses the Rust 2024 edition)
+- Rust **1.90+** (the workspace uses the Rust 2024 edition)
 - Cargo and git
 - Optional: a data.gov API key for higher rate limits
 
 ```bash
 rustup toolchain install stable
 rustup default stable
-rustc --version  # should be 1.85 or newer
+rustc --version  # should be 1.90 or newer
 ```
 
 ## Install the CLI

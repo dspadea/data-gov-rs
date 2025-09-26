@@ -4,7 +4,7 @@ High-level Rust client and CLI for [data.gov](https://data.gov). It wraps the lo
 
 ## Requirements
 
-- Rust **1.85+** (Rust 2024 edition)
+- Rust **1.90+** (Rust 2024 edition)
 - Cargo and git
 
 ```bash

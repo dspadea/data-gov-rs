@@ -15,7 +15,7 @@ Async Rust client for CKAN APIs with first-class support for [data.gov](https://
 
 ## Requirements
 
-- Rust **1.85+** (Rust 2024 edition)
+- Rust **1.90+** (Rust 2024 edition)
 - Cargo and git
 
 ```bash
