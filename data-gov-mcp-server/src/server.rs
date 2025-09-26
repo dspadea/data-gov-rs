@@ -2,8 +2,8 @@ use data_gov::{DataGovClient, DataGovConfig, OperatingMode};
 use data_gov_ckan::{
     ApiKey as CkanApiKey, CkanClient, CkanError, Configuration as CkanConfiguration,
 };
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
+use serde_json::{Value, json};
 use std::collections::HashSet;
 use std::env;
 use std::path::PathBuf;
@@ -147,7 +147,9 @@ impl DataGovMcpServer {
             let spec = find_tool_spec(&params.name)
                 .ok_or_else(|| ServerError::InvalidMethod(params.name.clone()))?;
 
-            let value = self.invoke_method(spec.method_name, params.arguments).await?;
+            let value = self
+                .invoke_method(spec.method_name, params.arguments)
+                .await?;
             let response = ToolResponse::from_value(value);
             return serde_json::to_value(response).map_err(ServerError::Serialization);
         }
@@ -161,7 +163,11 @@ impl DataGovMcpServer {
         self.invoke_method(method, params).await
     }
 
-    async fn invoke_method(&self, method: &str, params: Option<Value>) -> Result<Value, ServerError> {
+    async fn invoke_method(
+        &self,
+        method: &str,
+        params: Option<Value>,
+    ) -> Result<Value, ServerError> {
         match method {
             "initialize" => {
                 let params: InitializeParams = parse_optional_params(method, params)?;
@@ -217,15 +223,17 @@ impl DataGovMcpServer {
 
                 let dataset_slug = dataset.name.clone();
                 let dataset_title = dataset.title.clone();
-                let dataset_id = dataset
-                    .id
-                    .as_ref()
-                    .map(|id| id.to_string());
+                let dataset_id = dataset.id.as_ref().map(|id| id.to_string());
 
                 let mut missing_resource_ids: Vec<String> = Vec::new();
                 let mut unavailable_formats: Vec<String> = Vec::new();
 
-                if params.resource_ids.as_ref().map(|ids| ids.is_empty()).unwrap_or(false) {
+                if params
+                    .resource_ids
+                    .as_ref()
+                    .map(|ids| ids.is_empty())
+                    .unwrap_or(false)
+                {
                     return Err(ServerError::InvalidParams(
                         "data_gov.downloadResources: resourceIds cannot be empty".to_string(),
                     ));
@@ -286,10 +294,7 @@ impl DataGovMcpServer {
                     let available_formats: HashSet<String> = resources
                         .iter()
                         .filter_map(|resource| {
-                            resource
-                                .format
-                                .as_ref()
-                                .map(|fmt| fmt.to_ascii_lowercase())
+                            resource.format.as_ref().map(|fmt| fmt.to_ascii_lowercase())
                         })
                         .collect();
 
@@ -314,7 +319,9 @@ impl DataGovMcpServer {
                 }
 
                 if resources.is_empty() {
-                    let mut message = "data_gov.downloadResources: no matching downloadable resources".to_string();
+                    let mut message =
+                        "data_gov.downloadResources: no matching downloadable resources"
+                            .to_string();
                     if !missing_resource_ids.is_empty() {
                         message.push_str(&format!(
                             "; missing resourceIds: {}",
@@ -369,7 +376,9 @@ impl DataGovMcpServer {
                 let mut success_count = 0usize;
                 let mut error_count = 0usize;
 
-                for (resource, result) in selected_resources.iter().zip(download_results.into_iter()) {
+                for (resource, result) in
+                    selected_resources.iter().zip(download_results.into_iter())
+                {
                     let resource_id = resource.id.as_ref().map(|id| id.to_string());
                     match result {
                         Ok(path) => {
