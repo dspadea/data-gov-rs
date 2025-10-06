@@ -18,7 +18,7 @@ Use the published crate from crates.io:
 
 ```toml
 [dependencies]
-data-gov = "0.1.1"
+data-gov = "0.2.0"
 tokio = { version = "1", features = ["full"] }
 ```
 
@@ -82,7 +82,9 @@ async fn main() -> data_gov::Result<()> {
 ```
 data-gov search "climate change" 5
 data-gov show electric-vehicle-population-data
-data-gov download electric-vehicle-population-data 0
+data-gov download electric-vehicle-population-data 0                           # Download by index
+data-gov download electric-vehicle-population-data "Comma Separated Values File"  # Download by name (quoted)
+data-gov download electric-vehicle-population-data csv                         # Partial match (unquoted)
 data-gov list organizations
 ```
 
@@ -98,7 +100,7 @@ Key defaults:
 | ------- | ------- |
 | `search <query> [limit]` | Full-text search with optional result cap |
 | `show <dataset_id>` | Inspect dataset details and resources |
-| `download <dataset_id> [index]` | Download all resources or a specific resource by index |
+| `download <dataset_id> [index\|name]` | Download all resources, or a specific resource by index or name (partial match, use quotes for multi-word names) |
 | `list organizations` | List publishing organisations |
 | `setdir <path>` | Change the active download directory (REPL only) |
 | `info` | Display current configuration |
@@ -111,8 +113,9 @@ The REPL accepts stdin, so shebang scripts work out of the box:
 ```bash
 #!/usr/bin/env data-gov
 # Simple automation example
-search climate 3
-download consumer-complaint-database 0
+search "electric vehicle" 3
+show electric-vehicle-population-data
+download electric-vehicle-population-data "Comma Separated Values File"    # Download by name (quoted)
 quit
 ```
 
@@ -150,6 +153,9 @@ The crate re-exports `data-gov-ckan` as `data_gov::ckan`, making the lower-level
 - Fork, branch, add tests, run `cargo test`, open a PR
 - Licensed under [Apache 2.0](../LICENSE)
 
-> ⚠️ **AI-assisted code:** Significant portions of this crate were generated
-> with AI tooling. While the library behaves well in ad-hoc testing, it still
-> needs careful human review and polish before production use.
+
+## Disclaimer & license
+
+This is an independent project and is not affiliated with data.gov or any government agency. For authoritative information, refer to the official [data.gov](https://www.data.gov/) portal.
+
+Licensed under the [Apache License 2.0](LICENSE).

@@ -343,34 +343,40 @@ impl DataGovMcpServer {
 
                 let use_dataset_subdir = params.dataset_subdirectory.unwrap_or(false);
 
+                // Sanitize dataset_slug to prevent path traversal attacks
+                #[allow(clippy::collapsible_str_replace)]
+                let safe_dataset_slug = dataset_slug
+                    .replace("..", "_")
+                    .replace('/', "_")
+                    .replace('\\', "_")
+                    .chars()
+                    .filter(|c| c.is_alphanumeric() || *c == '-' || *c == '_' || *c == '.')
+                    .collect::<String>();
+
                 let resolved_output_dir = if let Some(dir) = params.output_dir.as_ref() {
                     let mut path = PathBuf::from(dir);
                     if !path.is_absolute() {
                         path = std::env::current_dir().map_err(ServerError::Io)?.join(path);
                     }
                     if use_dataset_subdir {
-                        path = path.join(&dataset_slug);
+                        path = path.join(&safe_dataset_slug);
                     }
                     Some(path)
                 } else {
                     None
                 };
 
-                let target_dir = resolved_output_dir
-                    .clone()
-                    .unwrap_or_else(|| self.data_gov.download_dir().join(&dataset_slug));
+                // Calculate the output directory - either user-specified or dataset-specific
+                let output_dir = resolved_output_dir
+                    .unwrap_or_else(|| self.data_gov.download_dir().join(&safe_dataset_slug));
 
                 let selected_resources = resources;
 
-                let download_results = if let Some(dir) = resolved_output_dir.as_ref() {
-                    self.data_gov
-                        .download_resources(&selected_resources, Some(dir.as_path()))
-                        .await
-                } else {
-                    self.data_gov
-                        .download_dataset_resources(&selected_resources, &dataset_slug)
-                        .await
-                };
+                // Download all resources to the determined output directory
+                let download_results = self
+                    .data_gov
+                    .download_resources(&selected_resources, Some(output_dir.as_path()))
+                    .await;
 
                 let mut downloads = Vec::with_capacity(selected_resources.len());
                 let mut success_count = 0usize;
@@ -412,7 +418,7 @@ impl DataGovMcpServer {
                         "name": dataset_slug,
                         "title": dataset_title,
                     },
-                    "downloadDirectory": target_dir.to_string_lossy(),
+                    "downloadDirectory": output_dir.to_string_lossy(),
                     "downloadCount": downloads.len(),
                     "successfulCount": success_count,
                     "failedCount": error_count,

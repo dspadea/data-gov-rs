@@ -1,7 +1,7 @@
 use colored::{ColoredString, Colorize};
 use is_terminal::IsTerminal;
 use std::env;
-use std::io::{stderr, stdout};
+use std::io::stdout;
 
 /// Color mode configuration
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -33,7 +33,6 @@ impl std::str::FromStr for ColorMode {
 pub struct ColorHelper {
     mode: ColorMode,
     stdout_is_terminal: bool,
-    stderr_is_terminal: bool,
     no_color: bool,
 }
 
@@ -43,7 +42,6 @@ impl ColorHelper {
         Self {
             mode,
             stdout_is_terminal: stdout().is_terminal(),
-            stderr_is_terminal: stderr().is_terminal(),
             no_color: env::var("NO_COLOR").is_ok()
                 && !env::var("NO_COLOR").unwrap_or_default().is_empty(),
         }
@@ -52,11 +50,6 @@ impl ColorHelper {
     /// Check if colors should be used for stdout
     pub fn should_color_stdout(&self) -> bool {
         self.should_use_colors(self.stdout_is_terminal)
-    }
-
-    /// Check if colors should be used for stderr
-    pub fn should_color_stderr(&self) -> bool {
-        self.should_use_colors(self.stderr_is_terminal)
     }
 
     /// Internal logic for color determination
@@ -118,15 +111,6 @@ impl ColorHelper {
         }
     }
 
-    /// Apply magenta color if colors are enabled
-    pub fn magenta(&self, text: &str) -> ColoredString {
-        if self.should_color_stdout() {
-            text.magenta()
-        } else {
-            text.normal()
-        }
-    }
-
     /// Apply bold formatting if colors are enabled
     pub fn bold(&self, text: &str) -> ColoredString {
         if self.should_color_stdout() {
@@ -176,22 +160,6 @@ impl StyleBuilder {
     pub fn yellow(self, text: &str) -> ChainedStyle {
         ChainedStyle::new(text, self.should_color).yellow()
     }
-
-    pub fn cyan(self, text: &str) -> ChainedStyle {
-        ChainedStyle::new(text, self.should_color).cyan()
-    }
-
-    pub fn magenta(self, text: &str) -> ChainedStyle {
-        ChainedStyle::new(text, self.should_color).magenta()
-    }
-
-    pub fn bold(self, text: &str) -> ChainedStyle {
-        ChainedStyle::new(text, self.should_color).bold()
-    }
-
-    pub fn dimmed(self, text: &str) -> ChainedStyle {
-        ChainedStyle::new(text, self.should_color).dimmed()
-    }
 }
 
 /// Chainable style operations
@@ -236,30 +204,9 @@ impl ChainedStyle {
         self
     }
 
-    pub fn cyan(mut self) -> Self {
-        if self.should_color {
-            self.text = self.text.cyan().to_string();
-        }
-        self
-    }
-
-    pub fn magenta(mut self) -> Self {
-        if self.should_color {
-            self.text = self.text.magenta().to_string();
-        }
-        self
-    }
-
     pub fn bold(mut self) -> Self {
         if self.should_color {
             self.text = self.text.bold().to_string();
-        }
-        self
-    }
-
-    pub fn dimmed(mut self) -> Self {
-        if self.should_color {
-            self.text = self.text.dimmed().to_string();
         }
         self
     }
@@ -287,7 +234,6 @@ mod tests {
     fn test_color_helper_never() {
         let helper = ColorHelper::new(ColorMode::Never);
         assert!(!helper.should_color_stdout());
-        assert!(!helper.should_color_stderr());
     }
 
     #[test]
@@ -296,7 +242,6 @@ mod tests {
         // Should be true unless NO_COLOR is set
         if !helper.no_color {
             assert!(helper.should_color_stdout());
-            assert!(helper.should_color_stderr());
         }
     }
 }

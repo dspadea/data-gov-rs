@@ -1,5 +1,6 @@
-use crate::colors::ColorMode;
+use crate::ui::StatusReporter;
 use data_gov_ckan::{ApiKey, Configuration as CkanConfiguration};
+use std::fmt;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -13,7 +14,7 @@ pub enum OperatingMode {
 }
 
 /// Configuration for the Data.gov client
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct DataGovConfig {
     /// CKAN client configuration
     pub ckan_config: Arc<CkanConfiguration>,
@@ -27,10 +28,28 @@ pub struct DataGovConfig {
     pub max_concurrent_downloads: usize,
     /// Timeout for downloads in seconds
     pub download_timeout_secs: u64,
-    /// Enable progress bars for downloads
-    pub show_progress: bool,
-    /// Color mode for output
-    pub color_mode: ColorMode,
+    /// Optional status reporter for UI callbacks
+    pub status_reporter: Option<Arc<dyn StatusReporter + Send + Sync>>,
+}
+
+impl fmt::Debug for DataGovConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("DataGovConfig")
+            .field("ckan_config", &self.ckan_config)
+            .field("mode", &self.mode)
+            .field("base_download_dir", &self.base_download_dir)
+            .field("user_agent", &self.user_agent)
+            .field("max_concurrent_downloads", &self.max_concurrent_downloads)
+            .field("download_timeout_secs", &self.download_timeout_secs)
+            .field(
+                "status_reporter",
+                &self
+                    .status_reporter
+                    .as_ref()
+                    .map(|_| "Some(StatusReporter)"),
+            )
+            .finish()
+    }
 }
 
 impl Default for DataGovConfig {
@@ -42,8 +61,7 @@ impl Default for DataGovConfig {
             user_agent: "data-gov-rs/1.0".to_string(),
             max_concurrent_downloads: 3,
             download_timeout_secs: 300, // 5 minutes
-            show_progress: true,
-            color_mode: ColorMode::default(),
+            status_reporter: None,
         }
     }
 }
@@ -129,15 +147,23 @@ impl DataGovConfig {
         self
     }
 
-    /// Enable or disable progress bars
-    pub fn with_progress(mut self, show_progress: bool) -> Self {
-        self.show_progress = show_progress;
+    /// Attach a status reporter for UI callbacks
+    pub fn with_status_reporter<R>(mut self, reporter: Arc<R>) -> Self
+    where
+        R: StatusReporter + Send + Sync + 'static,
+    {
+        self.status_reporter = Some(reporter);
         self
     }
 
-    /// Set color mode
-    pub fn with_color_mode(mut self, color_mode: ColorMode) -> Self {
-        self.color_mode = color_mode;
+    /// Remove any configured status reporter
+    pub fn without_status_reporter(mut self) -> Self {
+        self.status_reporter = None;
         self
+    }
+
+    /// Borrow the configured status reporter
+    pub fn status_reporter(&self) -> Option<&Arc<dyn StatusReporter + Send + Sync>> {
+        self.status_reporter.as_ref()
     }
 }

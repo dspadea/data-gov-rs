@@ -30,8 +30,9 @@ cargo install --path .
 Common commands:
 
 - `data-gov search "climate change" 10`
-- `data-gov show consumer-complaint-database`
-- `data-gov download consumer-complaint-database 0`
+- `data-gov show electric-vehicle-population-data`
+- `data-gov download electric-vehicle-population-data 0`                           # Download by index
+- `data-gov download electric-vehicle-population-data "Comma Separated Values File"`  # Download by name (quoted)
 - `data-gov list organizations`
 
 The CLI automatically adjusts colour and progress output for TTY / non-TTY environments. Tune behaviour with `--color`, `NO_COLOR`, or `NO_PROGRESS` as needed.
@@ -57,7 +58,7 @@ Add the crate via a git dependency until it is published on crates.io:
 
 ```toml
 [dependencies]
-data-gov = "0.1.1"
+data-gov = "0.2.0"
 tokio = { version = "1", features = ["full"] }
 ```
 
@@ -87,7 +88,7 @@ async fn main() -> data_gov::Result<()> {
 
 ```toml
 [dependencies]
-data-gov-ckan = "0.1.1"
+data-gov-ckan = "0.2.0"
 tokio = { version = "1", features = ["full"] }
 ```
 
@@ -138,8 +139,5 @@ data-gov-rs/
 
 This is an independent project and is not affiliated with data.gov or any government agency. For authoritative information, refer to the official [data.gov](https://www.data.gov/) portal.
 
-> ℹ️ **Heads-up:** Large portions of this codebase were AI-assisted. The APIs
-> appear to work well in informal testing, but thorough human review and
-> hardening is still pending. Use at your own risk.
-
 Licensed under the [Apache License 2.0](LICENSE).
+

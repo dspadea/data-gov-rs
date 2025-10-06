@@ -1,6 +1,4 @@
 use futures::StreamExt;
-use indicatif::{ProgressBar, ProgressStyle};
-use is_terminal::IsTerminal;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::fs::File;
@@ -9,6 +7,10 @@ use url::Url;
 
 use crate::config::DataGovConfig;
 use crate::error::{DataGovError, Result};
+use crate::ui::{
+    DownloadBatch, DownloadFailed, DownloadFinished, DownloadProgress, DownloadStarted,
+    StatusReporter,
+};
 use data_gov_ckan::{
     CkanClient,
     models::{Package, PackageSearchResult, Resource},
@@ -169,98 +171,121 @@ impl DataGovClient {
     }
 
     /// Pick a filesystem-friendly filename for a resource download.
-    pub fn get_resource_filename(resource: &Resource, fallback_name: Option<&str>) -> String {
-        // Try resource name first
-        if let Some(name) = &resource.name {
+    /// Pick a filesystem-friendly filename for a resource download.
+    ///
+    /// # Arguments
+    /// * `resource` - The resource to generate a filename for
+    /// * `fallback_name` - Optional fallback name if resource has no name
+    /// * `resource_index` - Optional index to append to prevent conflicts when multiple resources have the same name
+    ///
+    /// When downloading multiple resources, the index should be provided to ensure unique filenames
+    /// even when resources have duplicate names.
+    pub fn get_resource_filename(
+        resource: &Resource,
+        fallback_name: Option<&str>,
+        resource_index: Option<usize>,
+    ) -> String {
+        // Determine base filename and whether it has an extension
+        let (base_filename, has_extension) = if let Some(name) = &resource.name {
             if let Some(format) = &resource.format {
-                if name.ends_with(&format!(".{}", format.to_lowercase())) {
-                    return name.clone();
+                let format_lower = format.to_lowercase();
+                if name.ends_with(&format!(".{}", format_lower)) {
+                    (name.clone(), true)
                 } else {
-                    return format!("{}.{}", name, format.to_lowercase());
+                    (format!("{}.{}", name, format_lower), true)
                 }
+            } else {
+                (name.clone(), false)
             }
-            return name.clone();
-        }
-
-        // Try to extract filename from URL
-        if let Some(url) = &resource.url
+        } else if let Some(url) = &resource.url
             && let Ok(parsed_url) = Url::parse(url)
             && let Some(mut segments) = parsed_url.path_segments()
             && let Some(filename) = segments.next_back()
             && !filename.is_empty()
             && filename.contains('.')
         {
-            return filename.to_string();
-        }
-
-        // Use fallback with format extension
-        let base_name = fallback_name.unwrap_or("data");
-        if let Some(format) = &resource.format {
-            format!("{}.{}", base_name, format.to_lowercase())
+            (filename.to_string(), true)
         } else {
-            format!("{}.dat", base_name)
+            // Use fallback with format extension
+            let base_name = fallback_name.unwrap_or("data");
+            if let Some(format) = &resource.format {
+                (format!("{}.{}", base_name, format.to_lowercase()), true)
+            } else {
+                (format!("{}.dat", base_name), true)
+            }
+        };
+
+        // Append resource index if provided (to handle duplicate names)
+        if let Some(index) = resource_index {
+            if has_extension {
+                // Insert index before the extension
+                if let Some(dot_pos) = base_filename.rfind('.') {
+                    let (name, ext) = base_filename.split_at(dot_pos);
+                    return format!("{}-{}{}", name, index, ext);
+                }
+            }
+            // No extension or couldn't find dot, just append
+            format!("{}-{}", base_filename, index)
+        } else {
+            base_filename
         }
     }
 
     // === File Downloads ===
 
-    /// Download a single resource into the dataset-specific directory.
+    /// Download a single resource to the specified directory.
     ///
     /// # Arguments
     /// * `resource` - The resource to download
-    /// * `dataset_name` - Name of the dataset (used for subdirectory)
+    /// * `output_dir` - Directory where the file will be saved. If None, uses the base download directory.
     ///
-    /// Returns the path where the file was saved
-    pub async fn download_dataset_resource(
-        &self,
-        resource: &Resource,
-        dataset_name: &str,
-    ) -> Result<PathBuf> {
-        let dataset_dir = self.config.get_dataset_download_dir(dataset_name);
-        let filename = Self::get_resource_filename(resource, None);
-        let output_path = dataset_dir.join(filename);
-
-        let url = resource
-            .url
-            .as_ref()
-            .ok_or_else(|| DataGovError::resource_not_found("Resource has no URL"))?;
-
-        self.download_file(url, &output_path, resource.name.as_deref())
-            .await?;
-        Ok(output_path)
-    }
-
-    /// Download a single resource to a specific path.
-    ///
-    /// # Arguments
-    /// * `resource` - The resource to download
-    /// * `output_path` - Where to save the file (if None, uses base download directory)
-    ///
-    /// Returns the path where the file was saved
+    /// Returns the full path where the file was saved.
     pub async fn download_resource(
         &self,
         resource: &Resource,
-        output_path: Option<PathBuf>,
+        output_dir: Option<&Path>,
     ) -> Result<PathBuf> {
-        let url = resource
-            .url
-            .as_ref()
-            .ok_or_else(|| DataGovError::resource_not_found("Resource has no URL"))?;
-
-        let output_path = match output_path {
-            Some(path) => path,
+        let url = match resource.url.as_deref() {
+            Some(url) => url,
             None => {
-                let filename = Self::get_resource_filename(resource, None);
-                self.config.get_base_download_dir().join(filename)
+                if let Some(reporter) = self.config.status_reporter.as_ref() {
+                    let event = DownloadFailed {
+                        resource_name: resource.name.clone(),
+                        dataset_name: None,
+                        output_path: None,
+                        error: "Resource has no URL".to_string(),
+                    };
+                    reporter.on_download_failed(&event);
+                }
+                return Err(DataGovError::resource_not_found("Resource has no URL"));
             }
         };
 
-        self.download_file(url, &output_path, resource.name.as_deref())
-            .await?;
+        let output_dir = output_dir
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(|| self.config.get_base_download_dir());
+        // No resource index needed for single download
+        let filename = Self::get_resource_filename(resource, None, None);
+        let output_path = output_dir.join(filename);
+
+        Self::perform_download(
+            &self.http_client,
+            url,
+            &output_path,
+            resource.name.clone(),
+            None,
+            self.reporter(),
+        )
+        .await?;
+
         Ok(output_path)
     }
 
-    /// Download multiple resources concurrently.
+    /// Download multiple resources concurrently to the specified directory.
+    ///
+    /// # Arguments
+    /// * `resources` - Slice of resources to download
+    /// * `output_dir` - Directory where files will be saved. If None, uses the base download directory.
     ///
     /// Returns one [`Result`] per resource so callers can inspect partial failures.
     pub async fn download_resources(
@@ -268,295 +293,210 @@ impl DataGovClient {
         resources: &[Resource],
         output_dir: Option<&Path>,
     ) -> Vec<Result<PathBuf>> {
-        // For multiple resources, use simple concurrent downloads
-        if resources.len() > 1 {
-            if self.config.show_progress && std::env::var("NO_PROGRESS").is_err() {
-                println!("Downloading {} resources...", resources.len());
-            }
+        if resources.is_empty() {
+            return vec![];
+        }
 
-            let output_dir = output_dir
-                .map(|p| p.to_path_buf())
-                .unwrap_or_else(|| self.config.get_base_download_dir());
-            let semaphore = Arc::new(tokio::sync::Semaphore::new(
-                self.config.max_concurrent_downloads,
-            ));
+        if resources.len() == 1 {
+            return vec![self.download_resource(&resources[0], output_dir).await];
+        }
 
-            let mut futures = Vec::new();
+        // Multiple resources - use concurrent downloads with semaphore
+        if let Some(reporter) = self.config.status_reporter.as_ref() {
+            let event = DownloadBatch {
+                resource_count: resources.len(),
+                dataset_name: None,
+            };
+            reporter.on_download_batch(&event);
+        }
 
-            for resource in resources {
-                let resource = resource.clone();
-                let output_dir = output_dir.clone();
-                let semaphore = semaphore.clone();
-                let http_client = self.http_client.clone();
-                let config = self.config.clone();
+        let output_dir = output_dir
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(|| self.config.get_base_download_dir());
 
-                let future = async move {
-                    let _permit = semaphore.acquire().await.unwrap();
+        let semaphore = Arc::new(tokio::sync::Semaphore::new(
+            self.config.max_concurrent_downloads,
+        ));
 
-                    let url = match &resource.url {
-                        Some(url) => url,
-                        None => {
-                            return Err(DataGovError::resource_not_found("Resource has no URL"));
+        let status_reporter = self.reporter();
+        let mut futures = Vec::with_capacity(resources.len());
+
+        for (resource_index, resource) in resources.iter().enumerate() {
+            let resource = resource.clone();
+            let output_dir = output_dir.clone();
+            let semaphore = semaphore.clone();
+            let http_client = self.http_client.clone();
+            let status_reporter = status_reporter.clone();
+
+            let future = async move {
+                let _permit = match semaphore.acquire().await {
+                    Ok(permit) => permit,
+                    Err(e) => {
+                        if let Some(reporter) = status_reporter.as_ref() {
+                            let event = DownloadFailed {
+                                resource_name: resource.name.clone(),
+                                dataset_name: None,
+                                output_path: None,
+                                error: format!("Failed to acquire download slot: {}", e),
+                            };
+                            reporter.on_download_failed(&event);
                         }
-                    };
-
-                    let filename = DataGovClient::get_resource_filename(&resource, None);
-                    let output_path = output_dir.join(filename);
-
-                    DataGovClient::download_file_simple(
-                        &http_client,
-                        &config,
-                        url,
-                        &output_path,
-                        resource.name.as_deref(),
-                    )
-                    .await?;
-
-                    Ok(output_path)
+                        return Err(DataGovError::download_error(format!(
+                            "Semaphore error: {}",
+                            e
+                        )));
+                    }
                 };
 
-                futures.push(future);
-            }
+                let url = match resource.url.as_deref() {
+                    Some(url) => url,
+                    None => {
+                        if let Some(reporter) = status_reporter.as_ref() {
+                            let event = DownloadFailed {
+                                resource_name: resource.name.clone(),
+                                dataset_name: None,
+                                output_path: None,
+                                error: "Resource has no URL".to_string(),
+                            };
+                            reporter.on_download_failed(&event);
+                        }
+                        return Err(DataGovError::resource_not_found("Resource has no URL"));
+                    }
+                };
 
-            futures::future::join_all(futures).await
-        } else if resources.len() == 1 {
-            // For single resource, use regular download with progress bar
-            let resource = &resources[0];
-            let output_path = match output_dir {
-                Some(dir) => {
-                    let filename = Self::get_resource_filename(resource, None);
-                    Some(dir.join(filename))
-                }
-                None => None,
+                // Include resource index to prevent filename conflicts
+                let filename =
+                    DataGovClient::get_resource_filename(&resource, None, Some(resource_index));
+                let output_path = output_dir.join(&filename);
+
+                DataGovClient::perform_download(
+                    &http_client,
+                    url,
+                    &output_path,
+                    resource.name.clone(),
+                    None,
+                    status_reporter,
+                )
+                .await?;
+
+                Ok(output_path)
             };
 
-            vec![self.download_resource(resource, output_path).await]
-        } else {
-            // No resources
-            vec![]
+            futures.push(future);
         }
+
+        futures::future::join_all(futures).await
     }
 
-    /// Download multiple resources into the dataset-specific directory.
-    ///
-    /// Returns one [`Result`] per resource so callers can inspect partial failures.
-    pub async fn download_dataset_resources(
-        &self,
-        resources: &[Resource],
-        dataset_name: &str,
-    ) -> Vec<Result<PathBuf>> {
-        // For multiple resources, use simple concurrent downloads
-        if resources.len() > 1 {
-            if self.config.show_progress && std::env::var("NO_PROGRESS").is_err() {
-                println!("Downloading {} resources...", resources.len());
-            }
-
-            let semaphore = Arc::new(tokio::sync::Semaphore::new(
-                self.config.max_concurrent_downloads,
-            ));
-            let mut futures = Vec::new();
-
-            for resource in resources {
-                let resource = resource.clone();
-                let dataset_name = dataset_name.to_string();
-                let semaphore = semaphore.clone();
-                let http_client = self.http_client.clone();
-                let config = self.config.clone();
-
-                let future = async move {
-                    let _permit = semaphore.acquire().await.unwrap();
-
-                    let url = match &resource.url {
-                        Some(url) => url,
-                        None => {
-                            return Err(DataGovError::resource_not_found("Resource has no URL"));
-                        }
-                    };
-
-                    let dataset_dir = config.get_base_download_dir().join(dataset_name);
-                    let filename = DataGovClient::get_resource_filename(&resource, None);
-                    let output_path = dataset_dir.join(filename);
-
-                    DataGovClient::download_file_simple(
-                        &http_client,
-                        &config,
-                        url,
-                        &output_path,
-                        resource.name.as_deref(),
-                    )
-                    .await?;
-
-                    Ok(output_path)
-                };
-
-                futures.push(future);
-            }
-
-            futures::future::join_all(futures).await
-        } else if resources.len() == 1 {
-            // For single resource, use regular download with progress bar
-            vec![
-                self.download_dataset_resource(&resources[0], dataset_name)
-                    .await,
-            ]
-        } else {
-            // No resources
-            vec![]
-        }
+    fn reporter(&self) -> Option<Arc<dyn StatusReporter + Send + Sync>> {
+        self.config.status_reporter.clone()
     }
 
-    /// Download a file from a URL with progress tracking
-    async fn download_file(
-        &self,
+    async fn perform_download(
+        http_client: &reqwest::Client,
         url: &str,
         output_path: &Path,
-        display_name: Option<&str>,
+        resource_name: Option<String>,
+        dataset_name: Option<String>,
+        status_reporter: Option<Arc<dyn StatusReporter + Send + Sync>>,
     ) -> Result<()> {
-        // Create parent directories if they don't exist
-        if let Some(parent) = output_path.parent() {
-            tokio::fs::create_dir_all(parent).await?;
+        let notify_failure =
+            |message: String, status_reporter: &Option<Arc<dyn StatusReporter + Send + Sync>>| {
+                if let Some(reporter) = status_reporter.as_ref() {
+                    let event = DownloadFailed {
+                        resource_name: resource_name.clone(),
+                        dataset_name: dataset_name.clone(),
+                        output_path: Some(output_path.to_path_buf()),
+                        error: message.clone(),
+                    };
+                    reporter.on_download_failed(&event);
+                }
+            };
+
+        if let Some(parent) = output_path.parent()
+            && let Err(err) = tokio::fs::create_dir_all(parent).await
+        {
+            notify_failure(err.to_string(), &status_reporter);
+            return Err(err.into());
         }
 
-        let response = self.http_client.get(url).send().await?;
+        let response = match http_client.get(url).send().await {
+            Ok(resp) => resp,
+            Err(err) => {
+                notify_failure(err.to_string(), &status_reporter);
+                return Err(err.into());
+            }
+        };
 
         if !response.status().is_success() {
-            return Err(DataGovError::download_error(format!(
-                "HTTP {} while downloading {}",
-                response.status(),
-                url
-            )));
+            let message = format!("HTTP {} while downloading {}", response.status(), url);
+            notify_failure(message.clone(), &status_reporter);
+            return Err(DataGovError::download_error(message));
         }
 
         let total_size = response.content_length();
-        let display_name = display_name.unwrap_or("file");
 
-        // Setup progress indication based on TTY and environment
-        let should_show_progress =
-            self.config.show_progress && std::env::var("NO_PROGRESS").is_err(); // Respect NO_PROGRESS env var
+        if let Some(reporter) = status_reporter.as_ref() {
+            let event = DownloadStarted {
+                resource_name: resource_name.clone(),
+                dataset_name: dataset_name.clone(),
+                url: url.to_string(),
+                output_path: output_path.to_path_buf(),
+                total_bytes: total_size,
+            };
+            reporter.on_download_started(&event);
+        }
 
-        let (progress_bar, show_simple_progress) = if should_show_progress {
-            if std::io::stdout().is_terminal() && std::env::var("FORCE_SIMPLE_PROGRESS").is_err() {
-                // TTY: Show fancy progress bar (unless forced simple)
-                let pb = if let Some(size) = total_size {
-                    ProgressBar::new(size)
-                } else {
-                    ProgressBar::new_spinner()
-                };
-
-                let template = if total_size.is_some() {
-                    "{msg} [{bar:40.cyan/blue}] {bytes}/{total_bytes} ({bytes_per_sec}, {eta})"
-                } else {
-                    "{msg} [{spinner:.cyan/blue}] {bytes} ({bytes_per_sec})"
-                };
-
-                pb.set_style(
-                    ProgressStyle::default_bar()
-                        .template(template)
-                        .unwrap_or_else(|_| {
-                            if total_size.is_some() {
-                                ProgressStyle::default_bar().progress_chars("█▉▊▋▌▍▎▏ ")
-                            } else {
-                                ProgressStyle::default_spinner()
-                            }
-                        })
-                        .progress_chars("█▉▊▋▌▍▎▏ "),
-                );
-                pb.set_message(format!("Downloading {}", display_name));
-                (Some(pb), false)
-            } else {
-                // Non-TTY or forced simple: Show simple text progress
-                if total_size.is_some() {
-                    println!(
-                        "Downloading {} ({} bytes)...",
-                        display_name,
-                        total_size.unwrap()
-                    );
-                } else {
-                    println!("Downloading {} ...", display_name);
-                }
-                (None, true)
+        let mut file = match File::create(output_path).await {
+            Ok(file) => file,
+            Err(err) => {
+                notify_failure(err.to_string(), &status_reporter);
+                return Err(err.into());
             }
-        } else {
-            // Progress disabled
-            (None, false)
         };
 
-        let mut file = File::create(output_path).await?;
         let mut stream = response.bytes_stream();
         let mut downloaded = 0u64;
 
-        while let Some(chunk) = stream.next().await {
-            let chunk = chunk?;
-            file.write_all(&chunk).await?;
+        while let Some(chunk_result) = stream.next().await {
+            let chunk = match chunk_result {
+                Ok(chunk) => chunk,
+                Err(err) => {
+                    notify_failure(err.to_string(), &status_reporter);
+                    return Err(err.into());
+                }
+            };
+
+            if let Err(err) = file.write_all(&chunk).await {
+                notify_failure(err.to_string(), &status_reporter);
+                return Err(err.into());
+            }
+
             downloaded += chunk.len() as u64;
 
-            if let Some(pb) = &progress_bar {
-                pb.set_position(downloaded);
+            if let Some(reporter) = status_reporter.as_ref() {
+                let event = DownloadProgress {
+                    resource_name: resource_name.clone(),
+                    dataset_name: dataset_name.clone(),
+                    output_path: output_path.to_path_buf(),
+                    downloaded_bytes: downloaded,
+                    total_bytes: total_size,
+                };
+                reporter.on_download_progress(&event);
             }
         }
 
-        if let Some(pb) = progress_bar {
-            // For unknown size downloads, set the final position before finishing
-            if total_size.is_none() {
-                pb.set_length(downloaded);
-                pb.set_position(downloaded);
-            }
-            pb.finish_with_message(format!("Downloaded {}", display_name));
-        } else if show_simple_progress {
-            // For non-TTY, show completion message
-            println!("✓ Downloaded {}", display_name);
+        if let Some(reporter) = status_reporter.as_ref() {
+            let event = DownloadFinished {
+                resource_name,
+                dataset_name,
+                output_path: output_path.to_path_buf(),
+            };
+            reporter.on_download_finished(&event);
         }
 
         Ok(())
     }
-
-    /// Simple download method for concurrent downloads (no progress bars to avoid conflicts)
-    async fn download_file_simple(
-        http_client: &reqwest::Client,
-        config: &DataGovConfig,
-        url: &str,
-        output_path: &Path,
-        display_name: Option<&str>,
-    ) -> Result<()> {
-        // Create parent directories if they don't exist
-        if let Some(parent) = output_path.parent() {
-            tokio::fs::create_dir_all(parent).await?;
-        }
-
-        let display_name = display_name.unwrap_or("file");
-
-        // Show simple text progress for concurrent downloads
-        if config.show_progress && std::env::var("NO_PROGRESS").is_err() {
-            println!("Downloading {} ...", display_name);
-        }
-
-        let response = http_client.get(url).send().await?;
-
-        if !response.status().is_success() {
-            return Err(DataGovError::download_error(format!(
-                "HTTP {} while downloading {}",
-                response.status(),
-                url
-            )));
-        }
-
-        let mut file = File::create(output_path).await?;
-        let mut stream = response.bytes_stream();
-
-        while let Some(chunk) = stream.next().await {
-            let chunk = chunk?;
-            file.write_all(&chunk).await?;
-        }
-
-        // Show completion message
-        if config.show_progress && std::env::var("NO_PROGRESS").is_err() {
-            println!("✓ Downloaded {}", display_name);
-        }
-
-        Ok(())
-    }
-
-    // === Utility Methods ===
 
     /// Check if the base download directory exists and is writable
     pub async fn validate_download_dir(&self) -> Result<()> {
@@ -573,7 +513,6 @@ impl DataGovClient {
             )));
         }
 
-        // Test write permissions by creating a temporary file
         let test_file = base_dir.join(".write_test");
         tokio::fs::write(&test_file, b"test").await?;
         tokio::fs::remove_file(&test_file).await?;
@@ -595,5 +534,82 @@ impl DataGovClient {
 impl Default for DataGovClient {
     fn default() -> Self {
         Self::new().expect("Failed to create default DataGovClient")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_get_resource_filename_no_index() {
+        let resource = Resource {
+            name: Some("data".to_string()),
+            format: Some("CSV".to_string()),
+            url: Some("https://example.com/data.csv".to_string()),
+            ..Default::default()
+        };
+        let filename = DataGovClient::get_resource_filename(&resource, None, None);
+        assert_eq!(filename, "data.csv");
+    }
+
+    #[test]
+    fn test_get_resource_filename_with_index() {
+        let resource = Resource {
+            name: Some("data".to_string()),
+            format: Some("CSV".to_string()),
+            url: Some("https://example.com/data.csv".to_string()),
+            ..Default::default()
+        };
+
+        let filename0 = DataGovClient::get_resource_filename(&resource, None, Some(0));
+        assert_eq!(filename0, "data-0.csv");
+
+        let filename1 = DataGovClient::get_resource_filename(&resource, None, Some(1));
+        assert_eq!(filename1, "data-1.csv");
+
+        let filename2 = DataGovClient::get_resource_filename(&resource, None, Some(2));
+        assert_eq!(filename2, "data-2.csv");
+    }
+
+    #[test]
+    fn test_get_resource_filename_already_has_extension() {
+        let resource = Resource {
+            name: Some("report.csv".to_string()),
+            format: Some("CSV".to_string()),
+            url: Some("https://example.com/report.csv".to_string()),
+            ..Default::default()
+        };
+
+        let filename = DataGovClient::get_resource_filename(&resource, None, Some(3));
+        assert_eq!(filename, "report-3.csv");
+    }
+
+    #[test]
+    fn test_get_resource_filename_no_format() {
+        let resource = Resource {
+            name: Some("myfile".to_string()),
+            format: None,
+            url: Some("https://example.com/myfile".to_string()),
+            ..Default::default()
+        };
+
+        let filename = DataGovClient::get_resource_filename(&resource, None, Some(5));
+        assert_eq!(filename, "myfile-5");
+    }
+
+    #[test]
+    fn test_get_resource_filename_multiple_extensions() {
+        let resource = Resource {
+            name: Some("archive.tar.gz".to_string()),
+            format: Some("TAR".to_string()),
+            url: Some("https://example.com/archive.tar.gz".to_string()),
+            ..Default::default()
+        };
+
+        // Name doesn't end with .tar (it ends with .gz), so format is appended -> archive.tar.gz.tar
+        // Then index is inserted before last dot -> archive.tar.gz-7.tar
+        let filename = DataGovClient::get_resource_filename(&resource, None, Some(7));
+        assert_eq!(filename, "archive.tar.gz-7.tar");
     }
 }

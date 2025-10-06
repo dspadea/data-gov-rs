@@ -8,11 +8,6 @@ Async Rust client for CKAN APIs with first-class support for [data.gov](https://
 > work with other CKAN deployments that follow the same API surface, but those
 > combinations have not been officially tested.
 
-> ⚠️ **AI-assisted implementation:** Much of this crate was produced with AI
-> tooling. The client performs well in informal exercises, yet a thorough
-> human audit and cleanup pass is still on the roadmap. Integrate it with
-> awareness of that caveat.
-
 ## Requirements
 
 - Rust **1.90+** (Rust 2024 edition)
@@ -29,7 +24,7 @@ Use the published crate from crates.io:
 
 ```toml
 [dependencies]
-data-gov-ckan = "0.1.1"
+data-gov-ckan = "0.2.0"
 tokio = { version = "1", features = ["full"] }
 ```
 
@@ -124,6 +119,9 @@ Integration tests require network access. Use `cargo test -- --ignored` to skip 
 
 Reuse the same `CkanClient` for multiple requests to benefit from connection pooling. Combine async calls with `tokio::try_join!` for improved throughput.
 
-## License & support
 
-Distributed under the [Apache 2.0 license](../LICENSE). Please open issues or pull requests on [GitHub](https://github.com/dspadea/data-gov-rs) for questions and contributions.
+## Disclaimer & license
+
+This is an independent project and is not affiliated with data.gov or any government agency. For authoritative information, refer to the official [data.gov](https://www.data.gov/) portal.
+
+Licensed under the [Apache License 2.0](LICENSE).
