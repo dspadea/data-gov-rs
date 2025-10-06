@@ -341,7 +341,10 @@ impl DataGovClient {
                             };
                             reporter.on_download_failed(&event);
                         }
-                        return Err(DataGovError::download_error(format!("Semaphore error: {}", e)));
+                        return Err(DataGovError::download_error(format!(
+                            "Semaphore error: {}",
+                            e
+                        )));
                     }
                 };
 
@@ -362,7 +365,8 @@ impl DataGovClient {
                 };
 
                 // Include resource index to prevent filename conflicts
-                let filename = DataGovClient::get_resource_filename(&resource, None, Some(resource_index));
+                let filename =
+                    DataGovClient::get_resource_filename(&resource, None, Some(resource_index));
                 let output_path = output_dir.join(&filename);
 
                 DataGovClient::perform_download(
@@ -410,10 +414,11 @@ impl DataGovClient {
             };
 
         if let Some(parent) = output_path.parent()
-            && let Err(err) = tokio::fs::create_dir_all(parent).await {
-                notify_failure(err.to_string(), &status_reporter);
-                return Err(err.into());
-            }
+            && let Err(err) = tokio::fs::create_dir_all(parent).await
+        {
+            notify_failure(err.to_string(), &status_reporter);
+            return Err(err.into());
+        }
 
         let response = match http_client.get(url).send().await {
             Ok(resp) => resp,
@@ -556,13 +561,13 @@ mod tests {
             url: Some("https://example.com/data.csv".to_string()),
             ..Default::default()
         };
-        
+
         let filename0 = DataGovClient::get_resource_filename(&resource, None, Some(0));
         assert_eq!(filename0, "data-0.csv");
-        
+
         let filename1 = DataGovClient::get_resource_filename(&resource, None, Some(1));
         assert_eq!(filename1, "data-1.csv");
-        
+
         let filename2 = DataGovClient::get_resource_filename(&resource, None, Some(2));
         assert_eq!(filename2, "data-2.csv");
     }
@@ -575,7 +580,7 @@ mod tests {
             url: Some("https://example.com/report.csv".to_string()),
             ..Default::default()
         };
-        
+
         let filename = DataGovClient::get_resource_filename(&resource, None, Some(3));
         assert_eq!(filename, "report-3.csv");
     }
@@ -588,7 +593,7 @@ mod tests {
             url: Some("https://example.com/myfile".to_string()),
             ..Default::default()
         };
-        
+
         let filename = DataGovClient::get_resource_filename(&resource, None, Some(5));
         assert_eq!(filename, "myfile-5");
     }
@@ -601,7 +606,7 @@ mod tests {
             url: Some("https://example.com/archive.tar.gz".to_string()),
             ..Default::default()
         };
-        
+
         // Name doesn't end with .tar (it ends with .gz), so format is appended -> archive.tar.gz.tar
         // Then index is inserted before last dot -> archive.tar.gz-7.tar
         let filename = DataGovClient::get_resource_filename(&resource, None, Some(7));

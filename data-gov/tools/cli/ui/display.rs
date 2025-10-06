@@ -1,8 +1,8 @@
 use data_gov::{DataGovClient, ckan::models::Package};
 
 use super::{
-    color_blue_bold, color_bold, color_dimmed, color_green, color_green_bold,
-    color_yellow, color_yellow_bold, color_blue,
+    color_blue, color_blue_bold, color_bold, color_dimmed, color_green, color_green_bold,
+    color_yellow, color_yellow_bold,
 };
 
 /// Print package details (shared between REPL and CLI modes)
@@ -61,14 +61,15 @@ pub fn print_package_details(package: &Package) {
             );
 
             if let Some(desc) = &resource.description
-                && !desc.is_empty() {
-                    let truncated = if desc.len() > 80 {
-                        format!("{}...", &desc[..80])
-                    } else {
-                        desc.clone()
-                    };
-                    println!("     {}", color_dimmed(&truncated));
-                }
+                && !desc.is_empty()
+            {
+                let truncated = if desc.len() > 80 {
+                    format!("{}...", &desc[..80])
+                } else {
+                    desc.clone()
+                };
+                println!("     {}", color_dimmed(&truncated));
+            }
         }
 
         println!(

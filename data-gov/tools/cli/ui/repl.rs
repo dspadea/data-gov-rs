@@ -1,14 +1,14 @@
 use rustyline::{DefaultEditor, Result as RustyResult};
-use tokio::runtime::Runtime;
 use std::io;
 use std::path::Path;
 use std::str::FromStr;
+use tokio::runtime::Runtime;
 
-use data_gov::{DataGovClient, DataGovConfig};
 use super::commands::ReplCommand;
 use super::display::print_repl_help;
 use super::handlers::execute_command;
-use super::{color_blue_bold, color_dimmed, color_green_bold, color_red_bold, color_blue};
+use super::{color_blue, color_blue_bold, color_dimmed, color_green_bold, color_red_bold};
+use data_gov::{DataGovClient, DataGovConfig};
 
 /// REPL state and logic
 pub struct DataGovRepl {
@@ -116,7 +116,7 @@ impl DataGovRepl {
             color_green_bold("Success!"),
             color_blue(&path.display().to_string())
         );
-        
+
         Ok(())
     }
 }

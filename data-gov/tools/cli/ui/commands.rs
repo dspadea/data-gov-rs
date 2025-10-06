@@ -147,10 +147,17 @@ mod tests {
     fn test_parse_download_command_with_index() {
         let result = ReplCommand::from_str("download my-dataset 0");
         assert!(result.is_ok());
-        
-        if let Ok(ReplCommand::Download { dataset_id, resource_selector }) = result {
+
+        if let Ok(ReplCommand::Download {
+            dataset_id,
+            resource_selector,
+        }) = result
+        {
             assert_eq!(dataset_id, "my-dataset");
-            assert!(matches!(resource_selector, Some(ResourceSelector::Index(0))));
+            assert!(matches!(
+                resource_selector,
+                Some(ResourceSelector::Index(0))
+            ));
         } else {
             panic!("Expected Download command with Index(0)");
         }
@@ -160,10 +167,17 @@ mod tests {
     fn test_parse_download_command_with_large_index() {
         let result = ReplCommand::from_str("download my-dataset 42");
         assert!(result.is_ok());
-        
-        if let Ok(ReplCommand::Download { dataset_id, resource_selector }) = result {
+
+        if let Ok(ReplCommand::Download {
+            dataset_id,
+            resource_selector,
+        }) = result
+        {
             assert_eq!(dataset_id, "my-dataset");
-            assert!(matches!(resource_selector, Some(ResourceSelector::Index(42))));
+            assert!(matches!(
+                resource_selector,
+                Some(ResourceSelector::Index(42))
+            ));
         } else {
             panic!("Expected Download command with Index(42)");
         }
@@ -173,8 +187,12 @@ mod tests {
     fn test_parse_download_command_with_name() {
         let result = ReplCommand::from_str("download my-dataset csv");
         assert!(result.is_ok());
-        
-        if let Ok(ReplCommand::Download { dataset_id, resource_selector }) = result {
+
+        if let Ok(ReplCommand::Download {
+            dataset_id,
+            resource_selector,
+        }) = result
+        {
             assert_eq!(dataset_id, "my-dataset");
             if let Some(ResourceSelector::Name(name)) = resource_selector {
                 assert_eq!(name, "csv");
@@ -190,8 +208,12 @@ mod tests {
     fn test_parse_download_command_with_partial_name() {
         let result = ReplCommand::from_str("download dataset-id complaints");
         assert!(result.is_ok());
-        
-        if let Ok(ReplCommand::Download { dataset_id, resource_selector }) = result {
+
+        if let Ok(ReplCommand::Download {
+            dataset_id,
+            resource_selector,
+        }) = result
+        {
             assert_eq!(dataset_id, "dataset-id");
             if let Some(ResourceSelector::Name(name)) = resource_selector {
                 assert_eq!(name, "complaints");
@@ -207,8 +229,12 @@ mod tests {
     fn test_parse_download_command_no_selector() {
         let result = ReplCommand::from_str("download my-dataset");
         assert!(result.is_ok());
-        
-        if let Ok(ReplCommand::Download { dataset_id, resource_selector }) = result {
+
+        if let Ok(ReplCommand::Download {
+            dataset_id,
+            resource_selector,
+        }) = result
+        {
             assert_eq!(dataset_id, "my-dataset");
             assert!(resource_selector.is_none());
         } else {
@@ -220,10 +246,17 @@ mod tests {
     fn test_parse_download_command_dl_alias() {
         let result = ReplCommand::from_str("dl my-dataset 0");
         assert!(result.is_ok());
-        
-        if let Ok(ReplCommand::Download { dataset_id, resource_selector }) = result {
+
+        if let Ok(ReplCommand::Download {
+            dataset_id,
+            resource_selector,
+        }) = result
+        {
             assert_eq!(dataset_id, "my-dataset");
-            assert!(matches!(resource_selector, Some(ResourceSelector::Index(0))));
+            assert!(matches!(
+                resource_selector,
+                Some(ResourceSelector::Index(0))
+            ));
         } else {
             panic!("Expected Download command using 'dl' alias");
         }
@@ -234,8 +267,12 @@ mod tests {
         // This should be treated as a name since it's not a valid number
         let result = ReplCommand::from_str("download my-dataset data.csv");
         assert!(result.is_ok());
-        
-        if let Ok(ReplCommand::Download { dataset_id, resource_selector }) = result {
+
+        if let Ok(ReplCommand::Download {
+            dataset_id,
+            resource_selector,
+        }) = result
+        {
             assert_eq!(dataset_id, "my-dataset");
             if let Some(ResourceSelector::Name(name)) = resource_selector {
                 assert_eq!(name, "data.csv");
@@ -251,30 +288,50 @@ mod tests {
     fn test_parse_download_command_too_many_args() {
         let result = ReplCommand::from_str("download dataset-id resource extra-arg");
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("Usage: download <dataset_id> [resource_index_or_name]"));
+        assert!(
+            result
+                .unwrap_err()
+                .contains("Usage: download <dataset_id> [resource_index_or_name]")
+        );
     }
 
     #[test]
     fn test_parse_download_command_too_few_args() {
         let result = ReplCommand::from_str("download");
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("Usage: download <dataset_id> [resource_index_or_name]"));
+        assert!(
+            result
+                .unwrap_err()
+                .contains("Usage: download <dataset_id> [resource_index_or_name]")
+        );
     }
 
     #[test]
     fn test_resource_selector_numeric_string_is_index() {
         // "0" should be parsed as Index(0), not Name("0")
         let result = ReplCommand::from_str("download dataset 0");
-        if let Ok(ReplCommand::Download { resource_selector, .. }) = result {
-            assert!(matches!(resource_selector, Some(ResourceSelector::Index(0))));
+        if let Ok(ReplCommand::Download {
+            resource_selector, ..
+        }) = result
+        {
+            assert!(matches!(
+                resource_selector,
+                Some(ResourceSelector::Index(0))
+            ));
         } else {
             panic!("Expected Index, not Name");
         }
 
         // "999" should be parsed as Index(999), not Name("999")
         let result = ReplCommand::from_str("download dataset 999");
-        if let Ok(ReplCommand::Download { resource_selector, .. }) = result {
-            assert!(matches!(resource_selector, Some(ResourceSelector::Index(999))));
+        if let Ok(ReplCommand::Download {
+            resource_selector, ..
+        }) = result
+        {
+            assert!(matches!(
+                resource_selector,
+                Some(ResourceSelector::Index(999))
+            ));
         } else {
             panic!("Expected Index, not Name");
         }
@@ -284,7 +341,10 @@ mod tests {
     fn test_resource_selector_mixed_string_is_name() {
         // "0abc" cannot be parsed as usize, should be Name
         let result = ReplCommand::from_str("download dataset 0abc");
-        if let Ok(ReplCommand::Download { resource_selector, .. }) = result {
+        if let Ok(ReplCommand::Download {
+            resource_selector, ..
+        }) = result
+        {
             if let Some(ResourceSelector::Name(name)) = resource_selector {
                 assert_eq!(name, "0abc");
             } else {
@@ -304,7 +364,10 @@ mod tests {
     #[test]
     fn test_parse_command_args_with_quotes() {
         let args = parse_command_args("download dataset \"Comma Separated Values File\"");
-        assert_eq!(args, vec!["download", "dataset", "Comma Separated Values File"]);
+        assert_eq!(
+            args,
+            vec!["download", "dataset", "Comma Separated Values File"]
+        );
     }
 
     #[test]
@@ -323,8 +386,12 @@ mod tests {
     fn test_parse_download_with_quoted_name() {
         let result = ReplCommand::from_str("download my-dataset \"CSV File\"");
         assert!(result.is_ok());
-        
-        if let Ok(ReplCommand::Download { dataset_id, resource_selector }) = result {
+
+        if let Ok(ReplCommand::Download {
+            dataset_id,
+            resource_selector,
+        }) = result
+        {
             assert_eq!(dataset_id, "my-dataset");
             if let Some(ResourceSelector::Name(name)) = resource_selector {
                 assert_eq!(name, "CSV File");
@@ -340,8 +407,12 @@ mod tests {
     fn test_parse_download_with_long_quoted_name() {
         let result = ReplCommand::from_str("download dataset \"Comma Separated Values File\"");
         assert!(result.is_ok());
-        
-        if let Ok(ReplCommand::Download { dataset_id, resource_selector }) = result {
+
+        if let Ok(ReplCommand::Download {
+            dataset_id,
+            resource_selector,
+        }) = result
+        {
             assert_eq!(dataset_id, "dataset");
             if let Some(ResourceSelector::Name(name)) = resource_selector {
                 assert_eq!(name, "Comma Separated Values File");

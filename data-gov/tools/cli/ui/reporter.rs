@@ -158,13 +158,14 @@ impl StatusReporter for CliStatusReporter {
             });
 
         if self.fancy_progress
-            && let Some(path) = &event.output_path {
-                let key = Self::progress_key(path);
-                if let Some(pb) = self.progress.lock().unwrap().remove(&key) {
-                    pb.abandon_with_message(format!("Failed {}: {}", name, event.error));
-                    return;
-                }
+            && let Some(path) = &event.output_path
+        {
+            let key = Self::progress_key(path);
+            if let Some(pb) = self.progress.lock().unwrap().remove(&key) {
+                pb.abandon_with_message(format!("Failed {}: {}", name, event.error));
+                return;
             }
+        }
 
         let _guard = self.print_lock.lock().unwrap();
         println!("{} {} ({})", color_red_bold("Failed:"), name, event.error);

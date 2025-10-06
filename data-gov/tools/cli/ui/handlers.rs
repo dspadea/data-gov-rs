@@ -1,12 +1,11 @@
-use tokio::runtime::Runtime;
 use data_gov::DataGovClient;
+use tokio::runtime::Runtime;
 
 use super::commands::{ReplCommand, ResourceSelector};
-use super::display::{print_package_details, print_cli_help};
+use super::display::{print_cli_help, print_package_details};
 use super::{
-    color_bold, color_blue, color_blue_bold, color_cyan, color_dimmed,
-    color_green, color_green_bold, color_red, color_red_bold, color_yellow,
-    color_yellow_bold,
+    color_blue, color_blue_bold, color_bold, color_cyan, color_dimmed, color_green,
+    color_green_bold, color_red, color_red_bold, color_yellow, color_yellow_bold,
 };
 
 /// Sanitize a dataset ID to prevent path traversal attacks.
@@ -266,8 +265,12 @@ fn handle_download_by_name(
         // Sanitize to prevent path traversal
         let safe_dataset_id = sanitize_dataset_id(dataset_id);
         let dataset_dir = client.download_dir().join(&safe_dataset_id);
-        let resources_to_download: Vec<_> = matching_resources.iter().map(|(_, r)| (*r).clone()).collect();
-        let results = rt.block_on(client.download_resources(&resources_to_download, Some(&dataset_dir)));
+        let resources_to_download: Vec<_> = matching_resources
+            .iter()
+            .map(|(_, r)| (*r).clone())
+            .collect();
+        let results =
+            rt.block_on(client.download_resources(&resources_to_download, Some(&dataset_dir)));
 
         print_download_summary(&results, Some(&matching_resources));
     }
@@ -302,7 +305,7 @@ fn print_download_summary(
 
     for (i, result) in results.iter().enumerate() {
         let idx = resource_indices.map(|ri| ri[i].0).unwrap_or(i);
-        
+
         match result {
             Ok(path) => {
                 success_count += 1;
