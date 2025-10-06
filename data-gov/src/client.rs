@@ -206,54 +206,17 @@ impl DataGovClient {
 
     // === File Downloads ===
 
-    /// Download a single resource into the dataset-specific directory.
+    /// Download a single resource to the specified directory.
     ///
-    /// Returns the path where the file was saved.
-    pub async fn download_dataset_resource(
-        &self,
-        resource: &Resource,
-        dataset_name: &str,
-    ) -> Result<PathBuf> {
-        let dataset_dir = self.config.get_dataset_download_dir(dataset_name);
-        let filename = Self::get_resource_filename(resource, None);
-        let output_path = dataset_dir.join(filename);
-
-        let url = match resource.url.as_deref() {
-            Some(url) => url,
-            None => {
-                if let Some(reporter) = self.config.status_reporter.as_ref() {
-                    let event = DownloadFailed {
-                        resource_name: resource.name.clone(),
-                        dataset_name: Some(dataset_name.to_string()),
-                        output_path: None,
-                        error: "Resource has no URL".to_string(),
-                    };
-                    reporter.on_download_failed(&event);
-                }
-                return Err(DataGovError::resource_not_found("Resource has no URL"));
-            }
-        };
-
-        Self::perform_download(
-            &self.http_client,
-            url,
-            &output_path,
-            resource.name.clone(),
-            Some(dataset_name.to_string()),
-            self.reporter(),
-        )
-        .await?;
-
-        Ok(output_path)
-    }
-
-    /// Download a single resource to a specific path.
+    /// # Arguments
+    /// * `resource` - The resource to download
+    /// * `output_dir` - Directory where the file will be saved. If None, uses the base download directory.
     ///
-    /// Returns the path where the file was saved.
+    /// Returns the full path where the file was saved.
     pub async fn download_resource(
         &self,
         resource: &Resource,
-        output_path: Option<PathBuf>,
+        output_dir: Option<&Path>,
     ) -> Result<PathBuf> {
         let url = match resource.url.as_deref() {
             Some(url) => url,
@@ -271,13 +234,11 @@ impl DataGovClient {
             }
         };
 
-        let output_path = match output_path {
-            Some(path) => path,
-            None => {
-                let filename = Self::get_resource_filename(resource, None);
-                self.config.get_base_download_dir().join(filename)
-            }
-        };
+        let output_dir = output_dir
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(|| self.config.get_base_download_dir());
+        let filename = Self::get_resource_filename(resource, None);
+        let output_path = output_dir.join(filename);
 
         Self::perform_download(
             &self.http_client,
@@ -292,7 +253,11 @@ impl DataGovClient {
         Ok(output_path)
     }
 
-    /// Download multiple resources concurrently.
+    /// Download multiple resources concurrently to the specified directory.
+    ///
+    /// # Arguments
+    /// * `resources` - Slice of resources to download
+    /// * `output_dir` - Directory where files will be saved. If None, uses the base download directory.
     ///
     /// Returns one [`Result`] per resource so callers can inspect partial failures.
     pub async fn download_resources(
@@ -300,167 +265,80 @@ impl DataGovClient {
         resources: &[Resource],
         output_dir: Option<&Path>,
     ) -> Vec<Result<PathBuf>> {
-        if resources.len() > 1 {
-            if let Some(reporter) = self.config.status_reporter.as_ref() {
-                let event = DownloadBatch {
-                    resource_count: resources.len(),
-                    dataset_name: None,
-                };
-                reporter.on_download_batch(&event);
-            }
+        if resources.is_empty() {
+            return vec![];
+        }
 
-            let output_dir = output_dir
-                .map(|p| p.to_path_buf())
-                .unwrap_or_else(|| self.config.get_base_download_dir());
-            let semaphore = Arc::new(tokio::sync::Semaphore::new(
-                self.config.max_concurrent_downloads,
-            ));
-            let status_reporter = self.reporter();
+        if resources.len() == 1 {
+            return vec![self.download_resource(&resources[0], output_dir).await];
+        }
 
-            let mut futures = Vec::with_capacity(resources.len());
+        // Multiple resources - use concurrent downloads with semaphore
+        if let Some(reporter) = self.config.status_reporter.as_ref() {
+            let event = DownloadBatch {
+                resource_count: resources.len(),
+                dataset_name: None,
+            };
+            reporter.on_download_batch(&event);
+        }
 
-            for resource in resources {
-                let resource = resource.clone();
-                let output_dir = output_dir.clone();
-                let semaphore = semaphore.clone();
-                let http_client = self.http_client.clone();
-                let status_reporter = status_reporter.clone();
+        let output_dir = output_dir
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(|| self.config.get_base_download_dir());
 
-                let future = async move {
-                    let _permit = semaphore.acquire().await.unwrap();
+        let semaphore = Arc::new(tokio::sync::Semaphore::new(
+            self.config.max_concurrent_downloads,
+        ));
 
-                    let url = match resource.url.as_deref() {
-                        Some(url) => url,
-                        None => {
-                            if let Some(reporter) = status_reporter.as_ref() {
-                                let event = DownloadFailed {
-                                    resource_name: resource.name.clone(),
-                                    dataset_name: None,
-                                    output_path: None,
-                                    error: "Resource has no URL".to_string(),
-                                };
-                                reporter.on_download_failed(&event);
-                            }
-                            return Err(DataGovError::resource_not_found("Resource has no URL"));
+        let status_reporter = self.reporter();
+        let mut futures = Vec::with_capacity(resources.len());
+
+        for resource in resources {
+            let resource = resource.clone();
+            let output_dir = output_dir.clone();
+            let semaphore = semaphore.clone();
+            let http_client = self.http_client.clone();
+            let status_reporter = status_reporter.clone();
+
+            let future = async move {
+                let _permit = semaphore.acquire().await.unwrap();
+
+                let url = match resource.url.as_deref() {
+                    Some(url) => url,
+                    None => {
+                        if let Some(reporter) = status_reporter.as_ref() {
+                            let event = DownloadFailed {
+                                resource_name: resource.name.clone(),
+                                dataset_name: None,
+                                output_path: None,
+                                error: "Resource has no URL".to_string(),
+                            };
+                            reporter.on_download_failed(&event);
                         }
-                    };
-
-                    let filename = DataGovClient::get_resource_filename(&resource, None);
-                    let output_path = output_dir.join(&filename);
-
-                    DataGovClient::perform_download(
-                        &http_client,
-                        url,
-                        &output_path,
-                        resource.name.clone(),
-                        None,
-                        status_reporter,
-                    )
-                    .await?;
-
-                    Ok(output_path)
+                        return Err(DataGovError::resource_not_found("Resource has no URL"));
+                    }
                 };
 
-                futures.push(future);
-            }
+                let filename = DataGovClient::get_resource_filename(&resource, None);
+                let output_path = output_dir.join(&filename);
 
-            futures::future::join_all(futures).await
-        } else if resources.len() == 1 {
-            let resource = &resources[0];
-            let output_path = match output_dir {
-                Some(dir) => {
-                    let filename = Self::get_resource_filename(resource, None);
-                    Some(dir.join(filename))
-                }
-                None => None,
+                DataGovClient::perform_download(
+                    &http_client,
+                    url,
+                    &output_path,
+                    resource.name.clone(),
+                    None,
+                    status_reporter,
+                )
+                .await?;
+
+                Ok(output_path)
             };
 
-            vec![self.download_resource(resource, output_path).await]
-        } else {
-            vec![]
+            futures.push(future);
         }
-    }
 
-    /// Download multiple resources into the dataset-specific directory.
-    ///
-    /// Returns one [`Result`] per resource so callers can inspect partial failures.
-    pub async fn download_dataset_resources(
-        &self,
-        resources: &[Resource],
-        dataset_name: &str,
-    ) -> Vec<Result<PathBuf>> {
-        if resources.len() > 1 {
-            if let Some(reporter) = self.config.status_reporter.as_ref() {
-                let event = DownloadBatch {
-                    resource_count: resources.len(),
-                    dataset_name: Some(dataset_name.to_string()),
-                };
-                reporter.on_download_batch(&event);
-            }
-
-            let base_dir = self.config.get_base_download_dir();
-            let semaphore = Arc::new(tokio::sync::Semaphore::new(
-                self.config.max_concurrent_downloads,
-            ));
-            let status_reporter = self.reporter();
-            let mut futures = Vec::with_capacity(resources.len());
-
-            for resource in resources {
-                let resource = resource.clone();
-                let dataset_name_owned = dataset_name.to_string();
-                let base_dir = base_dir.clone();
-                let semaphore = semaphore.clone();
-                let http_client = self.http_client.clone();
-                let status_reporter = status_reporter.clone();
-
-                let future = async move {
-                    let _permit = semaphore.acquire().await.unwrap();
-
-                    let url = match resource.url.as_deref() {
-                        Some(url) => url,
-                        None => {
-                            if let Some(reporter) = status_reporter.as_ref() {
-                                let event = DownloadFailed {
-                                    resource_name: resource.name.clone(),
-                                    dataset_name: Some(dataset_name_owned.clone()),
-                                    output_path: None,
-                                    error: "Resource has no URL".to_string(),
-                                };
-                                reporter.on_download_failed(&event);
-                            }
-                            return Err(DataGovError::resource_not_found("Resource has no URL"));
-                        }
-                    };
-
-                    let dataset_dir = base_dir.join(&dataset_name_owned);
-                    let filename = DataGovClient::get_resource_filename(&resource, None);
-                    let output_path = dataset_dir.join(&filename);
-
-                    DataGovClient::perform_download(
-                        &http_client,
-                        url,
-                        &output_path,
-                        resource.name.clone(),
-                        Some(dataset_name_owned.clone()),
-                        status_reporter,
-                    )
-                    .await?;
-
-                    Ok(output_path)
-                };
-
-                futures.push(future);
-            }
-
-            futures::future::join_all(futures).await
-        } else if resources.len() == 1 {
-            vec![
-                self.download_dataset_resource(&resources[0], dataset_name)
-                    .await,
-            ]
-        } else {
-            vec![]
-        }
+        futures::future::join_all(futures).await
     }
 
     fn reporter(&self) -> Option<Arc<dyn StatusReporter + Send + Sync>> {

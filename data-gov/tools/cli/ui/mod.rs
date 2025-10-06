@@ -772,8 +772,9 @@ fn execute_command(
                     let resource = &resources[index];
                     println!("{} resource {}...", color_cyan("Downloading"), index);
 
-                    let path =
-                        rt.block_on(client.download_dataset_resource(resource, &dataset_id))?;
+                    // Download to dataset-specific directory
+                    let dataset_dir = client.download_dir().join(&dataset_id);
+                    let path = rt.block_on(client.download_resource(resource, Some(&dataset_dir)))?;
 
                     println!(
                         "{} Downloaded to: {}",
@@ -782,9 +783,9 @@ fn execute_command(
                     );
                 }
                 None => {
-                    // Download all resources - message will be shown by the download method
-                    let results =
-                        rt.block_on(client.download_dataset_resources(&resources, &dataset_id));
+                    // Download all resources to dataset-specific directory
+                    let dataset_dir = client.download_dir().join(&dataset_id);
+                    let results = rt.block_on(client.download_resources(&resources, Some(&dataset_dir)));
 
                     let mut success_count = 0;
                     let mut error_count = 0;

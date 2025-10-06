@@ -356,21 +356,17 @@ impl DataGovMcpServer {
                     None
                 };
 
-                let target_dir = resolved_output_dir
-                    .clone()
+                // Calculate the output directory - either user-specified or dataset-specific
+                let output_dir = resolved_output_dir
                     .unwrap_or_else(|| self.data_gov.download_dir().join(&dataset_slug));
 
                 let selected_resources = resources;
 
-                let download_results = if let Some(dir) = resolved_output_dir.as_ref() {
-                    self.data_gov
-                        .download_resources(&selected_resources, Some(dir.as_path()))
-                        .await
-                } else {
-                    self.data_gov
-                        .download_dataset_resources(&selected_resources, &dataset_slug)
-                        .await
-                };
+                // Download all resources to the determined output directory
+                let download_results = self
+                    .data_gov
+                    .download_resources(&selected_resources, Some(output_dir.as_path()))
+                    .await;
 
                 let mut downloads = Vec::with_capacity(selected_resources.len());
                 let mut success_count = 0usize;
@@ -412,7 +408,7 @@ impl DataGovMcpServer {
                         "name": dataset_slug,
                         "title": dataset_title,
                     },
-                    "downloadDirectory": target_dir.to_string_lossy(),
+                    "downloadDirectory": output_dir.to_string_lossy(),
                     "downloadCount": downloads.len(),
                     "successfulCount": success_count,
                     "failedCount": error_count,
