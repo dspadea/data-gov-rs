@@ -171,36 +171,63 @@ impl DataGovClient {
     }
 
     /// Pick a filesystem-friendly filename for a resource download.
-    pub fn get_resource_filename(resource: &Resource, fallback_name: Option<&str>) -> String {
-        // Try resource name first
-        if let Some(name) = &resource.name {
+    /// Pick a filesystem-friendly filename for a resource download.
+    ///
+    /// # Arguments
+    /// * `resource` - The resource to generate a filename for
+    /// * `fallback_name` - Optional fallback name if resource has no name
+    /// * `resource_index` - Optional index to append to prevent conflicts when multiple resources have the same name
+    ///
+    /// When downloading multiple resources, the index should be provided to ensure unique filenames
+    /// even when resources have duplicate names.
+    pub fn get_resource_filename(
+        resource: &Resource,
+        fallback_name: Option<&str>,
+        resource_index: Option<usize>,
+    ) -> String {
+        // Determine base filename and whether it has an extension
+        let (base_filename, has_extension) = if let Some(name) = &resource.name {
             if let Some(format) = &resource.format {
-                if name.ends_with(&format!(".{}", format.to_lowercase())) {
-                    return name.clone();
+                let format_lower = format.to_lowercase();
+                if name.ends_with(&format!(".{}", format_lower)) {
+                    (name.clone(), true)
                 } else {
-                    return format!("{}.{}", name, format.to_lowercase());
+                    (format!("{}.{}", name, format_lower), true)
                 }
+            } else {
+                (name.clone(), false)
             }
-            return name.clone();
-        }
-
-        // Try to extract filename from URL
-        if let Some(url) = &resource.url
+        } else if let Some(url) = &resource.url
             && let Ok(parsed_url) = Url::parse(url)
             && let Some(mut segments) = parsed_url.path_segments()
             && let Some(filename) = segments.next_back()
             && !filename.is_empty()
             && filename.contains('.')
         {
-            return filename.to_string();
-        }
-
-        // Use fallback with format extension
-        let base_name = fallback_name.unwrap_or("data");
-        if let Some(format) = &resource.format {
-            format!("{}.{}", base_name, format.to_lowercase())
+            (filename.to_string(), true)
         } else {
-            format!("{}.dat", base_name)
+            // Use fallback with format extension
+            let base_name = fallback_name.unwrap_or("data");
+            if let Some(format) = &resource.format {
+                (format!("{}.{}", base_name, format.to_lowercase()), true)
+            } else {
+                (format!("{}.dat", base_name), true)
+            }
+        };
+
+        // Append resource index if provided (to handle duplicate names)
+        if let Some(index) = resource_index {
+            if has_extension {
+                // Insert index before the extension
+                if let Some(dot_pos) = base_filename.rfind('.') {
+                    let (name, ext) = base_filename.split_at(dot_pos);
+                    return format!("{}-{}{}", name, index, ext);
+                }
+            }
+            // No extension or couldn't find dot, just append
+            format!("{}-{}", base_filename, index)
+        } else {
+            base_filename
         }
     }
 
@@ -237,7 +264,8 @@ impl DataGovClient {
         let output_dir = output_dir
             .map(|p| p.to_path_buf())
             .unwrap_or_else(|| self.config.get_base_download_dir());
-        let filename = Self::get_resource_filename(resource, None);
+        // No resource index needed for single download
+        let filename = Self::get_resource_filename(resource, None, None);
         let output_path = output_dir.join(filename);
 
         Self::perform_download(
@@ -293,7 +321,7 @@ impl DataGovClient {
         let status_reporter = self.reporter();
         let mut futures = Vec::with_capacity(resources.len());
 
-        for resource in resources {
+        for (resource_index, resource) in resources.iter().enumerate() {
             let resource = resource.clone();
             let output_dir = output_dir.clone();
             let semaphore = semaphore.clone();
@@ -319,7 +347,8 @@ impl DataGovClient {
                     }
                 };
 
-                let filename = DataGovClient::get_resource_filename(&resource, None);
+                // Include resource index to prevent filename conflicts
+                let filename = DataGovClient::get_resource_filename(&resource, None, Some(resource_index));
                 let output_path = output_dir.join(&filename);
 
                 DataGovClient::perform_download(
@@ -487,5 +516,82 @@ impl DataGovClient {
 impl Default for DataGovClient {
     fn default() -> Self {
         Self::new().expect("Failed to create default DataGovClient")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_get_resource_filename_no_index() {
+        let resource = Resource {
+            name: Some("data".to_string()),
+            format: Some("CSV".to_string()),
+            url: Some("https://example.com/data.csv".to_string()),
+            ..Default::default()
+        };
+        let filename = DataGovClient::get_resource_filename(&resource, None, None);
+        assert_eq!(filename, "data.csv");
+    }
+
+    #[test]
+    fn test_get_resource_filename_with_index() {
+        let resource = Resource {
+            name: Some("data".to_string()),
+            format: Some("CSV".to_string()),
+            url: Some("https://example.com/data.csv".to_string()),
+            ..Default::default()
+        };
+        
+        let filename0 = DataGovClient::get_resource_filename(&resource, None, Some(0));
+        assert_eq!(filename0, "data-0.csv");
+        
+        let filename1 = DataGovClient::get_resource_filename(&resource, None, Some(1));
+        assert_eq!(filename1, "data-1.csv");
+        
+        let filename2 = DataGovClient::get_resource_filename(&resource, None, Some(2));
+        assert_eq!(filename2, "data-2.csv");
+    }
+
+    #[test]
+    fn test_get_resource_filename_already_has_extension() {
+        let resource = Resource {
+            name: Some("report.csv".to_string()),
+            format: Some("CSV".to_string()),
+            url: Some("https://example.com/report.csv".to_string()),
+            ..Default::default()
+        };
+        
+        let filename = DataGovClient::get_resource_filename(&resource, None, Some(3));
+        assert_eq!(filename, "report-3.csv");
+    }
+
+    #[test]
+    fn test_get_resource_filename_no_format() {
+        let resource = Resource {
+            name: Some("myfile".to_string()),
+            format: None,
+            url: Some("https://example.com/myfile".to_string()),
+            ..Default::default()
+        };
+        
+        let filename = DataGovClient::get_resource_filename(&resource, None, Some(5));
+        assert_eq!(filename, "myfile-5");
+    }
+
+    #[test]
+    fn test_get_resource_filename_multiple_extensions() {
+        let resource = Resource {
+            name: Some("archive.tar.gz".to_string()),
+            format: Some("TAR".to_string()),
+            url: Some("https://example.com/archive.tar.gz".to_string()),
+            ..Default::default()
+        };
+        
+        // Name doesn't end with .tar (it ends with .gz), so format is appended -> archive.tar.gz.tar
+        // Then index is inserted before last dot -> archive.tar.gz-7.tar
+        let filename = DataGovClient::get_resource_filename(&resource, None, Some(7));
+        assert_eq!(filename, "archive.tar.gz-7.tar");
     }
 }

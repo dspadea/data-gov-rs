@@ -273,7 +273,7 @@ enum ReplCommand {
     },
     Download {
         dataset_id: String,
-        resource_index: Option<usize>,
+        resource_selector: Option<ResourceSelector>,
     },
     List {
         what: String,
@@ -284,6 +284,13 @@ enum ReplCommand {
     Info,
     Help,
     Quit,
+}
+
+/// Resource selector for download command
+#[derive(Debug, Clone)]
+enum ResourceSelector {
+    Index(usize),
+    Name(String),
 }
 
 impl FromStr for ReplCommand {
@@ -319,16 +326,21 @@ impl FromStr for ReplCommand {
             }
             "download" | "dl" => {
                 if parts.len() < 2 || parts.len() > 3 {
-                    return Err("Usage: download <dataset_id> [resource_index]".to_string());
+                    return Err("Usage: download <dataset_id> [resource_index_or_name]".to_string());
                 }
-                let resource_index = if parts.len() == 3 {
-                    parts[2].parse().ok()
+                let resource_selector = if parts.len() == 3 {
+                    // Try to parse as index first, otherwise treat as name
+                    if let Ok(index) = parts[2].parse::<usize>() {
+                        Some(ResourceSelector::Index(index))
+                    } else {
+                        Some(ResourceSelector::Name(parts[2].to_string()))
+                    }
                 } else {
                     None
                 };
                 Ok(ReplCommand::Download {
                     dataset_id: parts[1].to_string(),
-                    resource_index,
+                    resource_selector,
                 })
             }
             "list" | "ls" => {
@@ -480,9 +492,9 @@ impl DataGovRepl {
                 "show consumer-complaint-database",
             ),
             (
-                "download <dataset_id> [index]",
-                "Download dataset resources",
-                "download my-dataset 0",
+                "download <dataset_id> [index|name]",
+                "Download by index or name (partial match)",
+                "download my-dataset 0 | download my-dataset csv",
             ),
             (
                 "list organizations",
@@ -582,11 +594,12 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
              \x20 data-gov search \"climate data\" 10\n\
              \x20 data-gov show consumer-complaint-database\n\
              \x20 data-gov download consumer-complaint-database 0\n\
+             \x20 data-gov download consumer-complaint-database csv\n\
              \x20 data-gov list organizations\n\n\
              Available commands:\n\
              \x20 search <query> [limit]     Search for datasets\n\
              \x20 show <dataset_id>         Show dataset details\n\
-             \x20 download <dataset_id> [index]  Download resources\n\
+             \x20 download <dataset_id> [index|name]  Download by index or name\n\
              \x20 list <organizations>      List organizations\n\
              \x20 info                      Show client info"
         );
@@ -742,7 +755,7 @@ fn execute_command(
 
         ReplCommand::Download {
             dataset_id,
-            resource_index,
+            resource_selector,
         } => {
             println!("{} dataset '{}'...", color_cyan("Fetching"), dataset_id);
 
@@ -757,8 +770,9 @@ fn execute_command(
                 return Ok(());
             }
 
-            match resource_index {
-                Some(index) => {
+            match resource_selector {
+                Some(ResourceSelector::Index(index)) => {
+                    // Download by index
                     if index >= resources.len() {
                         println!(
                             "{} Resource index {} is out of range (0-{})",
@@ -781,6 +795,99 @@ fn execute_command(
                         color_green_bold("Success!"),
                         color_blue(&path.display().to_string())
                     );
+                }
+                Some(ResourceSelector::Name(name)) => {
+                    // Download by name (case-insensitive, may match multiple)
+                    let name_lower = name.to_lowercase();
+                    let matching_resources: Vec<(usize, &data_gov::ckan::models::Resource)> = resources
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, r)| {
+                            r.name
+                                .as_ref()
+                                .map(|n| n.to_lowercase().contains(&name_lower))
+                                .unwrap_or(false)
+                        })
+                        .collect();
+
+                    if matching_resources.is_empty() {
+                        println!(
+                            "{} No resources found matching name '{}'",
+                            color_yellow_bold("Warning:"),
+                            name
+                        );
+                        println!("\nAvailable resources:");
+                        for (i, r) in resources.iter().enumerate() {
+                            let rname = r.name.as_deref().unwrap_or("(unnamed)");
+                            let format = r.format.as_deref().unwrap_or("?");
+                            println!("  {} {} [{}]", i, rname, format);
+                        }
+                        return Ok(());
+                    }
+
+                    if matching_resources.len() == 1 {
+                        let (idx, resource) = matching_resources[0];
+                        println!(
+                            "{} resource {} matching '{}'...",
+                            color_cyan("Downloading"),
+                            idx,
+                            name
+                        );
+
+                        let dataset_dir = client.download_dir().join(&dataset_id);
+                        let path = rt.block_on(client.download_resource(resource, Some(&dataset_dir)))?;
+
+                        println!(
+                            "{} Downloaded to: {}",
+                            color_green_bold("Success!"),
+                            color_blue(&path.display().to_string())
+                        );
+                    } else {
+                        // Multiple matches - download all
+                        println!(
+                            "{} {} resources matching '{}'...",
+                            color_cyan("Downloading"),
+                            matching_resources.len(),
+                            name
+                        );
+
+                        let dataset_dir = client.download_dir().join(&dataset_id);
+                        let resources_to_download: Vec<_> = matching_resources.iter().map(|(_, r)| (*r).clone()).collect();
+                        let results = rt.block_on(client.download_resources(&resources_to_download, Some(&dataset_dir)));
+
+                        let mut success_count = 0;
+                        let mut error_count = 0;
+
+                        for (result, (idx, _)) in results.iter().zip(matching_resources.iter()) {
+                            match result {
+                                Ok(path) => {
+                                    success_count += 1;
+                                    println!(
+                                        "  {} Resource {}: {}",
+                                        color_green("✓"),
+                                        idx,
+                                        color_blue(&path.display().to_string())
+                                    );
+                                }
+                                Err(e) => {
+                                    error_count += 1;
+                                    println!(
+                                        "  {} Resource {}: {}",
+                                        color_red("✗"),
+                                        idx,
+                                        color_red(&e.to_string())
+                                    );
+                                }
+                            }
+                        }
+
+                        println!(
+                            "\n{} {} downloaded, {} errors",
+                            color_bold("Summary:"),
+                            color_green(&success_count.to_string()),
+                            color_red(&error_count.to_string())
+                        );
+                    }
                 }
                 None => {
                     // Download all resources to dataset-specific directory
@@ -892,9 +999,9 @@ fn print_cli_help() {
             "show consumer-complaint-database",
         ),
         (
-            "download <dataset_id> [index]",
-            "Download dataset resources",
-            "download my-dataset 0",
+            "download <dataset_id> [index|name]",
+            "Download by index or name (partial match)",
+            "download my-dataset csv",
         ),
         (
             "list organizations",
