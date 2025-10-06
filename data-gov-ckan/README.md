@@ -24,7 +24,7 @@ Use the published crate from crates.io:
 
 ```toml
 [dependencies]
-data-gov-ckan = "0.1.1"
+data-gov-ckan = "0.2.0"
 tokio = { version = "1", features = ["full"] }
 ```
 
