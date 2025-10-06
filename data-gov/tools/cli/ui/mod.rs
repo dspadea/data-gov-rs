@@ -1114,3 +1114,278 @@ fn print_package_details(package: &Package) {
 
     println!();
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_download_command_with_index() {
+        let result = ReplCommand::from_str("download my-dataset 0");
+        assert!(result.is_ok());
+        
+        if let Ok(ReplCommand::Download { dataset_id, resource_selector }) = result {
+            assert_eq!(dataset_id, "my-dataset");
+            assert!(matches!(resource_selector, Some(ResourceSelector::Index(0))));
+        } else {
+            panic!("Expected Download command with Index(0)");
+        }
+    }
+
+    #[test]
+    fn test_parse_download_command_with_large_index() {
+        let result = ReplCommand::from_str("download my-dataset 42");
+        assert!(result.is_ok());
+        
+        if let Ok(ReplCommand::Download { dataset_id, resource_selector }) = result {
+            assert_eq!(dataset_id, "my-dataset");
+            assert!(matches!(resource_selector, Some(ResourceSelector::Index(42))));
+        } else {
+            panic!("Expected Download command with Index(42)");
+        }
+    }
+
+    #[test]
+    fn test_parse_download_command_with_name() {
+        let result = ReplCommand::from_str("download my-dataset csv");
+        assert!(result.is_ok());
+        
+        if let Ok(ReplCommand::Download { dataset_id, resource_selector }) = result {
+            assert_eq!(dataset_id, "my-dataset");
+            if let Some(ResourceSelector::Name(name)) = resource_selector {
+                assert_eq!(name, "csv");
+            } else {
+                panic!("Expected Download command with Name(csv)");
+            }
+        } else {
+            panic!("Expected Download command");
+        }
+    }
+
+    #[test]
+    fn test_parse_download_command_with_partial_name() {
+        let result = ReplCommand::from_str("download dataset-id complaints");
+        assert!(result.is_ok());
+        
+        if let Ok(ReplCommand::Download { dataset_id, resource_selector }) = result {
+            assert_eq!(dataset_id, "dataset-id");
+            if let Some(ResourceSelector::Name(name)) = resource_selector {
+                assert_eq!(name, "complaints");
+            } else {
+                panic!("Expected Download command with Name(complaints)");
+            }
+        } else {
+            panic!("Expected Download command");
+        }
+    }
+
+    #[test]
+    fn test_parse_download_command_no_selector() {
+        let result = ReplCommand::from_str("download my-dataset");
+        assert!(result.is_ok());
+        
+        if let Ok(ReplCommand::Download { dataset_id, resource_selector }) = result {
+            assert_eq!(dataset_id, "my-dataset");
+            assert!(resource_selector.is_none());
+        } else {
+            panic!("Expected Download command with no selector");
+        }
+    }
+
+    #[test]
+    fn test_parse_download_command_dl_alias() {
+        let result = ReplCommand::from_str("dl my-dataset 0");
+        assert!(result.is_ok());
+        
+        if let Ok(ReplCommand::Download { dataset_id, resource_selector }) = result {
+            assert_eq!(dataset_id, "my-dataset");
+            assert!(matches!(resource_selector, Some(ResourceSelector::Index(0))));
+        } else {
+            panic!("Expected Download command using 'dl' alias");
+        }
+    }
+
+    #[test]
+    fn test_parse_download_command_with_extension() {
+        // This should be treated as a name since it's not a valid number
+        let result = ReplCommand::from_str("download my-dataset data.csv");
+        assert!(result.is_ok());
+        
+        if let Ok(ReplCommand::Download { dataset_id, resource_selector }) = result {
+            assert_eq!(dataset_id, "my-dataset");
+            if let Some(ResourceSelector::Name(name)) = resource_selector {
+                assert_eq!(name, "data.csv");
+            } else {
+                panic!("Expected Download command with Name(data.csv)");
+            }
+        } else {
+            panic!("Expected Download command");
+        }
+    }
+
+    #[test]
+    fn test_parse_download_command_too_many_args() {
+        let result = ReplCommand::from_str("download dataset-id resource extra-arg");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Usage: download <dataset_id> [resource_index_or_name]"));
+    }
+
+    #[test]
+    fn test_parse_download_command_too_few_args() {
+        let result = ReplCommand::from_str("download");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Usage: download <dataset_id> [resource_index_or_name]"));
+    }
+
+    #[test]
+    fn test_resource_name_matching_case_insensitive() {
+        // Create test resources
+        let resources = vec![
+            data_gov::ckan::models::Resource {
+                name: Some("Data.CSV".to_string()),
+                format: Some("CSV".to_string()),
+                url: Some("https://example.com/data.csv".to_string()),
+                ..Default::default()
+            },
+            data_gov::ckan::models::Resource {
+                name: Some("report.json".to_string()),
+                format: Some("JSON".to_string()),
+                url: Some("https://example.com/report.json".to_string()),
+                ..Default::default()
+            },
+            data_gov::ckan::models::Resource {
+                name: Some("ARCHIVE.CSV".to_string()),
+                format: Some("CSV".to_string()),
+                url: Some("https://example.com/archive.csv".to_string()),
+                ..Default::default()
+            },
+        ];
+
+        // Test case-insensitive matching for "csv"
+        let name_lower = "csv".to_lowercase();
+        let matching: Vec<_> = resources
+            .iter()
+            .enumerate()
+            .filter(|(_, r)| {
+                r.name
+                    .as_ref()
+                    .map(|n| n.to_lowercase().contains(&name_lower))
+                    .unwrap_or(false)
+            })
+            .collect();
+
+        assert_eq!(matching.len(), 2);
+        assert_eq!(matching[0].0, 0); // Data.CSV
+        assert_eq!(matching[1].0, 2); // ARCHIVE.CSV
+    }
+
+    #[test]
+    fn test_resource_name_matching_partial() {
+        // Create test resources
+        let resources = vec![
+            data_gov::ckan::models::Resource {
+                name: Some("complaints-2023.csv".to_string()),
+                format: Some("CSV".to_string()),
+                url: Some("https://example.com/file1.csv".to_string()),
+                ..Default::default()
+            },
+            data_gov::ckan::models::Resource {
+                name: Some("data.json".to_string()),
+                format: Some("JSON".to_string()),
+                url: Some("https://example.com/data.json".to_string()),
+                ..Default::default()
+            },
+            data_gov::ckan::models::Resource {
+                name: Some("complaints-2024.csv".to_string()),
+                format: Some("CSV".to_string()),
+                url: Some("https://example.com/file2.csv".to_string()),
+                ..Default::default()
+            },
+        ];
+
+        // Test partial matching for "complaint"
+        let name_lower = "complaint".to_lowercase();
+        let matching: Vec<_> = resources
+            .iter()
+            .enumerate()
+            .filter(|(_, r)| {
+                r.name
+                    .as_ref()
+                    .map(|n| n.to_lowercase().contains(&name_lower))
+                    .unwrap_or(false)
+            })
+            .collect();
+
+        assert_eq!(matching.len(), 2);
+        assert_eq!(matching[0].0, 0); // complaints-2023.csv
+        assert_eq!(matching[1].0, 2); // complaints-2024.csv
+    }
+
+    #[test]
+    fn test_resource_name_no_matches() {
+        // Create test resources
+        let resources = vec![
+            data_gov::ckan::models::Resource {
+                name: Some("data.csv".to_string()),
+                format: Some("CSV".to_string()),
+                url: Some("https://example.com/data.csv".to_string()),
+                ..Default::default()
+            },
+            data_gov::ckan::models::Resource {
+                name: Some("report.json".to_string()),
+                format: Some("JSON".to_string()),
+                url: Some("https://example.com/report.json".to_string()),
+                ..Default::default()
+            },
+        ];
+
+        // Test with no matches
+        let name_lower = "pdf".to_lowercase();
+        let matching: Vec<_> = resources
+            .iter()
+            .enumerate()
+            .filter(|(_, r)| {
+                r.name
+                    .as_ref()
+                    .map(|n| n.to_lowercase().contains(&name_lower))
+                    .unwrap_or(false)
+            })
+            .collect();
+
+        assert_eq!(matching.len(), 0);
+    }
+
+    #[test]
+    fn test_resource_selector_numeric_string_is_index() {
+        // "0" should be parsed as Index(0), not Name("0")
+        let result = ReplCommand::from_str("download dataset 0");
+        if let Ok(ReplCommand::Download { resource_selector, .. }) = result {
+            assert!(matches!(resource_selector, Some(ResourceSelector::Index(0))));
+        } else {
+            panic!("Expected Index, not Name");
+        }
+
+        // "999" should be parsed as Index(999), not Name("999")
+        let result = ReplCommand::from_str("download dataset 999");
+        if let Ok(ReplCommand::Download { resource_selector, .. }) = result {
+            assert!(matches!(resource_selector, Some(ResourceSelector::Index(999))));
+        } else {
+            panic!("Expected Index, not Name");
+        }
+    }
+
+    #[test]
+    fn test_resource_selector_mixed_string_is_name() {
+        // "0abc" cannot be parsed as usize, should be Name
+        let result = ReplCommand::from_str("download dataset 0abc");
+        if let Ok(ReplCommand::Download { resource_selector, .. }) = result {
+            if let Some(ResourceSelector::Name(name)) = resource_selector {
+                assert_eq!(name, "0abc");
+            } else {
+                panic!("Expected Name(0abc)");
+            }
+        } else {
+            panic!("Expected Download command");
+        }
+    }
+}
