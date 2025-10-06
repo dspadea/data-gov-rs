@@ -30,8 +30,9 @@ cargo install --path .
 Common commands:
 
 - `data-gov search "climate change" 10`
-- `data-gov show consumer-complaint-database`
-- `data-gov download consumer-complaint-database 0`
+- `data-gov show electric-vehicle-population-data`
+- `data-gov download electric-vehicle-population-data 0`                           # Download by index
+- `data-gov download electric-vehicle-population-data "Comma Separated Values File"`  # Download by name (quoted)
 - `data-gov list organizations`
 
 The CLI automatically adjusts colour and progress output for TTY / non-TTY environments. Tune behaviour with `--color`, `NO_COLOR`, or `NO_PROGRESS` as needed.

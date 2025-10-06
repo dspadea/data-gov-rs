@@ -6,7 +6,7 @@ use std::sync::Arc;
 /// Configuration for the CKAN client
 #[derive(Debug, Clone)]
 pub struct Configuration {
-    /// Base URL for the CKAN API (e.g., "https://catalog.data.gov/api/3")
+    /// Base URL for the CKAN API (e.g., `https://catalog.data.gov/api/3`)
     pub base_path: String,
     /// User agent string for HTTP requests
     pub user_agent: Option<String>,

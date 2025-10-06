@@ -62,9 +62,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
     println!("   data-gov");
     println!();
     println!("Example CLI commands:");
-    println!("  data-gov search \"climate data\"");
-    println!("  data-gov show consumer-complaint-database");
-    println!("  data-gov download consumer-complaint-database 0");
+    println!("  data-gov search \"electric vehicle\"");
+    println!("  data-gov show electric-vehicle-population-data");
+    println!("  data-gov download electric-vehicle-population-data 0                           # By index");
+    println!("  data-gov download electric-vehicle-population-data \"Comma Separated Values File\"  # By name (quoted)");
+    println!("  data-gov download electric-vehicle-population-data json                        # Partial match");
     println!("  data-gov list organizations");
     println!("  data-gov --help");
 

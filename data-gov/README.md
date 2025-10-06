@@ -82,7 +82,9 @@ async fn main() -> data_gov::Result<()> {
 ```
 data-gov search "climate change" 5
 data-gov show electric-vehicle-population-data
-data-gov download electric-vehicle-population-data 0
+data-gov download electric-vehicle-population-data 0                           # Download by index
+data-gov download electric-vehicle-population-data "Comma Separated Values File"  # Download by name (quoted)
+data-gov download electric-vehicle-population-data csv                         # Partial match (unquoted)
 data-gov list organizations
 ```
 
@@ -98,7 +100,7 @@ Key defaults:
 | ------- | ------- |
 | `search <query> [limit]` | Full-text search with optional result cap |
 | `show <dataset_id>` | Inspect dataset details and resources |
-| `download <dataset_id> [index]` | Download all resources or a specific resource by index |
+| `download <dataset_id> [index\|name]` | Download all resources, or a specific resource by index or name (partial match, use quotes for multi-word names) |
 | `list organizations` | List publishing organisations |
 | `setdir <path>` | Change the active download directory (REPL only) |
 | `info` | Display current configuration |
@@ -111,8 +113,9 @@ The REPL accepts stdin, so shebang scripts work out of the box:
 ```bash
 #!/usr/bin/env data-gov
 # Simple automation example
-search climate 3
-download consumer-complaint-database 0
+search "electric vehicle" 3
+show electric-vehicle-population-data
+download electric-vehicle-population-data "Comma Separated Values File"    # Download by name (quoted)
 quit
 ```
 

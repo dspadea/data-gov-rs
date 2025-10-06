@@ -103,12 +103,12 @@ pub fn print_cli_help() {
         (
             "show <dataset_id>",
             "Show detailed dataset information",
-            "show consumer-complaint-database",
+            "show electric-vehicle-population-data",
         ),
         (
             "download <dataset_id> [index|name]",
             "Download by index or name (partial match)",
-            "download my-dataset csv",
+            "download electric-vehicle-population-data \"Comma Separated Values File\"",
         ),
         (
             "list organizations",
@@ -151,12 +151,12 @@ pub fn print_repl_help() {
         (
             "show <dataset_id>",
             "Show detailed dataset information",
-            "show consumer-complaint-database",
+            "show electric-vehicle-population-data",
         ),
         (
             "download <dataset_id> [index|name]",
             "Download by index or name (partial match)",
-            "download my-dataset 0 | download my-dataset csv",
+            "download electric-vehicle-population-data 0",
         ),
         (
             "list organizations",

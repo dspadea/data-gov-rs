@@ -145,10 +145,10 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
              Interactive REPL mode:\n\
              \x20 data-gov\n\n\
              CLI mode:\n\
-             \x20 data-gov search \"climate data\" 10\n\
-             \x20 data-gov show consumer-complaint-database\n\
-             \x20 data-gov download consumer-complaint-database 0\n\
-             \x20 data-gov download consumer-complaint-database csv\n\
+             \x20 data-gov search \"electric vehicle\" 10\n\
+             \x20 data-gov show electric-vehicle-population-data\n\
+             \x20 data-gov download electric-vehicle-population-data 0\n\
+             \x20 data-gov download electric-vehicle-population-data \"Comma Separated Values File\"\n\
              \x20 data-gov list organizations\n\n\
              Available commands:\n\
              \x20 search <query> [limit]     Search for datasets\n\
