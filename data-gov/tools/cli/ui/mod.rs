@@ -293,11 +293,43 @@ enum ResourceSelector {
     Name(String),
 }
 
+/// Parse a command string respecting quoted arguments
+/// Example: `foo bar "baz qux"` -> ["foo", "bar", "baz qux"]
+fn parse_command_args(s: &str) -> Vec<String> {
+    let mut args = Vec::new();
+    let mut current_arg = String::new();
+    let mut in_quotes = false;
+    let mut chars = s.trim().chars().peekable();
+
+    while let Some(ch) = chars.next() {
+        match ch {
+            '"' => {
+                in_quotes = !in_quotes;
+            }
+            ' ' | '\t' if !in_quotes => {
+                if !current_arg.is_empty() {
+                    args.push(current_arg.clone());
+                    current_arg.clear();
+                }
+            }
+            _ => {
+                current_arg.push(ch);
+            }
+        }
+    }
+
+    if !current_arg.is_empty() {
+        args.push(current_arg);
+    }
+
+    args
+}
+
 impl FromStr for ReplCommand {
     type Err = String;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let parts: Vec<&str> = s.trim().split_whitespace().collect();
+        let parts = parse_command_args(s);
 
         if parts.is_empty() {
             return Err("Empty command".to_string());
@@ -321,7 +353,7 @@ impl FromStr for ReplCommand {
                     return Err("Usage: show <dataset_id>".to_string());
                 }
                 Ok(ReplCommand::Show {
-                    dataset_id: parts[1].to_string(),
+                    dataset_id: parts[1].clone(),
                 })
             }
             "download" | "dl" => {
@@ -333,13 +365,13 @@ impl FromStr for ReplCommand {
                     if let Ok(index) = parts[2].parse::<usize>() {
                         Some(ResourceSelector::Index(index))
                     } else {
-                        Some(ResourceSelector::Name(parts[2].to_string()))
+                        Some(ResourceSelector::Name(parts[2].clone()))
                     }
                 } else {
                     None
                 };
                 Ok(ReplCommand::Download {
-                    dataset_id: parts[1].to_string(),
+                    dataset_id: parts[1].clone(),
                     resource_selector,
                 })
             }
@@ -348,7 +380,7 @@ impl FromStr for ReplCommand {
                     return Err("Usage: list <organizations|orgs>".to_string());
                 }
                 Ok(ReplCommand::List {
-                    what: parts[1].to_string(),
+                    what: parts[1].clone(),
                 })
             }
             "setdir" | "cd" => {
@@ -356,7 +388,7 @@ impl FromStr for ReplCommand {
                     return Err("Usage: setdir <path>".to_string());
                 }
                 Ok(ReplCommand::SetDir {
-                    path: PathBuf::from(parts[1]),
+                    path: PathBuf::from(&parts[1]),
                 })
             }
             "info" | "status" => Ok(ReplCommand::Info),
@@ -1104,7 +1136,7 @@ fn print_package_details(package: &Package) {
             color_yellow(&package.name)
         );
         println!(
-            "{} Use 'data-gov download {} <index>' to download a specific resource",
+            "{} Use 'data-gov download {} <index|name>' to download by index or name",
             color_bold("💡"),
             color_yellow(&package.name)
         );
@@ -1383,6 +1415,64 @@ mod tests {
                 assert_eq!(name, "0abc");
             } else {
                 panic!("Expected Name(0abc)");
+            }
+        } else {
+            panic!("Expected Download command");
+        }
+    }
+
+    #[test]
+    fn test_parse_command_args_simple() {
+        let args = parse_command_args("download dataset 0");
+        assert_eq!(args, vec!["download", "dataset", "0"]);
+    }
+
+    #[test]
+    fn test_parse_command_args_with_quotes() {
+        let args = parse_command_args("download dataset \"Comma Separated Values File\"");
+        assert_eq!(args, vec!["download", "dataset", "Comma Separated Values File"]);
+    }
+
+    #[test]
+    fn test_parse_command_args_multiple_spaces() {
+        let args = parse_command_args("search   climate    data");
+        assert_eq!(args, vec!["search", "climate", "data"]);
+    }
+
+    #[test]
+    fn test_parse_command_args_quotes_with_extra_spaces() {
+        let args = parse_command_args("download   dataset   \"Multi Word Name\"  ");
+        assert_eq!(args, vec!["download", "dataset", "Multi Word Name"]);
+    }
+
+    #[test]
+    fn test_parse_download_with_quoted_name() {
+        let result = ReplCommand::from_str("download my-dataset \"CSV File\"");
+        assert!(result.is_ok());
+        
+        if let Ok(ReplCommand::Download { dataset_id, resource_selector }) = result {
+            assert_eq!(dataset_id, "my-dataset");
+            if let Some(ResourceSelector::Name(name)) = resource_selector {
+                assert_eq!(name, "CSV File");
+            } else {
+                panic!("Expected Download command with Name(CSV File)");
+            }
+        } else {
+            panic!("Expected Download command");
+        }
+    }
+
+    #[test]
+    fn test_parse_download_with_long_quoted_name() {
+        let result = ReplCommand::from_str("download dataset \"Comma Separated Values File\"");
+        assert!(result.is_ok());
+        
+        if let Ok(ReplCommand::Download { dataset_id, resource_selector }) = result {
+            assert_eq!(dataset_id, "dataset");
+            if let Some(ResourceSelector::Name(name)) = resource_selector {
+                assert_eq!(name, "Comma Separated Values File");
+            } else {
+                panic!("Expected Download command with quoted name");
             }
         } else {
             panic!("Expected Download command");
