@@ -108,3 +108,10 @@ Cargo workspace.  Tests and formatting can be run from the repository root:
 cargo fmt
 cargo test -p data-gov-mcp-server
 ```
+
+
+## Disclaimer & license
+
+This is an independent project and is not affiliated with data.gov or any government agency. For authoritative information, refer to the official [data.gov](https://www.data.gov/) portal.
+
+Licensed under the [Apache License 2.0](LICENSE).
