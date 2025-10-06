@@ -343,13 +343,23 @@ impl DataGovMcpServer {
 
                 let use_dataset_subdir = params.dataset_subdirectory.unwrap_or(false);
 
+                // Sanitize dataset_slug to prevent path traversal attacks
+                #[allow(clippy::collapsible_str_replace)]
+                let safe_dataset_slug = dataset_slug
+                    .replace("..", "_")
+                    .replace('/', "_")
+                    .replace('\\', "_")
+                    .chars()
+                    .filter(|c| c.is_alphanumeric() || *c == '-' || *c == '_' || *c == '.')
+                    .collect::<String>();
+
                 let resolved_output_dir = if let Some(dir) = params.output_dir.as_ref() {
                     let mut path = PathBuf::from(dir);
                     if !path.is_absolute() {
                         path = std::env::current_dir().map_err(ServerError::Io)?.join(path);
                     }
                     if use_dataset_subdir {
-                        path = path.join(&dataset_slug);
+                        path = path.join(&safe_dataset_slug);
                     }
                     Some(path)
                 } else {
@@ -358,7 +368,7 @@ impl DataGovMcpServer {
 
                 // Calculate the output directory - either user-specified or dataset-specific
                 let output_dir = resolved_output_dir
-                    .unwrap_or_else(|| self.data_gov.download_dir().join(&dataset_slug));
+                    .unwrap_or_else(|| self.data_gov.download_dir().join(&safe_dataset_slug));
 
                 let selected_resources = resources;
 

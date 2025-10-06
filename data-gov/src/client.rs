@@ -329,7 +329,21 @@ impl DataGovClient {
             let status_reporter = status_reporter.clone();
 
             let future = async move {
-                let _permit = semaphore.acquire().await.unwrap();
+                let _permit = match semaphore.acquire().await {
+                    Ok(permit) => permit,
+                    Err(e) => {
+                        if let Some(reporter) = status_reporter.as_ref() {
+                            let event = DownloadFailed {
+                                resource_name: resource.name.clone(),
+                                dataset_name: None,
+                                output_path: None,
+                                error: format!("Failed to acquire download slot: {}", e),
+                            };
+                            reporter.on_download_failed(&event);
+                        }
+                        return Err(DataGovError::download_error(format!("Semaphore error: {}", e)));
+                    }
+                };
 
                 let url = match resource.url.as_deref() {
                     Some(url) => url,
@@ -395,12 +409,11 @@ impl DataGovClient {
                 }
             };
 
-        if let Some(parent) = output_path.parent() {
-            if let Err(err) = tokio::fs::create_dir_all(parent).await {
+        if let Some(parent) = output_path.parent()
+            && let Err(err) = tokio::fs::create_dir_all(parent).await {
                 notify_failure(err.to_string(), &status_reporter);
                 return Err(err.into());
             }
-        }
 
         let response = match http_client.get(url).send().await {
             Ok(resp) => resp,

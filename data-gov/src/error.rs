@@ -80,6 +80,24 @@ impl DataGovError {
             message: message.into(),
         }
     }
+
+    /// Sanitize error message for external consumption.
+    /// Removes filesystem paths and other potentially sensitive information.
+    pub fn sanitized_message(&self) -> String {
+        let msg = self.to_string();
+        // Simple path sanitization: replace common path patterns
+        // This removes absolute paths like /path/to/file or C:\path\to\file
+        msg.split_whitespace()
+            .map(|word| {
+                if word.starts_with('/') || word.contains(":\\") || word.starts_with("./") {
+                    "[path]"
+                } else {
+                    word
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
 }
 
 /// Type alias for Results using DataGovError
