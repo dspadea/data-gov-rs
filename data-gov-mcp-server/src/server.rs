@@ -622,6 +622,7 @@ where
 
 #[derive(Debug, Deserialize)]
 struct SearchParams {
+    #[serde(default)]
     query: String,
     #[serde(default)]
     limit: Option<i32>,
@@ -836,17 +837,16 @@ fn tool_specs() -> Vec<ToolSpec> {
         ToolSpec {
             tool_name: "data_gov_search",
             method_name: "data_gov.search",
-            description: "Search datasets on data.gov with optional filters",
+            description: "Search datasets on data.gov with optional filters. The query parameter accepts Solr-style search syntax including wildcards (*), phrase matching, and boolean operators (AND, OR, NOT). If you only want to filter by organization or format without a text query, you can omit the query parameter or pass an empty string.",
             input_schema: json!({
                 "type": "object",
                 "properties": {
-                    "query": {"type": "string", "description": "Full-text search query"},
+                    "query": {"type": "string", "description": "Full-text search query (supports Solr syntax: wildcards, phrases, boolean operators). Examples: 'climat*', \"\\\"air quality\\\"\", 'climate AND (temperature OR precipitation)'. Optional - can be empty to search by filters only.", "default": ""},
                     "limit": {"type": "integer", "minimum": 1, "maximum": 1000, "description": "Maximum number of results"},
                     "offset": {"type": "integer", "minimum": 0, "description": "Result offset for pagination"},
-                    "organization": {"type": "string", "description": "Filter results to a specific organization"},
+                    "organization": {"type": "string", "description": "Filter results to a specific organization (e.g., 'sec-gov', 'nasa-gov')"},
                     "format": {"type": "string", "description": "Filter results by resource format e.g. CSV"}
                 },
-                "required": ["query"],
                 "additionalProperties": false
             }),
         },
@@ -909,14 +909,14 @@ fn tool_specs() -> Vec<ToolSpec> {
         ToolSpec {
             tool_name: "ckan_package_search",
             method_name: "ckan.packageSearch",
-            description: "Perform a low-level CKAN package_search request",
+            description: "Perform a low-level CKAN package_search request with full Solr query syntax support. Use the filter parameter for advanced Solr queries like 'organization:nasa-gov', 'res_format:CSV', or complex queries with AND/OR/NOT operators.",
             input_schema: json!({
                 "type": "object",
                 "properties": {
-                    "query": {"type": ["string", "null"], "description": "Full-text search query"},
+                    "query": {"type": ["string", "null"], "description": "Full-text search query (supports Solr syntax). Examples: 'budget*', \"national parks\""},
                     "rows": {"type": ["integer", "null"], "minimum": 1, "maximum": 1000, "description": "Number of rows to return"},
                     "start": {"type": ["integer", "null"], "minimum": 0, "description": "Offset into result set"},
-                    "filter": {"type": ["string", "null"], "description": "Filter query in CKAN syntax"}
+                    "filter": {"type": ["string", "null"], "description": "Filter query in Solr/CKAN syntax (e.g., 'organization:sec-gov', 'res_format:CSV AND tags:healthcare'). Supports boolean operators, ranges, and fielded queries."}
                 },
                 "additionalProperties": false
             }),

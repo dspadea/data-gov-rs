@@ -299,13 +299,21 @@ impl CkanClient {
     ///
     /// # Advanced Filtering
     ///
-    /// The `fq` parameter supports Solr query syntax for advanced filtering:
+    /// The `fq` parameter supports Solr query syntax for advanced filtering. The
+    /// `q` and `fq` parameters are passed through to CKAN's Solr-backed
+    /// package_search endpoint, so you can use familiar Solr constructs such as:
     ///
     /// - `organization:epa-gov` - Filter by organization
     /// - `res_format:CSV` - Filter by resource format
     /// - `tags:healthcare` - Filter by tags
     /// - `metadata_modified:[2020-01-01T00:00:00Z TO NOW]` - Date ranges
     /// - Combine with `AND`, `OR`, `NOT` operators
+    ///
+    /// Examples:
+    ///
+    /// - Text search with wildcard: `q=climat*`
+    /// - Phrase search: `q="air quality"`
+    /// - Complex filter: `fq=organization:epa-gov AND res_format:CSV`
     pub async fn package_search(
         &self,
         q: Option<&str>,
