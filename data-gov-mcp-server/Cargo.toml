@@ -1,7 +1,7 @@
 [package]
 rust-version = "1.90"
 name = "data-gov-mcp-server"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 
 description = "MCP Server for AI integration with Data.Gov"
