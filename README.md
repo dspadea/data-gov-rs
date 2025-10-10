@@ -4,6 +4,7 @@ Rust tooling for exploring U.S. government open data. This workspace bundles two
 
 - [`data-gov-ckan`](./data-gov-ckan/) – an async, type-safe CKAN client suitable for any CKAN portal
 - [`data-gov`](./data-gov/) – a higher-level client and CLI tailored to data.gov workflows
+- [`data-gov-mcp-server`](./data-gov-mcp-server) - An MCP server using the `data-gov` client to support AI interaction with Data.gov
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 
@@ -22,9 +23,8 @@ rustc --version  # should be 1.90 or newer
 ## Install the CLI
 
 ```bash
-git clone https://github.com/dspadea/data-gov-rs.git
-cd data-gov-rs/data-gov
-cargo install --path .
+# Using cargo install
+cargo install data-gov
 ```
 
 Common commands:
@@ -53,14 +53,6 @@ See [`examples/scripting`](examples/scripting/) for ready-to-run scripts.
 ## Library quick starts
 
 ### High-level client (`data-gov`)
-
-Add the crate via a git dependency until it is published on crates.io:
-
-```toml
-[dependencies]
-data-gov = "0.2.0"
-tokio = { version = "1", features = ["full"] }
-```
 
 ```rust
 use data_gov::DataGovClient;
@@ -136,10 +128,12 @@ Workspace layout:
 
 ```
 data-gov-rs/
-├── data-gov-ckan/      # CKAN client crate
-├── data-gov/           # High-level client + CLI
-├── examples/           # Shell automation samples
-└── Cargo.toml          # Workspace manifest
+├── .vscode/                # VSCode config files for MCP setup in this workspace
+├── data-gov-ckan/          # CKAN client crate
+├── data-gov-mcp-server/    # CKAN client crate
+├── data-gov/               # High-level client + CLI
+├── examples/               # Shell automation samples
+└── Cargo.toml              # Workspace manifest
 ```
 
 ## Disclaimer & license
