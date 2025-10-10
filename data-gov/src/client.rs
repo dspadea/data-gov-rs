@@ -58,6 +58,12 @@ impl DataGovClient {
     ///
     /// # Arguments
     /// * `query` - Search terms (searches titles, descriptions, tags)
+    ///
+    /// Solr syntax: The `query` string may include Solr-style expressions such as
+    /// wildcards (e.g. `climat*`), phrase searches (`"air quality"`), and boolean
+    /// operators (`AND`, `OR`, `NOT`). When combined with structured filters the
+    /// underlying CKAN `package_search` endpoint interprets `q` and `fq` using
+    /// Solr semantics, so complex queries are supported.
     /// * `limit` - Maximum number of results (default: 10, max: 1000)
     /// * `offset` - Number of results to skip for pagination (default: 0)
     /// * `organization` - Filter by organization name (optional)
@@ -95,6 +101,7 @@ impl DataGovClient {
         format: Option<&str>,
     ) -> Result<PackageSearchResult> {
         // Build filter query for advanced filtering
+        // Use quotes around values to ensure proper Solr parsing
         let fq = match (organization, format) {
             (Some(org), Some(fmt)) => Some(format!(
                 r#"organization:"{}" AND res_format:"{}""#,
@@ -105,9 +112,12 @@ impl DataGovClient {
             (None, None) => None,
         };
 
+        // Only pass query if it's non-empty (don't use "*" as it interferes with filters)
+        let query_param = if query.is_empty() { None } else { Some(query) };
+
         let result = self
             .ckan
-            .package_search(Some(query), limit, offset, fq.as_deref())
+            .package_search(query_param, limit, offset, fq.as_deref())
             .await?;
 
         Ok(result)

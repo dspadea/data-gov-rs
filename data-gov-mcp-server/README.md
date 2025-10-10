@@ -64,6 +64,14 @@ Each request is expected to follow the shape:
 Responses mirror the JSON-RPC 2.0 schema and either contain a `result` payload or
 an `error` object.
 
+### Solr query syntax
+
+The `data_gov.search` tool accepts a `query` string that supports Solr-style
+syntax (wildcards, phrase matching, boolean operators). For advanced fielded
+filters, use the `ckan.packageSearch` tool and provide an `filter`/`fq` string
+in Solr syntax (for example: `organization:nasa-gov AND res_format:CSV`). The
+MCP server forwards `q` and `fq` directly to the underlying CKAN client.
+
 
 ## VSCode Integration
 

@@ -29,6 +29,18 @@ const METHODS: &[&str] = &[
 pub struct DataGovMcpServer {
     data_gov: DataGovClient,
     ckan: CkanClient,
+    portal_base_url: String,
+}
+
+fn derive_portal_base_url(api_base: &str) -> String {
+    let trimmed = api_base.trim_end_matches('/');
+    if let Some(prefix) = trimmed.strip_suffix("/api/3") {
+        prefix.to_string()
+    } else if let Some(prefix) = trimmed.strip_suffix("/api") {
+        prefix.to_string()
+    } else {
+        trimmed.to_string()
+    }
 }
 
 impl DataGovMcpServer {
@@ -63,9 +75,14 @@ impl DataGovMcpServer {
         if let Some(key) = api_key {
             ckan_configuration.api_key = Some(CkanApiKey { prefix: None, key });
         }
+        let portal_base_url = derive_portal_base_url(&ckan_configuration.base_path);
         let ckan = CkanClient::new(Arc::new(ckan_configuration));
 
-        Ok(Self { data_gov, ckan })
+        Ok(Self {
+            data_gov,
+            ckan,
+            portal_base_url,
+        })
     }
 
     async fn run(self) -> Result<(), ServerError> {
@@ -187,7 +204,7 @@ impl DataGovMcpServer {
             }
             "data_gov.search" => {
                 let params: SearchParams = parse_required_params(method, params)?;
-                let result = self
+                let mut result = self
                     .data_gov
                     .search(
                         &params.query,
@@ -197,7 +214,48 @@ impl DataGovMcpServer {
                         params.format.as_deref(),
                     )
                     .await?;
-                Ok(serde_json::to_value(result).map_err(ServerError::Serialization)?)
+                if let Some(filter) = params.organization_contains.as_ref().and_then(|value| {
+                    let trimmed = value.trim();
+                    if trimmed.is_empty() {
+                        None
+                    } else {
+                        Some(trimmed.to_ascii_lowercase())
+                    }
+                }) {
+                    if let Some(results) = result.results.as_mut() {
+                        results
+                            .retain(|package| self.matches_organization_filter(package, &filter));
+                    }
+                    result.count = Some(
+                        result
+                            .results
+                            .as_ref()
+                            .map(|packages| packages.len() as i32)
+                            .unwrap_or(0),
+                    );
+                }
+
+                let summaries = result
+                    .results
+                    .as_ref()
+                    .map(|packages| {
+                        packages
+                            .iter()
+                            .map(|package| self.to_dataset_summary(package))
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default();
+
+                let mut value =
+                    serde_json::to_value(&result).map_err(ServerError::Serialization)?;
+                if let Value::Object(ref mut map) = value {
+                    map.insert(
+                        "summaries".to_string(),
+                        serde_json::to_value(&summaries).map_err(ServerError::Serialization)?,
+                    );
+                }
+
+                Ok(value)
             }
             "data_gov.dataset" => {
                 let params: DatasetParams = parse_required_params(method, params)?;
@@ -477,6 +535,103 @@ impl DataGovMcpServer {
             other => Err(ServerError::InvalidMethod(other.to_string())),
         }
     }
+
+    fn matches_organization_filter(
+        &self,
+        package: &data_gov_ckan::models::Package,
+        needle: &str,
+    ) -> bool {
+        let org_match = package
+            .organization
+            .as_ref()
+            .map(|org| {
+                org.name.to_ascii_lowercase().contains(needle)
+                    || org
+                        .title
+                        .as_ref()
+                        .map(|title| title.to_ascii_lowercase().contains(needle))
+                        .unwrap_or(false)
+            })
+            .unwrap_or(false);
+
+        let owner_match = package
+            .owner_org
+            .as_ref()
+            .map(|owner| owner.to_ascii_lowercase().contains(needle))
+            .unwrap_or(false);
+
+        let author_match = package
+            .author
+            .as_ref()
+            .map(|author| author.to_ascii_lowercase().contains(needle))
+            .unwrap_or(false);
+
+        let maintainer_match = package
+            .maintainer
+            .as_ref()
+            .map(|maintainer| maintainer.to_ascii_lowercase().contains(needle))
+            .unwrap_or(false);
+
+        org_match || owner_match || author_match || maintainer_match
+    }
+
+    fn to_dataset_summary(&self, package: &data_gov_ckan::models::Package) -> DatasetSummary {
+        let title = package
+            .title
+            .as_ref()
+            .map(|value| value.trim())
+            .filter(|value| !value.is_empty())
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| package.name.clone());
+
+        let organization_slug = package
+            .organization
+            .as_ref()
+            .map(|org| org.name.clone())
+            .or_else(|| package.owner_org.clone());
+
+        let organization = package
+            .organization
+            .as_ref()
+            .and_then(|org| org.title.clone())
+            .or_else(|| organization_slug.clone());
+
+        let mut formats: Vec<String> = Vec::new();
+        let mut seen: HashSet<String> = HashSet::new();
+        if let Some(resources) = package.resources.as_ref() {
+            for resource in resources {
+                if let Some(format) = resource.format.as_ref() {
+                    let trimmed = format.trim();
+                    if trimmed.is_empty() {
+                        continue;
+                    }
+                    let key = trimmed.to_ascii_lowercase();
+                    if seen.insert(key) {
+                        formats.push(trimmed.to_string());
+                    }
+                }
+            }
+        }
+
+        DatasetSummary {
+            id: package.id.as_ref().map(|id| id.to_string()),
+            name: package.name.clone(),
+            title,
+            organization,
+            organization_slug,
+            description: package.notes.clone(),
+            dataset_url: self.dataset_url(&package.name),
+            formats,
+        }
+    }
+
+    fn dataset_url(&self, dataset_name: &str) -> String {
+        format!(
+            "{}/dataset/{}",
+            self.portal_base_url.trim_end_matches('/'),
+            dataset_name
+        )
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -622,6 +777,7 @@ where
 
 #[derive(Debug, Deserialize)]
 struct SearchParams {
+    #[serde(default)]
     query: String,
     #[serde(default)]
     limit: Option<i32>,
@@ -631,6 +787,26 @@ struct SearchParams {
     organization: Option<String>,
     #[serde(default, rename = "format")]
     format: Option<String>,
+    #[serde(default, rename = "organizationContains")]
+    organization_contains: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct DatasetSummary {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    id: Option<String>,
+    name: String,
+    title: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    organization: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", rename = "organizationSlug")]
+    organization_slug: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    description: Option<String>,
+    #[serde(rename = "datasetUrl")]
+    dataset_url: String,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    formats: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -836,17 +1012,17 @@ fn tool_specs() -> Vec<ToolSpec> {
         ToolSpec {
             tool_name: "data_gov_search",
             method_name: "data_gov.search",
-            description: "Search datasets on data.gov with optional filters",
+            description: "Search datasets on data.gov with optional filters. The query parameter accepts Solr-style search syntax including wildcards (*), phrase matching, and boolean operators (AND, OR, NOT). If you only want to filter by organization or format without a text query, you can omit the query parameter or pass an empty string. The response contains the raw CKAN package_search payload plus a `summaries` array with key dataset metadata.",
             input_schema: json!({
                 "type": "object",
                 "properties": {
-                    "query": {"type": "string", "description": "Full-text search query"},
+                    "query": {"type": "string", "description": "Full-text search query (supports Solr syntax: wildcards, phrases, boolean operators). Examples: 'climat*', \"\\\"air quality\\\"\", 'climate AND (temperature OR precipitation)'. Optional - can be empty to search by filters only.", "default": ""},
                     "limit": {"type": "integer", "minimum": 1, "maximum": 1000, "description": "Maximum number of results"},
                     "offset": {"type": "integer", "minimum": 0, "description": "Result offset for pagination"},
-                    "organization": {"type": "string", "description": "Filter results to a specific organization"},
-                    "format": {"type": "string", "description": "Filter results by resource format e.g. CSV"}
+                    "organization": {"type": "string", "description": "Filter results to a specific organization (e.g., 'sec-gov', 'nasa-gov')"},
+                    "format": {"type": "string", "description": "Filter results by resource format e.g. CSV"},
+                    "organizationContains": {"type": "string", "description": "Case-insensitive substring filter applied to organization slug, organization title, author, or maintainer (e.g., 'NASA')."}
                 },
-                "required": ["query"],
                 "additionalProperties": false
             }),
         },
@@ -909,14 +1085,14 @@ fn tool_specs() -> Vec<ToolSpec> {
         ToolSpec {
             tool_name: "ckan_package_search",
             method_name: "ckan.packageSearch",
-            description: "Perform a low-level CKAN package_search request",
+            description: "Perform a low-level CKAN package_search request with full Solr query syntax support. Use the filter parameter for advanced Solr queries like 'organization:nasa-gov', 'res_format:CSV', or complex queries with AND/OR/NOT operators.",
             input_schema: json!({
                 "type": "object",
                 "properties": {
-                    "query": {"type": ["string", "null"], "description": "Full-text search query"},
+                    "query": {"type": ["string", "null"], "description": "Full-text search query (supports Solr syntax). Examples: 'budget*', \"national parks\""},
                     "rows": {"type": ["integer", "null"], "minimum": 1, "maximum": 1000, "description": "Number of rows to return"},
                     "start": {"type": ["integer", "null"], "minimum": 0, "description": "Offset into result set"},
-                    "filter": {"type": ["string", "null"], "description": "Filter query in CKAN syntax"}
+                    "filter": {"type": ["string", "null"], "description": "Filter query in Solr/CKAN syntax (e.g., 'organization:sec-gov', 'res_format:CSV AND tags:healthcare'). Supports boolean operators, ranges, and fielded queries."}
                 },
                 "additionalProperties": false
             }),

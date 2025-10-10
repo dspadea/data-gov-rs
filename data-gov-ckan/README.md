@@ -94,6 +94,20 @@ let fq = r#"organization:"gsa-gov" AND res_format:"CSV""#;
 let results = client.package_search(Some("budget"), Some(20), Some(0), Some(fq)).await?;
 ```
 
+### Solr query syntax
+
+The `q` (full-text) and `fq` (filter query) parameters are passed directly to
+CKAN's Solr-backed `package_search` endpoint. Typical patterns:
+
+- Wildcards: `q=climat*`
+- Phrase search: `q="air quality"`
+- Fielded filters: `fq=organization:epa-gov AND res_format:CSV`
+- Range queries: `fq=metadata_modified:[2020-01-01T00:00:00Z TO NOW]`
+
+Use `fq` for structured filtering and `q` for free-text searches. When building
+`fq` strings programmatically, quote values containing spaces to ensure correct
+Solr parsing.
+
 ## API surface
 
 Core methods include `package_search`, `package_show`, `organization_list`, `group_list`, `tag_list`, and `user_list`. Autocomplete helpers cover datasets, organisations, groups, tags, and users. Errors are surfaced through the `CkanError` enum with variants for request, parse, and API failures.

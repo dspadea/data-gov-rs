@@ -113,6 +113,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
+### Solr query syntax
+
+Both the high-level `data-gov` client and the low-level `data-gov-ckan` crate
+use CKAN's `package_search` endpoint and therefore accept Solr-style query
+strings via the `q` and `fq` parameters. Use `q` for free-text searches and `fq`
+for structured, fielded filters (e.g., `organization:nasa-gov AND res_format:CSV`).
+
 ## Development
 
 ```bash

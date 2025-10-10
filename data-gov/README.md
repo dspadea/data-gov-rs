@@ -121,6 +121,19 @@ quit
 
 See [`../examples/scripting`](../examples/scripting) for ready-made scripts such as `download-epa-climate.sh` and `list-orgs.sh`.
 
+### Solr query syntax
+
+The `search` method and CLI `search` command accept free-text queries that are
+interpreted by CKAN's Solr backend. You can use simple text, wildcards, phrases,
+and boolean operators. Examples:
+
+- `search "climat*"` (wildcard)
+- `search "\"air quality\""` (phrase search)
+- `search "climate AND (temperature OR precipitation)"` (boolean)
+
+If you need advanced, fielded filters use the lower-level CKAN client via
+`data_gov::ckan::CkanClient::package_search` and pass an `fq` filter string.
+
 ## Configuration
 
 ```rust
