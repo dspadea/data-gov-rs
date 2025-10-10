@@ -8,7 +8,7 @@ description = "MCP Server for AI integration with Data.Gov"
 license = "Apache-2.0"
 repository = "https://github.com/dspadea/data-gov-rs"
 keywords = ["data", "government", "ckan", "mcp", "ai"]
-categories = ["ai", "mcp"]
+categories = []
 authors = ["David Spadea"]
 homepage = "https://github.com/dspadea/data-gov-rs"
 
