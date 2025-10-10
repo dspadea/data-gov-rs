@@ -6,7 +6,7 @@ echo "🌍 Practical Example: Finding EPA Climate Data"
 echo "=============================================="
 echo
 
-echo "Step 1: Search for EPA climate datasets"
+echo "Step 1: Search for Electric Vehicle datasets"
 data-gov search "electric vehicle" 5 
 echo
 
