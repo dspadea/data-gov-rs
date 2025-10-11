@@ -1,0 +1,10 @@
+{
+	"servers": {
+		"data-gov": {
+			"type": "stdio",
+			"command": "/home/dave/.cargo/bin/data-gov-mcp-server",
+			"args": []
+		}
+	},
+	"inputs": []
+}
