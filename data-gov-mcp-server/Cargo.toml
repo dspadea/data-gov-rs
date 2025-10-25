@@ -1,7 +1,7 @@
 [package]
 rust-version = "1.90"
 name = "data-gov-mcp-server"
-version = "0.3.0"
+version = "0.3.1"
 edition = "2024"
 
 description = "MCP Server for AI integration with Data.Gov"
@@ -17,9 +17,9 @@ homepage = "https://github.com/dspadea/data-gov-rs"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "io-std", "io-util", "sync"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-thiserror = "1"
+thiserror = "2"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
 futures = "0.3"
-data-gov = "0.2.0"
-data-gov-ckan = "0.2.0"
+data-gov = "0.3.1"
+data-gov-ckan = "0.3.1"
