@@ -8,7 +8,6 @@ mod reporter;
 
 use clap::{Arg, ArgMatches, Command};
 use std::path::PathBuf;
-use std::str::FromStr;
 use std::sync::{Arc, OnceLock};
 use tokio::runtime::Runtime;
 
@@ -227,13 +226,13 @@ fn run_cli_mode(
         .unwrap_or_default()
         .collect();
 
-    // Build command string
-    let mut cmd_parts = vec![command];
-    cmd_parts.extend(args.iter().map(|s| s.as_str()));
-    let full_command = cmd_parts.join(" ");
+    // Build argument list for parsing without losing whitespace information
+    let mut cmd_parts: Vec<String> = Vec::with_capacity(1 + args.len());
+    cmd_parts.push(command.to_string());
+    cmd_parts.extend(args.iter().map(|s| (*s).clone()));
 
     // Parse the command
-    let repl_command = match ReplCommand::from_str(&full_command) {
+    let repl_command = match ReplCommand::from_parts(&cmd_parts) {
         Ok(cmd) => cmd,
         Err(e) => {
             eprintln!("{} {}", color_red_bold("Error:"), e);
