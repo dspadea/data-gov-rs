@@ -1,7 +1,7 @@
 [package]
 rust-version = "1.90"
 name = "data-gov"
-version = "0.3.0"
+version = "0.3.1"
 edition = "2024"
 description = "Rust client library and CLI for data.gov - search, explore, and download U.S. government datasets"
 license = "Apache-2.0"
