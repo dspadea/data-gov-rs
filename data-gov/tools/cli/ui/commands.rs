@@ -65,17 +65,15 @@ pub fn parse_command_args(s: &str) -> Vec<String> {
     args
 }
 
-impl FromStr for ReplCommand {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let parts = parse_command_args(s);
-
+impl ReplCommand {
+    pub fn from_parts(parts: &[String]) -> Result<Self, String> {
         if parts.is_empty() {
             return Err("Empty command".to_string());
         }
 
-        match parts[0].to_lowercase().as_str() {
+        let command = parts[0].to_lowercase();
+
+        match command.as_str() {
             "search" | "s" => {
                 if parts.len() < 2 {
                     return Err("Usage: search <query> [limit]".to_string());
@@ -136,6 +134,15 @@ impl FromStr for ReplCommand {
             "quit" | "exit" | "q" => Ok(ReplCommand::Quit),
             _ => Err(format!("Unknown command: {}", parts[0])),
         }
+    }
+}
+
+impl FromStr for ReplCommand {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let parts = parse_command_args(s);
+        ReplCommand::from_parts(&parts)
     }
 }
 
