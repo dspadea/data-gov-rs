@@ -1,4 +1,5 @@
 use data_gov::DataGovClient;
+use data_gov::util::sanitize_path_component;
 use tokio::runtime::Runtime;
 
 use super::commands::{ReplCommand, ResourceSelector};
@@ -7,19 +8,6 @@ use super::{
     color_blue, color_blue_bold, color_bold, color_cyan, color_dimmed, color_green,
     color_green_bold, color_red, color_red_bold, color_yellow, color_yellow_bold,
 };
-
-/// Sanitize a dataset ID to prevent path traversal attacks.
-/// Removes dangerous characters and sequences that could escape the intended directory.
-#[allow(clippy::collapsible_str_replace)]
-fn sanitize_dataset_id(dataset_id: &str) -> String {
-    dataset_id
-        .replace("..", "_")
-        .replace('/', "_")
-        .replace('\\', "_")
-        .chars()
-        .filter(|c| c.is_alphanumeric() || *c == '-' || *c == '_' || *c == '.')
-        .collect()
-}
 
 /// Execute a command (shared between REPL and CLI modes)
 pub fn execute_command(
@@ -97,8 +85,9 @@ fn handle_search(
             );
 
             if let Some(notes) = &package.notes {
-                let truncated = if notes.len() > 100 {
-                    format!("{}...", &notes[..100])
+                let truncated = if notes.chars().count() > 100 {
+                    let s: String = notes.chars().take(100).collect();
+                    format!("{s}...")
                 } else {
                     notes.clone()
                 };
@@ -186,7 +175,7 @@ fn handle_download_by_index(
     println!("{} resource {}...", color_cyan("Downloading"), index);
 
     // Download to dataset-specific directory - sanitize to prevent path traversal
-    let safe_dataset_id = sanitize_dataset_id(dataset_id);
+    let safe_dataset_id = sanitize_path_component(dataset_id);
     let dataset_dir = client.download_dir().join(&safe_dataset_id);
     let path = rt.block_on(client.download_resource(resource, Some(&dataset_dir)))?;
 
@@ -244,7 +233,7 @@ fn handle_download_by_name(
         );
 
         // Sanitize to prevent path traversal
-        let safe_dataset_id = sanitize_dataset_id(dataset_id);
+        let safe_dataset_id = sanitize_path_component(dataset_id);
         let dataset_dir = client.download_dir().join(&safe_dataset_id);
         let path = rt.block_on(client.download_resource(resource, Some(&dataset_dir)))?;
 
@@ -263,7 +252,7 @@ fn handle_download_by_name(
         );
 
         // Sanitize to prevent path traversal
-        let safe_dataset_id = sanitize_dataset_id(dataset_id);
+        let safe_dataset_id = sanitize_path_component(dataset_id);
         let dataset_dir = client.download_dir().join(&safe_dataset_id);
         let resources_to_download: Vec<_> = matching_resources
             .iter()
@@ -286,7 +275,7 @@ fn handle_download_all(
     resources: &[data_gov::ckan::models::Resource],
 ) -> Result<(), Box<dyn std::error::Error>> {
     // Sanitize to prevent path traversal
-    let safe_dataset_id = sanitize_dataset_id(dataset_id);
+    let safe_dataset_id = sanitize_path_component(dataset_id);
     let dataset_dir = client.download_dir().join(&safe_dataset_id);
     let results = rt.block_on(client.download_resources(resources, Some(&dataset_dir)));
 
@@ -384,7 +373,7 @@ mod tests {
     #[test]
     fn test_resource_name_matching_case_insensitive() {
         // Create test resources
-        let resources = vec![
+        let resources = [
             data_gov::ckan::models::Resource {
                 name: Some("Data.CSV".to_string()),
                 format: Some("CSV".to_string()),
@@ -426,7 +415,7 @@ mod tests {
     #[test]
     fn test_resource_name_matching_partial() {
         // Create test resources
-        let resources = vec![
+        let resources = [
             data_gov::ckan::models::Resource {
                 name: Some("complaints-2023.csv".to_string()),
                 format: Some("CSV".to_string()),
@@ -468,7 +457,7 @@ mod tests {
     #[test]
     fn test_resource_name_no_matches() {
         // Create test resources
-        let resources = vec![
+        let resources = [
             data_gov::ckan::models::Resource {
                 name: Some("data.csv".to_string()),
                 format: Some("CSV".to_string()),

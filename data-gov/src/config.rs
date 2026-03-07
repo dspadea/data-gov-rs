@@ -58,7 +58,7 @@ impl Default for DataGovConfig {
             ckan_config: Arc::new(CkanConfiguration::default()),
             mode: OperatingMode::Interactive, // Default to interactive mode
             base_download_dir: Self::get_default_download_dir(),
-            user_agent: "data-gov-rs/1.0".to_string(),
+            user_agent: concat!("data-gov-rs/", env!("CARGO_PKG_VERSION")).to_string(),
             max_concurrent_downloads: 3,
             download_timeout_secs: 300, // 5 minutes
             status_reporter: None,

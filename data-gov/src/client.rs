@@ -35,6 +35,11 @@ impl DataGovClient {
         Self::with_config(DataGovConfig::new())
     }
 
+    /// Access the current configuration
+    pub fn config(&self) -> &DataGovConfig {
+        &self.config
+    }
+
     /// Create a new DataGov client with custom configuration
     pub fn with_config(config: DataGovConfig) -> Result<Self> {
         let ckan = CkanClient::new(config.ckan_config.clone());
@@ -466,7 +471,13 @@ impl DataGovClient {
         };
 
         let mut stream = response.bytes_stream();
-        let mut downloaded = 0u64;
+        let mut progress = DownloadProgress {
+            resource_name: resource_name.clone(),
+            dataset_name: dataset_name.clone(),
+            output_path: output_path.to_path_buf(),
+            downloaded_bytes: 0,
+            total_bytes: total_size,
+        };
 
         while let Some(chunk_result) = stream.next().await {
             let chunk = match chunk_result {
@@ -482,17 +493,10 @@ impl DataGovClient {
                 return Err(err.into());
             }
 
-            downloaded += chunk.len() as u64;
+            progress.downloaded_bytes += chunk.len() as u64;
 
             if let Some(reporter) = status_reporter.as_ref() {
-                let event = DownloadProgress {
-                    resource_name: resource_name.clone(),
-                    dataset_name: dataset_name.clone(),
-                    output_path: output_path.to_path_buf(),
-                    downloaded_bytes: downloaded,
-                    total_bytes: total_size,
-                };
-                reporter.on_download_progress(&event);
+                reporter.on_download_progress(&progress);
             }
         }
 
@@ -540,13 +544,6 @@ impl DataGovClient {
         &self.ckan
     }
 }
-
-impl Default for DataGovClient {
-    fn default() -> Self {
-        Self::new().expect("Failed to create default DataGovClient")
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

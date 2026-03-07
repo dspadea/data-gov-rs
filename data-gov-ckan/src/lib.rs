@@ -7,13 +7,7 @@
 //! autocomplete endpoints. The crate re-exports the generated data models under
 //! [`models`].
 
-#![allow(unused_imports)]
 #![allow(clippy::too_many_arguments)]
-
-extern crate serde;
-extern crate serde_json;
-extern crate serde_repr;
-extern crate url;
 
 pub mod client;
 pub mod models;

@@ -7,7 +7,7 @@ use serde_json::{Value, json};
 use std::collections::HashSet;
 use std::env;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 use thiserror::Error;
 use tokio::io::{self, AsyncBufReadExt, AsyncWriteExt, BufReader, BufWriter};
 
@@ -152,6 +152,18 @@ impl DataGovMcpServer {
     }
 
     async fn handle_request(&self, request: Request) -> Response {
+        // JSON-RPC 2.0 requires jsonrpc field to be exactly "2.0" when present
+        if let Some(ref version) = request.jsonrpc
+            && version != "2.0"
+        {
+            return Response::error(
+                request.id,
+                ServerError::InvalidRequest(format!(
+                    "invalid jsonrpc version: expected \"2.0\", got \"{version}\""
+                )),
+            );
+        }
+
         match self.dispatch(&request.method, request.params).await {
             Ok(result) => Response::success(request.id, result),
             Err(err) => Response::error(request.id, err),
@@ -402,16 +414,15 @@ impl DataGovMcpServer {
                 let use_dataset_subdir = params.dataset_subdirectory.unwrap_or(false);
 
                 // Sanitize dataset_slug to prevent path traversal attacks
-                #[allow(clippy::collapsible_str_replace)]
-                let safe_dataset_slug = dataset_slug
-                    .replace("..", "_")
-                    .replace('/', "_")
-                    .replace('\\', "_")
-                    .chars()
-                    .filter(|c| c.is_alphanumeric() || *c == '-' || *c == '_' || *c == '.')
-                    .collect::<String>();
+                let safe_dataset_slug = data_gov::util::sanitize_path_component(&dataset_slug);
 
                 let resolved_output_dir = if let Some(dir) = params.output_dir.as_ref() {
+                    // Sanitize output_dir to prevent path traversal
+                    if dir.contains("..") {
+                        return Err(ServerError::InvalidParams(
+                            "output_dir must not contain '..' path components".to_string(),
+                        ));
+                    }
                     let mut path = PathBuf::from(dir);
                     if !path.is_absolute() {
                         path = std::env::current_dir().map_err(ServerError::Io)?.join(path);
@@ -637,7 +648,7 @@ impl DataGovMcpServer {
 #[derive(Debug, Deserialize)]
 struct Request {
     #[serde(default)]
-    _jsonrpc: Option<String>,
+    jsonrpc: Option<String>,
     id: Option<Value>,
     method: String,
     #[serde(default)]
@@ -987,27 +998,25 @@ enum ToolContent {
 }
 
 fn tool_descriptors() -> Vec<ToolDescriptor> {
-    tool_specs()
-        .into_iter()
+    TOOL_SPECS
+        .iter()
         .map(|spec| ToolDescriptor {
             name: spec.tool_name,
             description: spec.description,
-            input_schema: spec.input_schema,
+            input_schema: spec.input_schema.clone(),
         })
         .collect()
 }
 
-fn find_tool_spec(name: &str) -> Option<ToolSpec> {
-    tool_specs().into_iter().find(|spec| spec.tool_name == name)
+fn find_tool_spec(name: &str) -> Option<&'static ToolSpec> {
+    TOOL_SPECS.iter().find(|spec| spec.tool_name == name)
 }
 
-fn find_tool_spec_by_method(method: &str) -> Option<ToolSpec> {
-    tool_specs()
-        .into_iter()
-        .find(|spec| spec.method_name == method)
+fn find_tool_spec_by_method(method: &str) -> Option<&'static ToolSpec> {
+    TOOL_SPECS.iter().find(|spec| spec.method_name == method)
 }
 
-fn tool_specs() -> Vec<ToolSpec> {
+static TOOL_SPECS: LazyLock<Vec<ToolSpec>> = LazyLock::new(|| {
     vec![
         ToolSpec {
             tool_name: "data_gov_search",
@@ -1125,4 +1134,414 @@ fn tool_specs() -> Vec<ToolSpec> {
             }),
         },
     ]
+});
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    // -----------------------------------------------------------------------
+    // derive_portal_base_url
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn derive_portal_base_url_strips_api_3() {
+        assert_eq!(
+            derive_portal_base_url("https://catalog.data.gov/api/3"),
+            "https://catalog.data.gov"
+        );
+    }
+
+    #[test]
+    fn derive_portal_base_url_strips_api_3_with_trailing_slash() {
+        assert_eq!(
+            derive_portal_base_url("https://catalog.data.gov/api/3/"),
+            "https://catalog.data.gov"
+        );
+    }
+
+    #[test]
+    fn derive_portal_base_url_strips_api_only() {
+        assert_eq!(
+            derive_portal_base_url("https://example.com/api"),
+            "https://example.com"
+        );
+    }
+
+    #[test]
+    fn derive_portal_base_url_no_api_suffix() {
+        assert_eq!(
+            derive_portal_base_url("https://example.com/custom"),
+            "https://example.com/custom"
+        );
+    }
+
+    #[test]
+    fn derive_portal_base_url_empty_string() {
+        assert_eq!(derive_portal_base_url(""), "");
+    }
+
+    // -----------------------------------------------------------------------
+    // parse_required_params / parse_optional_params
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn parse_required_params_succeeds_with_valid_json() {
+        let params = Some(json!({"id": "my-dataset"}));
+        let result: ServerResult<DatasetParams> =
+            parse_required_params("test_method", params);
+        let parsed = result.expect("should succeed");
+        assert_eq!(parsed.id, "my-dataset");
+    }
+
+    #[test]
+    fn parse_required_params_fails_when_none() {
+        let result: ServerResult<DatasetParams> =
+            parse_required_params("test_method", None);
+        let err = result.expect_err("should fail");
+        match err {
+            ServerError::InvalidParams(msg) => {
+                assert!(msg.contains("test_method"));
+                assert!(msg.contains("missing parameters"));
+            }
+            other => panic!("expected InvalidParams, got: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn parse_required_params_fails_with_wrong_shape() {
+        let params = Some(json!({"wrong_field": 42}));
+        let result: ServerResult<DatasetParams> =
+            parse_required_params("test_method", params);
+        let err = result.expect_err("should fail");
+        assert!(matches!(err, ServerError::InvalidParams(_)));
+    }
+
+    #[test]
+    fn parse_optional_params_returns_default_when_none() {
+        let result: ServerResult<ListOrganizationsParams> =
+            parse_optional_params("test_method", None);
+        let parsed = result.expect("should succeed");
+        assert!(parsed.limit.is_none());
+    }
+
+    #[test]
+    fn parse_optional_params_parses_provided_value() {
+        let params = Some(json!({"limit": 25}));
+        let result: ServerResult<ListOrganizationsParams> =
+            parse_optional_params("test_method", params);
+        let parsed = result.expect("should succeed");
+        assert_eq!(parsed.limit, Some(25));
+    }
+
+    // -----------------------------------------------------------------------
+    // Response construction
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn response_success_has_correct_structure() {
+        let resp = Response::success(Some(json!(1)), json!({"data": "test"}));
+        assert_eq!(resp.jsonrpc, "2.0");
+        assert_eq!(resp.id, Some(json!(1)));
+        assert!(resp.result.is_some());
+        assert!(resp.error.is_none());
+    }
+
+    #[test]
+    fn response_error_has_correct_structure() {
+        let resp = Response::error(
+            Some(json!(2)),
+            ServerError::InvalidMethod("foo".to_string()),
+        );
+        assert_eq!(resp.jsonrpc, "2.0");
+        assert_eq!(resp.id, Some(json!(2)));
+        assert!(resp.result.is_none());
+        let error = resp.error.expect("should have error");
+        assert_eq!(error.code, -32601);
+        assert!(error.message.contains("foo"));
+    }
+
+    #[test]
+    fn response_success_serializes_without_error_field() {
+        let resp = Response::success(Some(json!(1)), json!("ok"));
+        let json_str = serde_json::to_string(&resp).expect("should serialize");
+        assert!(!json_str.contains("\"error\""));
+    }
+
+    #[test]
+    fn response_error_serializes_without_result_field() {
+        let resp = Response::error(None, ServerError::InvalidRequest("bad".into()));
+        let json_str = serde_json::to_string(&resp).expect("should serialize");
+        assert!(!json_str.contains("\"result\""));
+    }
+
+    // -----------------------------------------------------------------------
+    // ResponseError::from(ServerError)  — JSON-RPC error codes
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn error_code_invalid_request() {
+        let err = ResponseError::from(ServerError::InvalidRequest("bad".into()));
+        assert_eq!(err.code, -32600);
+    }
+
+    #[test]
+    fn error_code_invalid_method() {
+        let err = ResponseError::from(ServerError::InvalidMethod("foo".into()));
+        assert_eq!(err.code, -32601);
+        assert!(err.message.contains("foo"));
+    }
+
+    #[test]
+    fn error_code_invalid_params() {
+        let err = ResponseError::from(ServerError::InvalidParams("missing x".into()));
+        assert_eq!(err.code, -32602);
+    }
+
+    #[test]
+    fn error_code_json_parse() {
+        let serde_err = serde_json::from_str::<Value>("not json").unwrap_err();
+        let err = ResponseError::from(ServerError::Json(serde_err));
+        assert_eq!(err.code, -32700);
+    }
+
+    #[test]
+    fn error_code_io() {
+        let io_err = std::io::Error::other("disk full");
+        let err = ResponseError::from(ServerError::Io(io_err));
+        assert_eq!(err.code, -32020);
+    }
+
+    // -----------------------------------------------------------------------
+    // find_tool_spec / find_tool_spec_by_method
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn find_tool_spec_by_known_name() {
+        let spec = find_tool_spec("data_gov_search");
+        assert!(spec.is_some());
+        let spec = spec.unwrap();
+        assert_eq!(spec.method_name, "data_gov.search");
+    }
+
+    #[test]
+    fn find_tool_spec_unknown_name_returns_none() {
+        assert!(find_tool_spec("nonexistent_tool").is_none());
+    }
+
+    #[test]
+    fn find_tool_spec_by_method_known() {
+        let spec = find_tool_spec_by_method("ckan.packageSearch");
+        assert!(spec.is_some());
+        assert_eq!(spec.unwrap().tool_name, "ckan_package_search");
+    }
+
+    #[test]
+    fn find_tool_spec_by_method_unknown_returns_none() {
+        assert!(find_tool_spec_by_method("nonexistent.method").is_none());
+    }
+
+    // -----------------------------------------------------------------------
+    // tool_descriptors / tool_specs
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn tool_specs_has_expected_count() {
+        assert_eq!(TOOL_SPECS.len(), 8);
+    }
+
+    #[test]
+    fn tool_descriptors_match_tool_specs() {
+        let descriptors = tool_descriptors();
+        assert_eq!(TOOL_SPECS.len(), descriptors.len());
+
+        for (spec, desc) in TOOL_SPECS.iter().zip(descriptors.iter()) {
+            assert_eq!(spec.tool_name, desc.name);
+            assert_eq!(spec.description, desc.description);
+        }
+    }
+
+    #[test]
+    fn all_tool_specs_have_valid_input_schema() {
+        for spec in TOOL_SPECS.iter() {
+            let schema = &spec.input_schema;
+            assert_eq!(
+                schema["type"], "object",
+                "tool {} should have object schema",
+                spec.tool_name
+            );
+            assert!(
+                schema["properties"].is_object(),
+                "tool {} should have properties",
+                spec.tool_name
+            );
+        }
+    }
+
+    #[test]
+    fn tool_names_are_unique() {
+        let names: HashSet<&str> = TOOL_SPECS.iter().map(|s| s.tool_name).collect();
+        assert_eq!(names.len(), TOOL_SPECS.len(), "tool names should be unique");
+    }
+
+    #[test]
+    fn method_names_are_unique() {
+        let methods: HashSet<&str> = TOOL_SPECS.iter().map(|s| s.method_name).collect();
+        assert_eq!(methods.len(), TOOL_SPECS.len(), "method names should be unique");
+    }
+
+    // -----------------------------------------------------------------------
+    // ToolResponse
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn tool_response_from_value_has_text_and_json() {
+        let val = json!({"count": 5});
+        let resp = ToolResponse::from_value(val.clone());
+        assert_eq!(resp.content.len(), 2);
+        assert!(resp.is_error.is_none());
+
+        // First should be text, second should be json
+        match &resp.content[0] {
+            ToolContent::Text { text } => {
+                assert!(text.contains("\"count\": 5"));
+            }
+            other => panic!("expected Text, got: {:?}", other),
+        }
+        match &resp.content[1] {
+            ToolContent::Json { json } => {
+                assert_eq!(*json, val);
+            }
+            other => panic!("expected Json, got: {:?}", other),
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // InitializeResult
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn initialize_result_without_client_info() {
+        let result = InitializeResult::new(None);
+        assert_eq!(result.server_info.name, "data-gov-mcp-server");
+        assert!(result.client_info.is_none());
+        assert!(result.capabilities.is_some());
+    }
+
+    #[test]
+    fn initialize_result_with_client_info() {
+        let info = ClientInfo {
+            name: "test-client".to_string(),
+            version: Some("1.0".to_string()),
+        };
+        let result = InitializeResult::new(Some(info));
+        let ci = result.client_info.expect("should have client_info");
+        assert_eq!(ci.name, "test-client");
+        assert_eq!(ci.version.as_deref(), Some("1.0"));
+    }
+
+    // -----------------------------------------------------------------------
+    // Request deserialization
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn request_deserializes_full_json_rpc() {
+        let json_str = r#"{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}"#;
+        let req: Request = serde_json::from_str(json_str).expect("should parse");
+        assert_eq!(req.method, "tools/list");
+        assert_eq!(req.id, Some(json!(1)));
+        assert!(req.params.is_some());
+    }
+
+    #[test]
+    fn request_deserializes_minimal() {
+        let json_str = r#"{"method":"initialize"}"#;
+        let req: Request = serde_json::from_str(json_str).expect("should parse");
+        assert_eq!(req.method, "initialize");
+        assert!(req.id.is_none());
+        assert!(req.params.is_none());
+    }
+
+    #[test]
+    fn request_rejects_missing_method() {
+        let json_str = r#"{"jsonrpc":"2.0","id":1}"#;
+        let result = serde_json::from_str::<Request>(json_str);
+        assert!(result.is_err());
+    }
+
+    // -----------------------------------------------------------------------
+    // SearchParams deserialization
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn search_params_all_fields() {
+        let val = json!({
+            "query": "climate",
+            "limit": 10,
+            "offset": 20,
+            "organization": "epa-gov",
+            "format": "CSV",
+            "organizationContains": "NASA"
+        });
+        let params: SearchParams = serde_json::from_value(val).expect("should parse");
+        assert_eq!(params.query, "climate");
+        assert_eq!(params.limit, Some(10));
+        assert_eq!(params.offset, Some(20));
+        assert_eq!(params.organization.as_deref(), Some("epa-gov"));
+        assert_eq!(params.format.as_deref(), Some("CSV"));
+        assert_eq!(params.organization_contains.as_deref(), Some("NASA"));
+    }
+
+    #[test]
+    fn search_params_defaults() {
+        let val = json!({});
+        let params: SearchParams = serde_json::from_value(val).expect("should parse");
+        assert_eq!(params.query, "");
+        assert!(params.limit.is_none());
+        assert!(params.organization.is_none());
+    }
+
+    // -----------------------------------------------------------------------
+    // DatasetSummary serialization
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn dataset_summary_skips_empty_formats() {
+        let summary = DatasetSummary {
+            id: None,
+            name: "test".to_string(),
+            title: "Test".to_string(),
+            organization: None,
+            organization_slug: None,
+            description: None,
+            dataset_url: "https://example.com/dataset/test".to_string(),
+            formats: vec![],
+        };
+        let json = serde_json::to_value(&summary).expect("should serialize");
+        assert!(!json.as_object().unwrap().contains_key("formats"));
+        assert!(!json.as_object().unwrap().contains_key("id"));
+        assert!(!json.as_object().unwrap().contains_key("organization"));
+    }
+
+    #[test]
+    fn dataset_summary_includes_non_empty_formats() {
+        let summary = DatasetSummary {
+            id: Some("abc".to_string()),
+            name: "test".to_string(),
+            title: "Test".to_string(),
+            organization: Some("EPA".to_string()),
+            organization_slug: Some("epa-gov".to_string()),
+            description: Some("A dataset".to_string()),
+            dataset_url: "https://example.com/dataset/test".to_string(),
+            formats: vec!["CSV".to_string(), "JSON".to_string()],
+        };
+        let json = serde_json::to_value(&summary).expect("should serialize");
+        let obj = json.as_object().unwrap();
+        assert!(obj.contains_key("formats"));
+        assert!(obj.contains_key("id"));
+        assert!(obj.contains_key("organization"));
+        assert!(obj.contains_key("organizationSlug"));
+        assert_eq!(obj["datasetUrl"], "https://example.com/dataset/test");
+    }
 }

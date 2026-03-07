@@ -103,7 +103,7 @@ pub fn color_bold(text: &str) -> String {
 pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     let app = Command::new("data-gov")
         .about("Interactive REPL and CLI for exploring data.gov datasets")
-        .version("1.0")
+        .version(env!("CARGO_PKG_VERSION"))
         .arg(
             Arg::new("api-key")
                 .long("api-key")
@@ -116,7 +116,6 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
                 .short('d')
                 .value_name("DIR")
                 .help("Base directory for downloads (REPL: ~/Downloads/<dataset>/, CLI: ./<dataset>/)")
-                .default_value("./downloads")
         )
         .arg(
             Arg::new("color")
@@ -168,11 +167,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     if let Some(download_dir) = matches.get_one::<String>("download-dir") {
-        // Only override the default if explicitly provided and not the CLI default value
-        if download_dir != "./downloads" {
-            config = config.with_download_dir(PathBuf::from(download_dir));
-        }
-        // If it's the CLI default, keep using the system default from DataGovConfig::default()
+        config = config.with_download_dir(PathBuf::from(download_dir));
     }
 
     // Parse color mode

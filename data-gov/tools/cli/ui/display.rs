@@ -63,8 +63,9 @@ pub fn print_package_details(package: &Package) {
             if let Some(desc) = &resource.description
                 && !desc.is_empty()
             {
-                let truncated = if desc.len() > 80 {
-                    format!("{}...", &desc[..80])
+                let truncated = if desc.chars().count() > 80 {
+                    let s: String = desc.chars().take(80).collect();
+                    format!("{s}...")
                 } else {
                     desc.clone()
                 };

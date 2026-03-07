@@ -29,8 +29,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
             println!("   📁 {} downloadable resources", resources.len());
 
             if let Some(notes) = &dataset.notes {
-                let truncated = if notes.len() > 100 {
-                    format!("{}...", &notes[..100])
+                let truncated = if notes.chars().count() > 100 {
+                    let s: String = notes.chars().take(100).collect();
+                    format!("{s}...")
                 } else {
                     notes.clone()
                 };

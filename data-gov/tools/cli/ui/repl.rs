@@ -8,7 +8,7 @@ use super::commands::ReplCommand;
 use super::display::print_repl_help;
 use super::handlers::execute_command;
 use super::{color_blue, color_blue_bold, color_dimmed, color_green_bold, color_red_bold};
-use data_gov::{DataGovClient, DataGovConfig};
+use data_gov::DataGovClient;
 
 /// REPL state and logic
 pub struct DataGovRepl {
@@ -100,8 +100,8 @@ impl DataGovRepl {
     }
 
     fn handle_setdir(&mut self, path: &Path) -> Result<(), Box<dyn std::error::Error>> {
-        // Create new config with updated directory
-        let new_config = DataGovConfig::new().with_download_dir(path.to_path_buf());
+        // Clone existing config and update only the download directory
+        let new_config = self.client.config().clone().with_download_dir(path.to_path_buf());
 
         // Validate directory
         self.rt.block_on(async {
