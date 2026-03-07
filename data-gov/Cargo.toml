@@ -39,3 +39,9 @@ url = "2.5"
 # Cross-platform directories
 dirs = "6.0"
 
+[dev-dependencies]
+wiremock = "0.6"
+tokio = { version = "1", features = ["full"] }
+serde_json = "1.0"
+tempfile = "3"
+

@@ -115,6 +115,14 @@ impl DataGovConfig {
         self.get_base_download_dir().join(dataset_name)
     }
 
+    /// Override the CKAN API base URL (e.g., for testing with a mock server)
+    pub fn with_base_url<S: Into<String>>(mut self, base_url: S) -> Self {
+        let mut ckan_config = (*self.ckan_config).clone();
+        ckan_config.base_path = base_url.into();
+        self.ckan_config = Arc::new(ckan_config);
+        self
+    }
+
     /// Add API key for higher rate limits
     pub fn with_api_key<S: Into<String>>(mut self, api_key: S) -> Self {
         let mut ckan_config = (*self.ckan_config).clone();
