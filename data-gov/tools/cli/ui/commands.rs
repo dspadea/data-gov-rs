@@ -80,7 +80,7 @@ impl ReplCommand {
                 }
                 let query = parts[1..].join(" ");
                 let limit = if parts.len() > 2 {
-                    parts.last().unwrap().parse().ok()
+                    parts.last().and_then(|s| s.parse().ok())
                 } else {
                     None
                 };

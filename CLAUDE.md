@@ -122,6 +122,35 @@ cargo test --test integration_tests       # Live API tests
 cargo test --test solr_syntax_tests -- --ignored  # Solr syntax (network)
 ```
 
+## Error handling
+
+### No `unwrap()` or `expect()` in library code
+
+Library crates (`data-gov-ckan`, `data-gov`, `data-gov-mcp-server`) must not
+use `.unwrap()` or `.expect()` in non-test code. Propagate errors with `?` or
+convert them into the crate's error type. If a condition is truly unreachable,
+use `unreachable!()` with a comment explaining why.
+
+**Allowed uses of `unwrap`/`expect`:**
+- Test code (`#[cfg(test)]`)
+- One-time static initialization (e.g., `LazyLock` with infallible operations
+  like compiling a known-good regex)
+- CLI `main()` or top-level binary entry points where a panic is the intended
+  behavior on misconfiguration
+
+### Error messages
+
+- **Be specific.** Say what went wrong and what was expected:
+  `"invalid jsonrpc version: expected \"2.0\", got \"1.0\""` not `"bad version"`.
+- **Include context.** Name the method, field, or value that caused the error:
+  `"data_gov.search: missing parameters"` not `"missing parameters"`.
+- **Don't dump internals.** Error messages are for consumers — omit stack
+  traces, memory addresses, and internal type names. Keep them to one or two
+  sentences.
+- **Use error enums.** Each crate defines a clear error enum (e.g.,
+  `ServerError`, `DataGovError`, `CkanError`). Map external errors with `#[from]`
+  or explicit conversions — don't stringify them prematurely.
+
 ## Code organization
 
 ### Modularization principles

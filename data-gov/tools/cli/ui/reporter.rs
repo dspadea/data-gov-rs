@@ -118,7 +118,9 @@ impl StatusReporter for CliStatusReporter {
         if self.fancy_progress {
             let pb = self.make_bar(event.total_bytes, &name);
             let key = Self::bar_key(&event.output_path);
-            self.bars.lock().unwrap().insert(key, pb);
+            if let Ok(mut bars) = self.bars.lock() {
+                bars.insert(key, pb);
+            }
         } else if let Some(total) = event.total_bytes {
             println!("Downloading {} ({} bytes)...", name, total);
         } else {
@@ -132,7 +134,9 @@ impl StatusReporter for CliStatusReporter {
         }
 
         let key = Self::bar_key(&event.output_path);
-        if let Some(pb) = self.bars.lock().unwrap().get(&key) {
+        if let Ok(bars) = self.bars.lock()
+            && let Some(pb) = bars.get(&key)
+        {
             if let Some(total) = event.total_bytes {
                 pb.set_length(total);
             }
@@ -145,7 +149,7 @@ impl StatusReporter for CliStatusReporter {
 
         if self.fancy_progress {
             let key = Self::bar_key(&event.output_path);
-            if let Some(pb) = self.bars.lock().unwrap().remove(&key) {
+            if let Some(pb) = self.bars.lock().ok().and_then(|mut b| b.remove(&key)) {
                 pb.finish_with_message(format!("{} {}", self.color_helper.green("✓"), name));
                 return;
             }
@@ -172,7 +176,7 @@ impl StatusReporter for CliStatusReporter {
         if self.fancy_progress {
             if let Some(path) = &event.output_path {
                 let key = Self::bar_key(path);
-                if let Some(pb) = self.bars.lock().unwrap().remove(&key) {
+                if let Some(pb) = self.bars.lock().ok().and_then(|mut b| b.remove(&key)) {
                     pb.abandon_with_message(format!(
                         "{} {}: {}",
                         color_red_bold("✗"),
