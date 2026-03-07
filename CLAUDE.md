@@ -138,6 +138,20 @@ use `unreachable!()` with a comment explaining why.
 - CLI `main()` or top-level binary entry points where a panic is the intended
   behavior on misconfiguration
 
+### Don't silently swallow errors
+
+Never discard an error with `.ok()`, `let _ =`, or an empty `Err(_) => {}`
+unless the error genuinely doesn't matter. If you can't propagate it, at
+minimum log it (`tracing::warn!`, `eprintln!`). A silently swallowed error
+is a debugging nightmare — the operation fails and nothing explains why.
+
+**Acceptable silent discards:**
+- Fire-and-forget side effects where failure is expected and harmless (e.g.,
+  removing a temp file that may not exist)
+- Logging calls themselves (if writing a log line fails, retrying won't help)
+
+Everything else should either propagate (`?`), log, or surface to the user.
+
 ### Error messages
 
 - **Be specific.** Say what went wrong and what was expected:

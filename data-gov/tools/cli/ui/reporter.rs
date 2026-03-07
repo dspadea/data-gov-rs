@@ -2,7 +2,7 @@ use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use is_terminal::IsTerminal;
 use std::collections::HashMap;
 use std::path::Path;
-use std::sync::Mutex;
+use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use data_gov::ui::{
     DownloadBatch, DownloadFailed, DownloadFinished, DownloadProgress, DownloadStarted,
@@ -58,6 +58,11 @@ impl CliStatusReporter {
         path.to_string_lossy().into_owned()
     }
 
+    /// Lock the progress bar map, recovering from poison if another thread panicked.
+    fn lock_bars(&self) -> MutexGuard<'_, HashMap<String, ProgressBar>> {
+        self.bars.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
     fn make_bar(&self, total_bytes: Option<u64>, name: &str) -> ProgressBar {
         let pb = match total_bytes {
             Some(total) => self.multi.add(ProgressBar::new(total)),
@@ -102,7 +107,9 @@ impl StatusReporter for CliStatusReporter {
         };
 
         if self.fancy_progress {
-            self.multi.println(msg).ok();
+            if let Err(e) = self.multi.println(&msg) {
+                eprintln!("{msg} (progress display error: {e})");
+            }
         } else {
             println!("{msg}");
         }
@@ -118,9 +125,7 @@ impl StatusReporter for CliStatusReporter {
         if self.fancy_progress {
             let pb = self.make_bar(event.total_bytes, &name);
             let key = Self::bar_key(&event.output_path);
-            if let Ok(mut bars) = self.bars.lock() {
-                bars.insert(key, pb);
-            }
+            self.lock_bars().insert(key, pb);
         } else if let Some(total) = event.total_bytes {
             println!("Downloading {} ({} bytes)...", name, total);
         } else {
@@ -134,9 +139,7 @@ impl StatusReporter for CliStatusReporter {
         }
 
         let key = Self::bar_key(&event.output_path);
-        if let Ok(bars) = self.bars.lock()
-            && let Some(pb) = bars.get(&key)
-        {
+        if let Some(pb) = self.lock_bars().get(&key) {
             if let Some(total) = event.total_bytes {
                 pb.set_length(total);
             }
@@ -149,7 +152,7 @@ impl StatusReporter for CliStatusReporter {
 
         if self.fancy_progress {
             let key = Self::bar_key(&event.output_path);
-            if let Some(pb) = self.bars.lock().ok().and_then(|mut b| b.remove(&key)) {
+            if let Some(pb) = self.lock_bars().remove(&key) {
                 pb.finish_with_message(format!("{} {}", self.color_helper.green("✓"), name));
                 return;
             }
@@ -176,7 +179,7 @@ impl StatusReporter for CliStatusReporter {
         if self.fancy_progress {
             if let Some(path) = &event.output_path {
                 let key = Self::bar_key(path);
-                if let Some(pb) = self.bars.lock().ok().and_then(|mut b| b.remove(&key)) {
+                if let Some(pb) = self.lock_bars().remove(&key) {
                     pb.abandon_with_message(format!(
                         "{} {}: {}",
                         color_red_bold("✗"),
@@ -187,14 +190,10 @@ impl StatusReporter for CliStatusReporter {
                 }
             }
             // No bar found — fall through to plain print
-            self.multi
-                .println(format!(
-                    "{} {} ({})",
-                    color_red_bold("✗"),
-                    display,
-                    event.error
-                ))
-                .ok();
+            let msg = format!("{} {} ({})", color_red_bold("✗"), display, event.error);
+            if let Err(e) = self.multi.println(&msg) {
+                eprintln!("{msg} (progress display error: {e})");
+            }
         } else {
             println!(
                 "{} {} ({})",
