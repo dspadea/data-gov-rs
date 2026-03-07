@@ -165,6 +165,79 @@ Everything else should either propagate (`?`), log, or surface to the user.
   `ServerError`, `DataGovError`, `CkanError`). Map external errors with `#[from]`
   or explicit conversions — don't stringify them prematurely.
 
+### No `unsafe`
+
+This project has no need for `unsafe`. Do not add `unsafe` blocks, `unsafe fn`,
+or `unsafe impl`. If a dependency requires unsafe at its boundary, wrap it in a
+safe abstraction — but that situation should not arise here.
+
+### No blocking in async contexts
+
+Never call blocking operations (synchronous I/O, `std::thread::sleep`,
+`Mutex::lock` on a long-held lock, CPU-heavy computation) inside an `async fn`
+or while a tokio runtime is active. Blocking the executor starves other tasks.
+
+- Use `tokio::fs` instead of `std::fs` in async code.
+- Use `tokio::time::sleep` instead of `std::thread::sleep`.
+- If you must run blocking code, use `tokio::task::spawn_blocking`.
+- The REPL uses `Runtime::block_on` at the top level — that's fine since it
+  owns the runtime. Don't nest `block_on` inside an already-async context.
+
+## Rust idioms
+
+### Prefer borrowing over cloning
+
+Accept `&str` instead of `String`, `&[T]` instead of `Vec<T>`, and `&Path`
+instead of `PathBuf` in function parameters when the function doesn't need
+ownership. Clone only when you genuinely need an independent owned copy.
+
+Common smells:
+- `.clone()` immediately before passing to a function — the function should
+  probably take a reference instead.
+- `.to_string()` on a `&str` just to satisfy a `String` parameter — change the
+  parameter.
+- Cloning inside a loop when a reference would work.
+
+### Logging discipline
+
+The workspace uses `tracing`. Use the right level:
+
+| Level   | When to use                                                     |
+|---------|-----------------------------------------------------------------|
+| `error` | Something failed and the operation cannot continue.             |
+| `warn`  | Something is wrong but the operation can recover or degrade.    |
+| `info`  | High-level lifecycle events: server started, request completed. |
+| `debug` | Detailed internal state useful for development debugging.       |
+| `trace` | Very fine-grained: loop iterations, individual field values.    |
+
+**Rules:**
+- Never log secrets (API keys, tokens, passwords) at any level.
+- Log at `warn` or `error` when discarding an error you can't propagate.
+- Don't log in hot paths at `info` or above — keep `info` to startup, shutdown,
+  and per-request summaries, not per-chunk download progress.
+- Structured fields (`tracing::info!(method = %name, "request handled")`) are
+  preferred over string interpolation.
+
+## Versioning
+
+### Semver discipline
+
+Follow [Semantic Versioning](https://semver.org/). While the project is `0.x`,
+minor bumps may include breaking changes, but still be intentional about it.
+
+| Change type                                    | Bump    |
+|------------------------------------------------|---------|
+| Breaking API change (removed/renamed pub item) | Minor   |
+| New public API, new feature, new dependency     | Minor   |
+| Bug fix, internal refactor, doc improvement    | Patch   |
+| Security fix                                   | Patch   |
+
+**Checklist before a version bump:**
+- Update version in all three `Cargo.toml` files.
+- Update inter-crate dependency versions if they reference each other.
+- Add a `CHANGELOG.md` entry under the new version.
+- Tag the release after merging to `main`.
+
 ## Code organization
 
 ### Modularization principles
