@@ -185,18 +185,13 @@ impl DataGovMcpServer {
         let params: DownloadResourcesParams = parse_required_params(method, params)?;
         let dataset = self.data_gov.get_dataset(&params.dataset_id).await?;
 
-        let dataset_slug = dataset.name.clone();
-        let dataset_title = dataset.title.clone();
-        let dataset_id = dataset.id.as_ref().map(|id| id.to_string());
-
         let mut missing_resource_ids: Vec<String> = Vec::new();
         let mut unavailable_formats: Vec<String> = Vec::new();
 
         if params
             .resource_ids
             .as_ref()
-            .map(|ids| ids.is_empty())
-            .unwrap_or(false)
+            .is_some_and(|ids| ids.is_empty())
         {
             return Err(ServerError::InvalidParams(format!(
                 "{method}: resourceIds cannot be empty"
@@ -206,15 +201,6 @@ impl DataGovMcpServer {
         let mut resources = DataGovClient::get_downloadable_resources(&dataset);
 
         if let Some(resource_ids) = params.resource_ids.as_ref() {
-            let normalized: Vec<(String, String)> = resource_ids
-                .iter()
-                .map(|id| {
-                    let trimmed = id.trim().to_string();
-                    let normalized = trimmed.to_ascii_lowercase();
-                    (trimmed, normalized)
-                })
-                .collect();
-
             let available_ids: HashSet<String> = resources
                 .iter()
                 .filter_map(|resource| {
@@ -225,58 +211,45 @@ impl DataGovMcpServer {
                 })
                 .collect();
 
-            for (original, normalized) in &normalized {
-                if !available_ids.contains(normalized) {
-                    missing_resource_ids.push(original.clone());
+            let mut id_filter = HashSet::with_capacity(resource_ids.len());
+            for id in resource_ids {
+                let trimmed = id.trim();
+                let normalized = trimmed.to_ascii_lowercase();
+                if !available_ids.contains(&normalized) {
+                    missing_resource_ids.push(trimmed.to_string());
                 }
+                id_filter.insert(normalized);
             }
-
-            let id_filter: HashSet<String> = normalized
-                .into_iter()
-                .map(|(_, normalized)| normalized)
-                .collect();
 
             resources.retain(|resource| {
                 resource
                     .id
                     .as_ref()
-                    .map(|uuid| id_filter.contains(&uuid.to_string().to_ascii_lowercase()))
-                    .unwrap_or(false)
+                    .is_some_and(|uuid| id_filter.contains(&uuid.to_string().to_ascii_lowercase()))
             });
         }
 
         if let Some(formats) = params.formats.as_ref() {
-            let normalized: Vec<(String, String)> = formats
-                .iter()
-                .map(|fmt| {
-                    let trimmed = fmt.trim().to_string();
-                    let normalized = trimmed.to_ascii_lowercase();
-                    (trimmed, normalized)
-                })
-                .collect();
-
             let available_formats: HashSet<String> = resources
                 .iter()
                 .filter_map(|resource| resource.format.as_ref().map(|fmt| fmt.to_ascii_lowercase()))
                 .collect();
 
-            for (original, normalized) in &normalized {
-                if !available_formats.contains(normalized) {
-                    unavailable_formats.push(original.clone());
+            let mut format_filter = HashSet::with_capacity(formats.len());
+            for fmt in formats {
+                let trimmed = fmt.trim();
+                let normalized = trimmed.to_ascii_lowercase();
+                if !available_formats.contains(&normalized) {
+                    unavailable_formats.push(trimmed.to_string());
                 }
+                format_filter.insert(normalized);
             }
-
-            let format_filter: HashSet<String> = normalized
-                .into_iter()
-                .map(|(_, normalized)| normalized)
-                .collect();
 
             resources.retain(|resource| {
                 resource
                     .format
                     .as_ref()
-                    .map(|fmt| format_filter.contains(&fmt.to_ascii_lowercase()))
-                    .unwrap_or(false)
+                    .is_some_and(|fmt| format_filter.contains(&fmt.to_ascii_lowercase()))
             });
         }
 
@@ -303,8 +276,8 @@ impl DataGovMcpServer {
 
         let use_dataset_subdir = params.dataset_subdirectory.unwrap_or(false);
 
-        // Sanitize dataset_slug to prevent path traversal attacks
-        let safe_dataset_slug = data_gov::util::sanitize_path_component(&dataset_slug);
+        // Sanitize dataset name to prevent path traversal attacks
+        let safe_dataset_slug = data_gov::util::sanitize_path_component(&dataset.name);
 
         let resolved_output_dir = if let Some(dir) = params.output_dir.as_ref() {
             // Reject path traversal in output_dir
@@ -328,18 +301,16 @@ impl DataGovMcpServer {
         let output_dir = resolved_output_dir
             .unwrap_or_else(|| self.data_gov.download_dir().join(&safe_dataset_slug));
 
-        let selected_resources = resources;
-
         let download_results = self
             .data_gov
-            .download_resources(&selected_resources, Some(output_dir.as_path()))
+            .download_resources(&resources, Some(output_dir.as_path()))
             .await;
 
-        let mut downloads = Vec::with_capacity(selected_resources.len());
+        let mut downloads = Vec::with_capacity(resources.len());
         let mut success_count = 0usize;
         let mut error_count = 0usize;
 
-        for (resource, result) in selected_resources.iter().zip(download_results.into_iter()) {
+        for (resource, result) in resources.iter().zip(download_results.into_iter()) {
             let resource_id = resource.id.as_ref().map(|id| id.to_string());
             match result {
                 Ok(path) => {
@@ -369,9 +340,9 @@ impl DataGovMcpServer {
 
         let mut summary = json!({
             "dataset": {
-                "id": dataset_id,
-                "name": dataset_slug,
-                "title": dataset_title,
+                "id": dataset.id.as_ref().map(|id| id.to_string()),
+                "name": &dataset.name,
+                "title": &dataset.title,
             },
             "downloadDirectory": output_dir.to_string_lossy(),
             "downloadCount": downloads.len(),
@@ -406,36 +377,28 @@ impl DataGovMcpServer {
 
     /// Check whether a package matches an organization-contains filter.
     fn matches_organization_filter(package: &data_gov_ckan::models::Package, needle: &str) -> bool {
-        let org_match = package
-            .organization
-            .as_ref()
-            .map(|org| {
-                org.name.to_ascii_lowercase().contains(needle)
-                    || org
-                        .title
-                        .as_ref()
-                        .map(|title| title.to_ascii_lowercase().contains(needle))
-                        .unwrap_or(false)
-            })
-            .unwrap_or(false);
+        let org_match = package.organization.as_ref().is_some_and(|org| {
+            org.name.to_ascii_lowercase().contains(needle)
+                || org
+                    .title
+                    .as_deref()
+                    .is_some_and(|title| title.to_ascii_lowercase().contains(needle))
+        });
 
         let owner_match = package
             .owner_org
-            .as_ref()
-            .map(|owner| owner.to_ascii_lowercase().contains(needle))
-            .unwrap_or(false);
+            .as_deref()
+            .is_some_and(|owner| owner.to_ascii_lowercase().contains(needle));
 
         let author_match = package
             .author
-            .as_ref()
-            .map(|author| author.to_ascii_lowercase().contains(needle))
-            .unwrap_or(false);
+            .as_deref()
+            .is_some_and(|author| author.to_ascii_lowercase().contains(needle));
 
         let maintainer_match = package
             .maintainer
-            .as_ref()
-            .map(|maintainer| maintainer.to_ascii_lowercase().contains(needle))
-            .unwrap_or(false);
+            .as_deref()
+            .is_some_and(|m| m.to_ascii_lowercase().contains(needle));
 
         org_match || owner_match || author_match || maintainer_match
     }
