@@ -28,7 +28,9 @@ impl ValidationErrorResponseError {
         }
     }
 }
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
+#[derive(
+    Clone, Copy, Debug, Default, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize,
+)]
 pub enum Type {
     #[serde(rename = "Validation Error")]
     #[default]

@@ -18,7 +18,10 @@ mod tests {
 
     #[test]
     fn test_sanitize_removes_path_traversal() {
-        assert_eq!(sanitize_path_component("../../etc/passwd"), "____etc_passwd");
+        assert_eq!(
+            sanitize_path_component("../../etc/passwd"),
+            "____etc_passwd"
+        );
     }
 
     #[test]

@@ -461,10 +461,7 @@ async fn missing_result_field_returns_api_error() {
         .await;
 
     let client = test_client(&server.uri());
-    let err = client
-        .package_show("test")
-        .await
-        .expect_err("should fail");
+    let err = client.package_show("test").await.expect_err("should fail");
 
     match err {
         CkanError::ApiError {
@@ -493,10 +490,7 @@ async fn malformed_result_returns_parse_error() {
         .await;
 
     let client = test_client(&server.uri());
-    let err = client
-        .package_show("test")
-        .await
-        .expect_err("should fail");
+    let err = client.package_show("test").await.expect_err("should fail");
 
     assert!(
         matches!(err, CkanError::ParseError(_)),
@@ -543,9 +537,8 @@ fn error_display_formats() {
     assert!(display.contains("404"));
     assert!(display.contains("Not Found"));
 
-    let parse_err = CkanError::ParseError(
-        serde_json::from_str::<serde_json::Value>("invalid").unwrap_err(),
-    );
+    let parse_err =
+        CkanError::ParseError(serde_json::from_str::<serde_json::Value>("invalid").unwrap_err());
     let display = format!("{}", parse_err);
     assert!(display.contains("Parse error"));
 

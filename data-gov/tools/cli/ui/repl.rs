@@ -101,7 +101,11 @@ impl DataGovRepl {
 
     fn handle_setdir(&mut self, path: &Path) -> Result<(), Box<dyn std::error::Error>> {
         // Clone existing config and update only the download directory
-        let new_config = self.client.config().clone().with_download_dir(path.to_path_buf());
+        let new_config = self
+            .client
+            .config()
+            .clone()
+            .with_download_dir(path.to_path_buf());
 
         // Validate directory
         self.rt.block_on(async {

@@ -131,7 +131,9 @@ impl Package {
     }
 }
 /// Current state of the dataset
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
+#[derive(
+    Clone, Copy, Debug, Default, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize,
+)]
 pub enum State {
     #[serde(rename = "active")]
     #[default]

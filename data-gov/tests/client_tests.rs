@@ -38,12 +38,21 @@ async fn search_returns_parsed_results() {
         .and(path("/action/package_search"))
         .and(query_param("q", "electric vehicle"))
         .and(query_param("rows", "2"))
-        .respond_with(ResponseTemplate::new(200).set_body_raw(fixture("package_search.json"), "application/json"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_raw(fixture("package_search.json"), "application/json"),
+        )
         .mount(&server)
         .await;
 
-    let client = mock_client(&server.uri(), tempfile::tempdir().unwrap().path().to_path_buf());
-    let results = client.search("electric vehicle", Some(2), None, None, None).await.unwrap();
+    let client = mock_client(
+        &server.uri(),
+        tempfile::tempdir().unwrap().path().to_path_buf(),
+    );
+    let results = client
+        .search("electric vehicle", Some(2), None, None, None)
+        .await
+        .unwrap();
 
     assert!(results.count.unwrap_or(0) > 0);
     let packages = results.results.expect("should have results");
@@ -59,12 +68,21 @@ async fn search_with_org_and_format_filter_builds_fq() {
         .and(path("/action/package_search"))
         .and(query_param("q", "energy"))
         .and(query_param("rows", "2"))
-        .and(query_param("fq", "organization:\"doe-gov\" AND res_format:\"CSV\""))
-        .respond_with(ResponseTemplate::new(200).set_body_raw(fixture("package_search_filtered.json"), "application/json"))
+        .and(query_param(
+            "fq",
+            "organization:\"doe-gov\" AND res_format:\"CSV\"",
+        ))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_raw(fixture("package_search_filtered.json"), "application/json"),
+        )
         .mount(&server)
         .await;
 
-    let client = mock_client(&server.uri(), tempfile::tempdir().unwrap().path().to_path_buf());
+    let client = mock_client(
+        &server.uri(),
+        tempfile::tempdir().unwrap().path().to_path_buf(),
+    );
     let results = client
         .search("energy", Some(2), None, Some("doe-gov"), Some("CSV"))
         .await
@@ -79,11 +97,17 @@ async fn search_empty_query_omits_q_param() {
     // When query is empty, the client should not send a `q` param
     Mock::given(method("GET"))
         .and(path("/action/package_search"))
-        .respond_with(ResponseTemplate::new(200).set_body_raw(fixture("package_search.json"), "application/json"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_raw(fixture("package_search.json"), "application/json"),
+        )
         .mount(&server)
         .await;
 
-    let client = mock_client(&server.uri(), tempfile::tempdir().unwrap().path().to_path_buf());
+    let client = mock_client(
+        &server.uri(),
+        tempfile::tempdir().unwrap().path().to_path_buf(),
+    );
     let results = client.search("", None, None, None, None).await.unwrap();
     assert!(results.results.is_some());
 }
@@ -98,12 +122,21 @@ async fn get_dataset_returns_full_package() {
     Mock::given(method("GET"))
         .and(path("/action/package_show"))
         .and(query_param("id", "electric-vehicle-population-data"))
-        .respond_with(ResponseTemplate::new(200).set_body_raw(fixture("package_show.json"), "application/json"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_raw(fixture("package_show.json"), "application/json"),
+        )
         .mount(&server)
         .await;
 
-    let client = mock_client(&server.uri(), tempfile::tempdir().unwrap().path().to_path_buf());
-    let package = client.get_dataset("electric-vehicle-population-data").await.unwrap();
+    let client = mock_client(
+        &server.uri(),
+        tempfile::tempdir().unwrap().path().to_path_buf(),
+    );
+    let package = client
+        .get_dataset("electric-vehicle-population-data")
+        .await
+        .unwrap();
 
     assert!(!package.name.is_empty());
     assert!(package.resources.is_some());
@@ -117,19 +150,35 @@ async fn get_downloadable_resources_filters_correctly() {
     Mock::given(method("GET"))
         .and(path("/action/package_show"))
         .and(query_param("id", "electric-vehicle-population-data"))
-        .respond_with(ResponseTemplate::new(200).set_body_raw(fixture("package_show.json"), "application/json"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_raw(fixture("package_show.json"), "application/json"),
+        )
         .mount(&server)
         .await;
 
-    let client = mock_client(&server.uri(), tempfile::tempdir().unwrap().path().to_path_buf());
-    let package = client.get_dataset("electric-vehicle-population-data").await.unwrap();
+    let client = mock_client(
+        &server.uri(),
+        tempfile::tempdir().unwrap().path().to_path_buf(),
+    );
+    let package = client
+        .get_dataset("electric-vehicle-population-data")
+        .await
+        .unwrap();
     let downloadable = DataGovClient::get_downloadable_resources(&package);
 
     // All downloadable resources should have a URL and format
     for r in &downloadable {
         assert!(r.url.is_some(), "downloadable resource should have a URL");
-        assert!(r.format.is_some(), "downloadable resource should have a format");
-        assert_ne!(r.url_type.as_deref(), Some("api"), "should not include API endpoints");
+        assert!(
+            r.format.is_some(),
+            "downloadable resource should have a format"
+        );
+        assert_ne!(
+            r.url_type.as_deref(),
+            Some("api"),
+            "should not include API endpoints"
+        );
     }
 }
 
@@ -143,11 +192,17 @@ async fn list_organizations_returns_strings() {
     Mock::given(method("GET"))
         .and(path("/action/organization_list"))
         .and(query_param("limit", "5"))
-        .respond_with(ResponseTemplate::new(200).set_body_raw(fixture("organization_list.json"), "application/json"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_raw(fixture("organization_list.json"), "application/json"),
+        )
         .mount(&server)
         .await;
 
-    let client = mock_client(&server.uri(), tempfile::tempdir().unwrap().path().to_path_buf());
+    let client = mock_client(
+        &server.uri(),
+        tempfile::tempdir().unwrap().path().to_path_buf(),
+    );
     let orgs = client.list_organizations(Some(5)).await.unwrap();
 
     assert_eq!(orgs.len(), 5);
@@ -167,12 +222,21 @@ async fn autocomplete_datasets_returns_names() {
         .and(path("/action/package_autocomplete"))
         .and(query_param("q", "electric"))
         .and(query_param("limit", "5"))
-        .respond_with(ResponseTemplate::new(200).set_body_raw(fixture("dataset_autocomplete.json"), "application/json"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_raw(fixture("dataset_autocomplete.json"), "application/json"),
+        )
         .mount(&server)
         .await;
 
-    let client = mock_client(&server.uri(), tempfile::tempdir().unwrap().path().to_path_buf());
-    let names = client.autocomplete_datasets("electric", Some(5)).await.unwrap();
+    let client = mock_client(
+        &server.uri(),
+        tempfile::tempdir().unwrap().path().to_path_buf(),
+    );
+    let names = client
+        .autocomplete_datasets("electric", Some(5))
+        .await
+        .unwrap();
 
     assert!(!names.is_empty());
     for name in &names {
@@ -191,12 +255,21 @@ async fn autocomplete_organizations_returns_names() {
         .and(path("/action/organization_autocomplete"))
         .and(query_param("q", "nasa"))
         .and(query_param("limit", "5"))
-        .respond_with(ResponseTemplate::new(200).set_body_raw(fixture("organization_autocomplete.json"), "application/json"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(
+            fixture("organization_autocomplete.json"),
+            "application/json",
+        ))
         .mount(&server)
         .await;
 
-    let client = mock_client(&server.uri(), tempfile::tempdir().unwrap().path().to_path_buf());
-    let names = client.autocomplete_organizations("nasa", Some(5)).await.unwrap();
+    let client = mock_client(
+        &server.uri(),
+        tempfile::tempdir().unwrap().path().to_path_buf(),
+    );
+    let names = client
+        .autocomplete_organizations("nasa", Some(5))
+        .await
+        .unwrap();
 
     assert!(!names.is_empty());
     for name in &names {
@@ -216,7 +289,10 @@ async fn download_resource_saves_file() {
     Mock::given(method("GET"))
         .and(path("/action/package_show"))
         .and(query_param("id", "electric-vehicle-population-data"))
-        .respond_with(ResponseTemplate::new(200).set_body_raw(fixture("package_show.json"), "application/json"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_raw(fixture("package_show.json"), "application/json"),
+        )
         .mount(&server)
         .await;
 
@@ -229,7 +305,10 @@ async fn download_resource_saves_file() {
 
     let tmp = tempfile::tempdir().unwrap();
     let client = mock_client(&server.uri(), tmp.path().to_path_buf());
-    let package = client.get_dataset("electric-vehicle-population-data").await.unwrap();
+    let package = client
+        .get_dataset("electric-vehicle-population-data")
+        .await
+        .unwrap();
     let downloadable = DataGovClient::get_downloadable_resources(&package);
 
     if !downloadable.is_empty() {
@@ -237,7 +316,10 @@ async fn download_resource_saves_file() {
         let mut resource = downloadable[0].clone();
         resource.url = Some(format!("{}/fake-download", server.uri()));
 
-        let path = client.download_resource(&resource, Some(tmp.path())).await.unwrap();
+        let path = client
+            .download_resource(&resource, Some(tmp.path()))
+            .await
+            .unwrap();
         assert!(path.exists(), "downloaded file should exist");
         let content = std::fs::read_to_string(&path).unwrap();
         assert_eq!(content, "col1,col2\nval1,val2\n");
@@ -257,7 +339,10 @@ async fn search_propagates_http_error() {
         .mount(&server)
         .await;
 
-    let client = mock_client(&server.uri(), tempfile::tempdir().unwrap().path().to_path_buf());
+    let client = mock_client(
+        &server.uri(),
+        tempfile::tempdir().unwrap().path().to_path_buf(),
+    );
     let result = client.search("test", None, None, None, None).await;
     assert!(result.is_err());
 }
@@ -271,7 +356,10 @@ async fn get_dataset_propagates_404() {
         .mount(&server)
         .await;
 
-    let client = mock_client(&server.uri(), tempfile::tempdir().unwrap().path().to_path_buf());
+    let client = mock_client(
+        &server.uri(),
+        tempfile::tempdir().unwrap().path().to_path_buf(),
+    );
     let result = client.get_dataset("nonexistent-dataset").await;
     assert!(result.is_err());
 }

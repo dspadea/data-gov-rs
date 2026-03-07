@@ -146,11 +146,7 @@ impl StatusReporter for CliStatusReporter {
         if self.fancy_progress {
             let key = Self::bar_key(&event.output_path);
             if let Some(pb) = self.bars.lock().unwrap().remove(&key) {
-                pb.finish_with_message(format!(
-                    "{} {}",
-                    self.color_helper.green("✓"),
-                    name
-                ));
+                pb.finish_with_message(format!("{} {}", self.color_helper.green("✓"), name));
                 return;
             }
         }

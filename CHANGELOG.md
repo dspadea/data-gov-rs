@@ -27,7 +27,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - 21 wiremock-based unit tests for all CKAN client endpoints
     (`data-gov-ckan/tests/unit_tests.rs`)
   - 38 unit tests for the MCP server's pure functions, serialization, tool
-    specs, and error codes (`data-gov-mcp-server/src/server.rs`)
+    specs, and error codes (spread across `types.rs`, `tools.rs`, `server.rs`)
   - 11 fixture-based tests for the high-level `DataGovClient` using captured
     API responses (`data-gov/tests/client_tests.rs`)
   - 5 tests for path sanitization (`data-gov/src/util.rs`)
@@ -73,6 +73,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`download-dir` CLI flag** — removed magic string default detection;
   the flag is now purely optional.
 - Path sanitization logic deduplicated into `data_gov::util`.
+- **MCP server modularized** — split monolithic `server.rs` (1548 lines) into
+  four focused modules: `server.rs` (run loop), `types.rs` (request/response
+  types and param structs), `tools.rs` (tool specs and lookup), `handlers.rs`
+  (method dispatch and handler logic).
 
 ### Removed
 

@@ -1,4 +1,7 @@
+mod handlers;
 mod server;
+mod tools;
+mod types;
 
 use server::DataGovMcpServer;
 use tracing_subscriber::{EnvFilter, fmt};
