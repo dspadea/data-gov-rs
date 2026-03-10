@@ -274,7 +274,7 @@ impl DataGovMcpServer {
             self.data_gov.validate_download_dir().await?;
         }
 
-        let use_dataset_subdir = params.dataset_subdirectory.unwrap_or(false);
+        let use_dataset_subdir = params.dataset_subdirectory.unwrap_or(true);
 
         // Sanitize dataset name to prevent path traversal attacks
         let safe_dataset_slug = data_gov::util::sanitize_path_component(&dataset.name);

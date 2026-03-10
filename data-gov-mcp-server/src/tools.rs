@@ -109,11 +109,11 @@ pub(crate) static TOOL_SPECS: LazyLock<Vec<ToolSpec>> = LazyLock::new(|| {
         ToolSpec {
             tool_name: "data_gov_dataset",
             method_name: "data_gov.dataset",
-            description: "Fetch detailed metadata for a dataset by name or ID",
+            description: "Fetch detailed metadata for a dataset by its slug or UUID. Prefer the URL slug (e.g. 'meteorite-landings') over the UUID — slugs appear in search result `name` fields and in dataset URLs.",
             input_schema: json!({
                 "type": "object",
                 "properties": {
-                    "id": {"type": "string", "description": "Dataset identifier or name"}
+                    "id": {"type": "string", "description": "Dataset slug (e.g. 'meteorite-landings') or UUID. Use the slug from search results or the dataset URL — do not construct or guess this value."}
                 },
                 "required": ["id"],
                 "additionalProperties": false
@@ -148,15 +148,15 @@ pub(crate) static TOOL_SPECS: LazyLock<Vec<ToolSpec>> = LazyLock::new(|| {
         ToolSpec {
             tool_name: "data_gov_download_resources",
             method_name: "data_gov.downloadResources",
-            description: "Download one or more dataset resources to the local filesystem",
+            description: "Download one or more dataset resources to the local filesystem. By default, files are saved into a subdirectory named after the dataset slug inside the output directory. Downloaded filenames are taken directly from the resource's name field as provided by the publisher — they may be generic (e.g. 'Comma Separated Values File.csv') when the publisher has not given the resource a meaningful name.",
             input_schema: json!({
                 "type": "object",
                 "properties": {
-                    "datasetId": {"type": "string", "description": "Dataset identifier or name"},
-                    "resourceIds": {"type": "array", "items": {"type": "string"}, "description": "Optional list of resource IDs to download"},
-                    "formats": {"type": "array", "items": {"type": "string"}, "description": "Optional list of resource formats to include (e.g. CSV, JSON)"},
-                    "outputDir": {"type": "string", "description": "Optional directory to save files. Relative paths resolve against the current working directory."},
-                    "datasetSubdirectory": {"type": "boolean", "description": "If true, create a dataset-named subdirectory inside the output directory."}
+                    "datasetId": {"type": "string", "description": "Dataset slug (e.g. 'fireball-and-bolide-reports') or UUID. Use the slug from search results or the dataset URL — do not construct or guess this value."},
+                    "resourceIds": {"type": "array", "items": {"type": "string"}, "description": "Optional list of resource UUIDs to download. If omitted, all resources matching the format filter are downloaded."},
+                    "formats": {"type": "array", "items": {"type": "string"}, "description": "Optional list of resource formats to include (e.g. CSV, JSON). Case-insensitive."},
+                    "outputDir": {"type": "string", "description": "Optional directory to save files. Relative paths resolve against the current working directory. Defaults to the configured download directory."},
+                    "datasetSubdirectory": {"type": "boolean", "description": "Whether to create a dataset-named subdirectory inside the output directory. Defaults to true.", "default": true}
                 },
                 "required": ["datasetId"],
                 "additionalProperties": false
@@ -180,11 +180,11 @@ pub(crate) static TOOL_SPECS: LazyLock<Vec<ToolSpec>> = LazyLock::new(|| {
         ToolSpec {
             tool_name: "ckan_package_show",
             method_name: "ckan.packageShow",
-            description: "Retrieve detailed metadata for a dataset using CKAN",
+            description: "Retrieve detailed metadata for a dataset using the low-level CKAN API. Accepts a dataset slug (e.g. 'meteorite-landings') or UUID.",
             input_schema: json!({
                 "type": "object",
                 "properties": {
-                    "id": {"type": "string", "description": "Dataset identifier or name"}
+                    "id": {"type": "string", "description": "Dataset slug (e.g. 'meteorite-landings') or UUID. Use the slug from search results or the dataset URL — do not construct or guess this value."}
                 },
                 "required": ["id"],
                 "additionalProperties": false

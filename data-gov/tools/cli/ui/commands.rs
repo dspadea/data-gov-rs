@@ -9,15 +9,20 @@ pub enum ReplCommand {
         limit: Option<i32>,
     },
     Show {
-        dataset_id: String,
+        dataset_id: Option<String>,
     },
     Download {
-        dataset_id: String,
-        resource_selector: Option<ResourceSelector>,
+        /// Raw arguments — interpretation depends on session context.
+        /// In a dataset: all args are resource selectors.
+        /// Otherwise: first arg is dataset, rest are resource selectors.
+        args: Vec<String>,
     },
     List {
         what: String,
     }, // organizations, formats, etc.
+    Select {
+        path: String,
+    },
     SetDir {
         path: PathBuf,
     },
@@ -26,11 +31,111 @@ pub enum ReplCommand {
     Quit,
 }
 
-/// Resource selector for download command
-#[derive(Debug, Clone)]
-pub enum ResourceSelector {
-    Index(usize),
-    Name(String),
+/// Active session context set via `select /org/dataset`.
+#[derive(Debug, Clone, Default)]
+pub struct SessionContext {
+    pub org: Option<String>,
+    pub dataset: Option<String>,
+}
+
+impl SessionContext {
+    /// Navigate the context, similar to `cd` in a filesystem.
+    ///
+    /// Absolute paths (leading `/`):
+    /// - `/org/dataset` — set both org and dataset
+    /// - `/org` or `/org/` — set org, clear dataset
+    /// - `/` — clear both (go to root)
+    ///
+    /// Relative paths (no leading `/`):
+    /// - At root: `org` sets the org
+    /// - At org: `dataset` sets the dataset
+    /// - At dataset: error (nowhere deeper to go)
+    ///
+    /// Special:
+    /// - `..` — go up one level (dataset→org, org→root)
+    pub fn apply_navigate(&mut self, path: &str) -> Result<(), String> {
+        if path.starts_with('/') {
+            return self.apply_absolute(path);
+        }
+        self.apply_relative(path)
+    }
+
+    /// Handle absolute path navigation (leading `/`).
+    fn apply_absolute(&mut self, path: &str) -> Result<(), String> {
+        let inner = &path[1..]; // strip leading '/'
+
+        if inner.is_empty() {
+            // `/` — clear everything
+            self.org = None;
+            self.dataset = None;
+            return Ok(());
+        }
+
+        // `/org` or `/org/dataset`
+        match inner.split_once('/') {
+            None => {
+                self.org = Some(inner.to_string());
+                self.dataset = None;
+            }
+            Some((org, rest)) => {
+                let dataset = rest.trim_end_matches('/');
+                self.org = Some(org.to_string());
+                if dataset.is_empty() {
+                    self.dataset = None;
+                } else {
+                    self.dataset = Some(dataset.to_string());
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Handle relative path navigation (no leading `/`).
+    fn apply_relative(&mut self, path: &str) -> Result<(), String> {
+        let path = path.trim_end_matches('/');
+
+        if path == ".." {
+            // Go up one level
+            if self.dataset.is_some() {
+                self.dataset = None;
+            } else if self.org.is_some() {
+                self.org = None;
+            }
+            // Already at root — no-op
+            return Ok(());
+        }
+
+        if path.is_empty() {
+            return Err("empty path".to_string());
+        }
+
+        if self.dataset.is_some() {
+            return Err(format!(
+                "already in a dataset; use '..' to go up first, or use an absolute path: /org/{path}"
+            ));
+        }
+
+        if self.org.is_some() {
+            // At org level — relative path is a dataset
+            self.dataset = Some(path.to_string());
+        } else {
+            // At root — relative path is an org
+            self.org = Some(path.to_string());
+        }
+
+        Ok(())
+    }
+
+    /// Format the context as a prompt-friendly string.
+    pub fn prompt_label(&self) -> String {
+        match (&self.org, &self.dataset) {
+            (Some(org), Some(ds)) => format!("/{org}/{ds}"),
+            (Some(org), None) => format!("/{org}"),
+            (None, Some(ds)) => format!("//{ds}"),
+            (None, None) => String::new(),
+        }
+    }
 }
 
 /// Parse a command string respecting quoted arguments
@@ -87,30 +192,25 @@ impl ReplCommand {
                 Ok(ReplCommand::Search { query, limit })
             }
             "show" | "describe" | "d" => {
-                if parts.len() != 2 {
-                    return Err("Usage: show <dataset_id>".to_string());
+                if parts.len() > 2 {
+                    return Err("Usage: show [dataset_id]".to_string());
                 }
                 Ok(ReplCommand::Show {
-                    dataset_id: parts[1].clone(),
+                    dataset_id: parts.get(1).cloned(),
                 })
             }
-            "download" | "dl" => {
-                if parts.len() < 2 || parts.len() > 3 {
-                    return Err("Usage: download <dataset_id> [resource_index_or_name]".to_string());
+            "download" | "dl" => Ok(ReplCommand::Download {
+                args: parts[1..].to_vec(),
+            }),
+            "select" | "sel" | "cd" => {
+                if parts.len() != 2 {
+                    return Err(
+                        "Usage: cd <path>  (e.g. cd nasa-gov, cd air-quality, cd .., cd /org/dataset, cd /)"
+                            .to_string(),
+                    );
                 }
-                let resource_selector = if parts.len() == 3 {
-                    // Try to parse as index first, otherwise treat as name
-                    if let Ok(index) = parts[2].parse::<usize>() {
-                        Some(ResourceSelector::Index(index))
-                    } else {
-                        Some(ResourceSelector::Name(parts[2].clone()))
-                    }
-                } else {
-                    None
-                };
-                Ok(ReplCommand::Download {
-                    dataset_id: parts[1].clone(),
-                    resource_selector,
+                Ok(ReplCommand::Select {
+                    path: parts[1].clone(),
                 })
             }
             "list" | "ls" => {
@@ -121,9 +221,9 @@ impl ReplCommand {
                     what: parts[1].clone(),
                 })
             }
-            "setdir" | "cd" => {
+            "lcd" | "setdir" => {
                 if parts.len() != 2 {
-                    return Err("Usage: setdir <path>".to_string());
+                    return Err("Usage: lcd <path>".to_string());
                 }
                 Ok(ReplCommand::SetDir {
                     path: PathBuf::from(&parts[1]),
@@ -151,215 +251,67 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_parse_download_command_with_index() {
+    fn test_parse_download_with_dataset_and_index() {
         let result = ReplCommand::from_str("download my-dataset 0");
-        assert!(result.is_ok());
-
-        if let Ok(ReplCommand::Download {
-            dataset_id,
-            resource_selector,
-        }) = result
-        {
-            assert_eq!(dataset_id, "my-dataset");
-            assert!(matches!(
-                resource_selector,
-                Some(ResourceSelector::Index(0))
-            ));
-        } else {
-            panic!("Expected Download command with Index(0)");
-        }
+        let Ok(ReplCommand::Download { args }) = result else {
+            panic!("Expected Download command");
+        };
+        assert_eq!(args, vec!["my-dataset", "0"]);
     }
 
     #[test]
-    fn test_parse_download_command_with_large_index() {
-        let result = ReplCommand::from_str("download my-dataset 42");
-        assert!(result.is_ok());
-
-        if let Ok(ReplCommand::Download {
-            dataset_id,
-            resource_selector,
-        }) = result
-        {
-            assert_eq!(dataset_id, "my-dataset");
-            assert!(matches!(
-                resource_selector,
-                Some(ResourceSelector::Index(42))
-            ));
-        } else {
-            panic!("Expected Download command with Index(42)");
-        }
-    }
-
-    #[test]
-    fn test_parse_download_command_with_name() {
+    fn test_parse_download_with_dataset_and_name() {
         let result = ReplCommand::from_str("download my-dataset csv");
-        assert!(result.is_ok());
-
-        if let Ok(ReplCommand::Download {
-            dataset_id,
-            resource_selector,
-        }) = result
-        {
-            assert_eq!(dataset_id, "my-dataset");
-            if let Some(ResourceSelector::Name(name)) = resource_selector {
-                assert_eq!(name, "csv");
-            } else {
-                panic!("Expected Download command with Name(csv)");
-            }
-        } else {
+        let Ok(ReplCommand::Download { args }) = result else {
             panic!("Expected Download command");
-        }
+        };
+        assert_eq!(args, vec!["my-dataset", "csv"]);
     }
 
     #[test]
-    fn test_parse_download_command_with_partial_name() {
-        let result = ReplCommand::from_str("download dataset-id complaints");
-        assert!(result.is_ok());
-
-        if let Ok(ReplCommand::Download {
-            dataset_id,
-            resource_selector,
-        }) = result
-        {
-            assert_eq!(dataset_id, "dataset-id");
-            if let Some(ResourceSelector::Name(name)) = resource_selector {
-                assert_eq!(name, "complaints");
-            } else {
-                panic!("Expected Download command with Name(complaints)");
-            }
-        } else {
-            panic!("Expected Download command");
-        }
-    }
-
-    #[test]
-    fn test_parse_download_command_no_selector() {
+    fn test_parse_download_dataset_only() {
         let result = ReplCommand::from_str("download my-dataset");
-        assert!(result.is_ok());
-
-        if let Ok(ReplCommand::Download {
-            dataset_id,
-            resource_selector,
-        }) = result
-        {
-            assert_eq!(dataset_id, "my-dataset");
-            assert!(resource_selector.is_none());
-        } else {
-            panic!("Expected Download command with no selector");
-        }
+        let Ok(ReplCommand::Download { args }) = result else {
+            panic!("Expected Download command");
+        };
+        assert_eq!(args, vec!["my-dataset"]);
     }
 
     #[test]
-    fn test_parse_download_command_dl_alias() {
+    fn test_parse_download_dl_alias() {
         let result = ReplCommand::from_str("dl my-dataset 0");
-        assert!(result.is_ok());
-
-        if let Ok(ReplCommand::Download {
-            dataset_id,
-            resource_selector,
-        }) = result
-        {
-            assert_eq!(dataset_id, "my-dataset");
-            assert!(matches!(
-                resource_selector,
-                Some(ResourceSelector::Index(0))
-            ));
-        } else {
-            panic!("Expected Download command using 'dl' alias");
-        }
-    }
-
-    #[test]
-    fn test_parse_download_command_with_extension() {
-        // This should be treated as a name since it's not a valid number
-        let result = ReplCommand::from_str("download my-dataset data.csv");
-        assert!(result.is_ok());
-
-        if let Ok(ReplCommand::Download {
-            dataset_id,
-            resource_selector,
-        }) = result
-        {
-            assert_eq!(dataset_id, "my-dataset");
-            if let Some(ResourceSelector::Name(name)) = resource_selector {
-                assert_eq!(name, "data.csv");
-            } else {
-                panic!("Expected Download command with Name(data.csv)");
-            }
-        } else {
+        let Ok(ReplCommand::Download { args }) = result else {
             panic!("Expected Download command");
-        }
+        };
+        assert_eq!(args, vec!["my-dataset", "0"]);
     }
 
     #[test]
-    fn test_parse_download_command_too_many_args() {
-        let result = ReplCommand::from_str("download dataset-id resource extra-arg");
-        assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .contains("Usage: download <dataset_id> [resource_index_or_name]")
-        );
-    }
-
-    #[test]
-    fn test_parse_download_command_too_few_args() {
+    fn test_parse_download_no_args() {
         let result = ReplCommand::from_str("download");
-        assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .contains("Usage: download <dataset_id> [resource_index_or_name]")
-        );
-    }
-
-    #[test]
-    fn test_resource_selector_numeric_string_is_index() {
-        // "0" should be parsed as Index(0), not Name("0")
-        let result = ReplCommand::from_str("download dataset 0");
-        if let Ok(ReplCommand::Download {
-            resource_selector, ..
-        }) = result
-        {
-            assert!(matches!(
-                resource_selector,
-                Some(ResourceSelector::Index(0))
-            ));
-        } else {
-            panic!("Expected Index, not Name");
-        }
-
-        // "999" should be parsed as Index(999), not Name("999")
-        let result = ReplCommand::from_str("download dataset 999");
-        if let Ok(ReplCommand::Download {
-            resource_selector, ..
-        }) = result
-        {
-            assert!(matches!(
-                resource_selector,
-                Some(ResourceSelector::Index(999))
-            ));
-        } else {
-            panic!("Expected Index, not Name");
-        }
-    }
-
-    #[test]
-    fn test_resource_selector_mixed_string_is_name() {
-        // "0abc" cannot be parsed as usize, should be Name
-        let result = ReplCommand::from_str("download dataset 0abc");
-        if let Ok(ReplCommand::Download {
-            resource_selector, ..
-        }) = result
-        {
-            if let Some(ResourceSelector::Name(name)) = resource_selector {
-                assert_eq!(name, "0abc");
-            } else {
-                panic!("Expected Name(0abc)");
-            }
-        } else {
+        let Ok(ReplCommand::Download { args }) = result else {
             panic!("Expected Download command");
-        }
+        };
+        assert!(args.is_empty());
+    }
+
+    #[test]
+    fn test_parse_download_multiple_selectors() {
+        // "download dataset-id "RDF File" "XML File"" — multiple resource selectors
+        let result = ReplCommand::from_str("download dataset-id \"RDF File\" \"XML File\"");
+        let Ok(ReplCommand::Download { args }) = result else {
+            panic!("Expected Download command");
+        };
+        assert_eq!(args, vec!["dataset-id", "RDF File", "XML File"]);
+    }
+
+    #[test]
+    fn test_parse_download_multiple_indices() {
+        let result = ReplCommand::from_str("download 0 1 2");
+        let Ok(ReplCommand::Download { args }) = result else {
+            panic!("Expected Download command");
+        };
+        assert_eq!(args, vec!["0", "1", "2"]);
     }
 
     #[test]
@@ -392,42 +344,241 @@ mod tests {
     #[test]
     fn test_parse_download_with_quoted_name() {
         let result = ReplCommand::from_str("download my-dataset \"CSV File\"");
-        assert!(result.is_ok());
-
-        if let Ok(ReplCommand::Download {
-            dataset_id,
-            resource_selector,
-        }) = result
-        {
-            assert_eq!(dataset_id, "my-dataset");
-            if let Some(ResourceSelector::Name(name)) = resource_selector {
-                assert_eq!(name, "CSV File");
-            } else {
-                panic!("Expected Download command with Name(CSV File)");
-            }
-        } else {
+        let Ok(ReplCommand::Download { args }) = result else {
             panic!("Expected Download command");
-        }
+        };
+        assert_eq!(args, vec!["my-dataset", "CSV File"]);
     }
 
     #[test]
     fn test_parse_download_with_long_quoted_name() {
         let result = ReplCommand::from_str("download dataset \"Comma Separated Values File\"");
-        assert!(result.is_ok());
-
-        if let Ok(ReplCommand::Download {
-            dataset_id,
-            resource_selector,
-        }) = result
-        {
-            assert_eq!(dataset_id, "dataset");
-            if let Some(ResourceSelector::Name(name)) = resource_selector {
-                assert_eq!(name, "Comma Separated Values File");
-            } else {
-                panic!("Expected Download command with quoted name");
-            }
-        } else {
+        let Ok(ReplCommand::Download { args }) = result else {
             panic!("Expected Download command");
-        }
+        };
+        assert_eq!(args, vec!["dataset", "Comma Separated Values File"]);
+    }
+
+    // --- SessionContext: absolute path tests ---
+
+    #[test]
+    fn test_absolute_org_and_dataset() {
+        let mut ctx = SessionContext::default();
+        ctx.apply_navigate("/epa-gov/air-quality").unwrap();
+        assert_eq!(ctx.org, Some("epa-gov".to_string()));
+        assert_eq!(ctx.dataset, Some("air-quality".to_string()));
+        assert_eq!(ctx.prompt_label(), "/epa-gov/air-quality");
+    }
+
+    #[test]
+    fn test_absolute_org_only() {
+        let mut ctx = SessionContext::default();
+        ctx.apply_navigate("/nasa-gov").unwrap();
+        assert_eq!(ctx.org, Some("nasa-gov".to_string()));
+        assert!(ctx.dataset.is_none());
+        assert_eq!(ctx.prompt_label(), "/nasa-gov");
+    }
+
+    #[test]
+    fn test_absolute_org_with_trailing_slash() {
+        let mut ctx = SessionContext::default();
+        ctx.apply_navigate("/epa-gov/").unwrap();
+        assert_eq!(ctx.org, Some("epa-gov".to_string()));
+        assert!(ctx.dataset.is_none());
+    }
+
+    #[test]
+    fn test_absolute_root_clears_all() {
+        let mut ctx = SessionContext {
+            org: Some("epa-gov".to_string()),
+            dataset: Some("air-quality".to_string()),
+        };
+        ctx.apply_navigate("/").unwrap();
+        assert!(ctx.org.is_none());
+        assert!(ctx.dataset.is_none());
+        assert_eq!(ctx.prompt_label(), "");
+    }
+
+    #[test]
+    fn test_absolute_replaces_previous_context() {
+        let mut ctx = SessionContext {
+            org: Some("old-org".to_string()),
+            dataset: Some("old-dataset".to_string()),
+        };
+        ctx.apply_navigate("/new-org/new-dataset").unwrap();
+        assert_eq!(ctx.org, Some("new-org".to_string()));
+        assert_eq!(ctx.dataset, Some("new-dataset".to_string()));
+    }
+
+    #[test]
+    fn test_absolute_org_clears_dataset() {
+        let mut ctx = SessionContext {
+            org: Some("old-org".to_string()),
+            dataset: Some("old-dataset".to_string()),
+        };
+        ctx.apply_navigate("/new-org").unwrap();
+        assert_eq!(ctx.org, Some("new-org".to_string()));
+        assert!(ctx.dataset.is_none());
+    }
+
+    // --- SessionContext: relative path tests ---
+
+    #[test]
+    fn test_relative_org_from_root() {
+        let mut ctx = SessionContext::default();
+        ctx.apply_navigate("nasa-gov").unwrap();
+        assert_eq!(ctx.org, Some("nasa-gov".to_string()));
+        assert!(ctx.dataset.is_none());
+    }
+
+    #[test]
+    fn test_relative_dataset_from_org() {
+        let mut ctx = SessionContext {
+            org: Some("epa-gov".to_string()),
+            dataset: None,
+        };
+        ctx.apply_navigate("water-data").unwrap();
+        assert_eq!(ctx.org, Some("epa-gov".to_string()));
+        assert_eq!(ctx.dataset, Some("water-data".to_string()));
+    }
+
+    #[test]
+    fn test_relative_from_dataset_errors() {
+        let mut ctx = SessionContext {
+            org: Some("epa-gov".to_string()),
+            dataset: Some("air-quality".to_string()),
+        };
+        let result = ctx.apply_navigate("something");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("already in a dataset"));
+    }
+
+    #[test]
+    fn test_dotdot_from_dataset_to_org() {
+        let mut ctx = SessionContext {
+            org: Some("epa-gov".to_string()),
+            dataset: Some("air-quality".to_string()),
+        };
+        ctx.apply_navigate("..").unwrap();
+        assert_eq!(ctx.org, Some("epa-gov".to_string()));
+        assert!(ctx.dataset.is_none());
+    }
+
+    #[test]
+    fn test_dotdot_from_org_to_root() {
+        let mut ctx = SessionContext {
+            org: Some("epa-gov".to_string()),
+            dataset: None,
+        };
+        ctx.apply_navigate("..").unwrap();
+        assert!(ctx.org.is_none());
+        assert!(ctx.dataset.is_none());
+    }
+
+    #[test]
+    fn test_dotdot_from_root_is_noop() {
+        let mut ctx = SessionContext::default();
+        ctx.apply_navigate("..").unwrap();
+        assert!(ctx.org.is_none());
+        assert!(ctx.dataset.is_none());
+    }
+
+    #[test]
+    fn test_relative_with_trailing_slash() {
+        let mut ctx = SessionContext::default();
+        ctx.apply_navigate("nasa-gov/").unwrap();
+        assert_eq!(ctx.org, Some("nasa-gov".to_string()));
+        assert!(ctx.dataset.is_none());
+    }
+
+    // --- SessionContext: prompt_label ---
+
+    #[test]
+    fn test_prompt_label_org_and_dataset() {
+        let ctx = SessionContext {
+            org: Some("epa-gov".to_string()),
+            dataset: Some("air-quality".to_string()),
+        };
+        assert_eq!(ctx.prompt_label(), "/epa-gov/air-quality");
+    }
+
+    #[test]
+    fn test_prompt_label_dataset_only() {
+        let ctx = SessionContext {
+            org: None,
+            dataset: Some("orphan-ds".to_string()),
+        };
+        assert_eq!(ctx.prompt_label(), "//orphan-ds");
+    }
+
+    #[test]
+    fn test_prompt_label_empty() {
+        let ctx = SessionContext::default();
+        assert_eq!(ctx.prompt_label(), "");
+    }
+
+    // --- Command parsing: select/cd/lcd ---
+
+    #[test]
+    fn test_parse_select_command() {
+        let result = ReplCommand::from_str("select /epa-gov/air-quality");
+        let Ok(ReplCommand::Select { path }) = result else {
+            panic!("Expected Select command");
+        };
+        assert_eq!(path, "/epa-gov/air-quality");
+    }
+
+    #[test]
+    fn test_parse_sel_alias() {
+        let result = ReplCommand::from_str("sel /epa-gov");
+        let Ok(ReplCommand::Select { path }) = result else {
+            panic!("Expected Select command via 'sel' alias");
+        };
+        assert_eq!(path, "/epa-gov");
+    }
+
+    #[test]
+    fn test_parse_cd_alias() {
+        let result = ReplCommand::from_str("cd nasa-gov");
+        let Ok(ReplCommand::Select { path }) = result else {
+            panic!("Expected Select command via 'cd' alias");
+        };
+        assert_eq!(path, "nasa-gov");
+    }
+
+    #[test]
+    fn test_parse_cd_dotdot() {
+        let result = ReplCommand::from_str("cd ..");
+        let Ok(ReplCommand::Select { path }) = result else {
+            panic!("Expected Select command");
+        };
+        assert_eq!(path, "..");
+    }
+
+    #[test]
+    fn test_parse_lcd_command() {
+        let result = ReplCommand::from_str("lcd ./downloads");
+        let Ok(ReplCommand::SetDir { path }) = result else {
+            panic!("Expected SetDir command");
+        };
+        assert_eq!(path, PathBuf::from("./downloads"));
+    }
+
+    #[test]
+    fn test_parse_setdir_alias() {
+        let result = ReplCommand::from_str("setdir /tmp");
+        let Ok(ReplCommand::SetDir { path }) = result else {
+            panic!("Expected SetDir command via 'setdir' alias");
+        };
+        assert_eq!(path, PathBuf::from("/tmp"));
+    }
+
+    #[test]
+    fn test_parse_show_without_dataset() {
+        let result = ReplCommand::from_str("show");
+        let Ok(ReplCommand::Show { dataset_id }) = result else {
+            panic!("Expected Show command");
+        };
+        assert!(dataset_id.is_none());
     }
 }
