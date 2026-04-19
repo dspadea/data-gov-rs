@@ -2,6 +2,8 @@
 ///
 /// Removes path traversal sequences (`..`, `/`, `\`) and filters to
 /// alphanumeric characters plus `-`, `_`, and `.`.
+// Three distinct patterns (".." then two separators); collapsing into a
+// single `replace` would change behavior since `..` must be handled first.
 #[allow(clippy::collapsible_str_replace)]
 pub fn sanitize_path_component(s: &str) -> String {
     s.replace("..", "_")

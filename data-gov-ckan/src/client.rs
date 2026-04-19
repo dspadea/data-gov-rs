@@ -62,7 +62,7 @@ impl Default for Configuration {
 /// is cheap to clone and share across tasks because it only holds an
 /// [`Arc<Configuration>`].
 ///
-/// ```rust
+/// ```rust,no_run
 /// use data_gov_ckan::{CkanClient, Configuration};
 /// use std::sync::Arc;
 ///

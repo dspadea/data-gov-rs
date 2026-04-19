@@ -310,7 +310,7 @@ impl DataGovMcpServer {
         let mut success_count = 0usize;
         let mut error_count = 0usize;
 
-        for (resource, result) in resources.iter().zip(download_results.into_iter()) {
+        for (resource, result) in resources.iter().zip(download_results) {
             let resource_id = resource.id.as_ref().map(|id| id.to_string());
             match result {
                 Ok(path) => {
