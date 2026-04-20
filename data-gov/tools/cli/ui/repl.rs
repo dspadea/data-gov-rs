@@ -4,22 +4,27 @@ use std::path::Path;
 use std::str::FromStr;
 use tokio::runtime::Runtime;
 
-use super::commands::ReplCommand;
+use super::commands::{ReplCommand, SessionContext};
 use super::display::print_repl_help;
 use super::handlers::execute_command;
 use super::{color_blue, color_blue_bold, color_dimmed, color_green_bold, color_red_bold};
-use data_gov::{DataGovClient, DataGovConfig};
+use data_gov::DataGovClient;
 
 /// REPL state and logic
 pub struct DataGovRepl {
     client: DataGovClient,
     rt: Runtime,
+    ctx: SessionContext,
 }
 
 impl DataGovRepl {
     pub fn new(client: DataGovClient) -> io::Result<Self> {
         let rt = Runtime::new()?;
-        Ok(Self { client, rt })
+        Ok(Self {
+            client,
+            rt,
+            ctx: SessionContext::default(),
+        })
     }
 
     pub fn run(&mut self) -> RustyResult<()> {
@@ -33,7 +38,8 @@ impl DataGovRepl {
         let mut rl = DefaultEditor::new()?;
 
         loop {
-            let readline = rl.readline(&format!("{} ", color_green_bold("data.gov>")));
+            let prompt = self.build_prompt();
+            let readline = rl.readline(&prompt);
 
             match readline {
                 Ok(line) => {
@@ -80,6 +86,20 @@ impl DataGovRepl {
         Ok(())
     }
 
+    fn build_prompt(&self) -> String {
+        let label = self.ctx.prompt_label();
+        if label.is_empty() {
+            format!("{} ", color_green_bold("data.gov>"))
+        } else {
+            // Show context on a line above the prompt to conserve horizontal space
+            format!(
+                "{}\n{} ",
+                color_dimmed(&label),
+                color_green_bold("data.gov>")
+            )
+        }
+    }
+
     fn handle_command(&mut self, command: ReplCommand) -> Result<(), Box<dyn std::error::Error>> {
         // Handle REPL-specific commands
         match &command {
@@ -95,13 +115,17 @@ impl DataGovRepl {
         }
 
         // Use shared command execution logic for other commands
-        execute_command(&self.client, &self.rt, command)?;
+        execute_command(&self.client, &self.rt, command, &mut self.ctx)?;
         Ok(())
     }
 
     fn handle_setdir(&mut self, path: &Path) -> Result<(), Box<dyn std::error::Error>> {
-        // Create new config with updated directory
-        let new_config = DataGovConfig::new().with_download_dir(path.to_path_buf());
+        // Clone existing config and update only the download directory
+        let new_config = self
+            .client
+            .config()
+            .clone()
+            .with_download_dir(path.to_path_buf());
 
         // Validate directory
         self.rt.block_on(async {

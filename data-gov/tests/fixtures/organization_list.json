@@ -1,0 +1,11 @@
+{
+    "help": "https://catalog.data.gov/api/3/action/help_show?name=organization_list",
+    "success": true,
+    "result": [
+        "allegheny-county-city-of-pittsburgh-western-pa-regional-data-center",
+        "americorps-gov",
+        "arlington-county",
+        "usace-army-mil",
+        "board-of-governors-of-the-federal-reserve-system"
+    ]
+}

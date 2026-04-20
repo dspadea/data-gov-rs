@@ -20,6 +20,7 @@ pub mod client;
 pub mod config;
 pub mod error;
 pub mod ui;
+pub mod util;
 
 // Re-export main types for convenience
 pub use client::DataGovClient;

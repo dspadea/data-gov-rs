@@ -58,7 +58,7 @@ impl Default for DataGovConfig {
             ckan_config: Arc::new(CkanConfiguration::default()),
             mode: OperatingMode::Interactive, // Default to interactive mode
             base_download_dir: Self::get_default_download_dir(),
-            user_agent: "data-gov-rs/1.0".to_string(),
+            user_agent: concat!("data-gov-rs/", env!("CARGO_PKG_VERSION")).to_string(),
             max_concurrent_downloads: 3,
             download_timeout_secs: 300, // 5 minutes
             status_reporter: None,
@@ -113,6 +113,14 @@ impl DataGovConfig {
     /// Get the full download directory for a specific dataset
     pub fn get_dataset_download_dir(&self, dataset_name: &str) -> PathBuf {
         self.get_base_download_dir().join(dataset_name)
+    }
+
+    /// Override the CKAN API base URL (e.g., for testing with a mock server)
+    pub fn with_base_url<S: Into<String>>(mut self, base_url: S) -> Self {
+        let mut ckan_config = (*self.ckan_config).clone();
+        ckan_config.base_path = base_url.into();
+        self.ckan_config = Arc::new(ckan_config);
+        self
     }
 
     /// Add API key for higher rate limits

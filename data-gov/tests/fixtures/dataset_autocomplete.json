@@ -1,0 +1,36 @@
+{
+    "help": "https://catalog.data.gov/api/3/action/help_show?name=package_autocomplete",
+    "success": true,
+    "result": [
+        {
+            "name": "electrical-permits",
+            "title": "Electrical Permits",
+            "match_field": "name",
+            "match_displayed": "electrical-permits"
+        },
+        {
+            "name": "electric-substations",
+            "title": "Electric Substations",
+            "match_field": "name",
+            "match_displayed": "electric-substations"
+        },
+        {
+            "name": "electrical-permits-821be",
+            "title": "Electrical Permits",
+            "match_field": "name",
+            "match_displayed": "electrical-permits-821be"
+        },
+        {
+            "name": "electric-substations-e84fe",
+            "title": "Electric Substations",
+            "match_field": "name",
+            "match_displayed": "electric-substations-e84fe"
+        },
+        {
+            "name": "electric-power-annual",
+            "title": "Electric Power Annual",
+            "match_field": "name",
+            "match_displayed": "electric-power-annual"
+        }
+    ]
+}

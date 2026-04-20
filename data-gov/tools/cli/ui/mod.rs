@@ -12,7 +12,7 @@ use std::sync::{Arc, OnceLock};
 use tokio::runtime::Runtime;
 
 use self::colors::{ColorHelper, ColorMode};
-use self::commands::ReplCommand;
+use self::commands::{ReplCommand, SessionContext};
 use self::handlers::execute_command;
 use self::repl::DataGovRepl;
 use self::reporter::CliStatusReporter;
@@ -103,7 +103,7 @@ pub fn color_bold(text: &str) -> String {
 pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     let app = Command::new("data-gov")
         .about("Interactive REPL and CLI for exploring data.gov datasets")
-        .version("1.0")
+        .version(env!("CARGO_PKG_VERSION"))
         .arg(
             Arg::new("api-key")
                 .long("api-key")
@@ -116,7 +116,6 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
                 .short('d')
                 .value_name("DIR")
                 .help("Base directory for downloads (REPL: ~/Downloads/<dataset>/, CLI: ./<dataset>/)")
-                .default_value("./downloads")
         )
         .arg(
             Arg::new("color")
@@ -148,13 +147,15 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
              \x20 data-gov show electric-vehicle-population-data\n\
              \x20 data-gov download electric-vehicle-population-data 0\n\
              \x20 data-gov download electric-vehicle-population-data \"Comma Separated Values File\"\n\
+             \x20 data-gov cd /epa-gov/air-quality\n\
              \x20 data-gov list organizations\n\n\
              Available commands:\n\
-             \x20 search <query> [limit]     Search for datasets\n\
-             \x20 show <dataset_id>         Show dataset details\n\
-             \x20 download <dataset_id> [index|name]  Download by index or name\n\
-             \x20 list <organizations>      List organizations\n\
-             \x20 info                      Show client info"
+             \x20 search <query> [limit]              Search for datasets\n\
+             \x20 show [dataset_id]                   Show dataset details\n\
+             \x20 download [dataset] [selectors...]   Download resources by index or name\n\
+             \x20 cd <path>                           Navigate org/dataset (cd, select, sel)\n\
+             \x20 list <organizations>                List organizations\n\
+             \x20 info                                Show client info"
         );
 
     let matches = app.get_matches();
@@ -168,11 +169,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     if let Some(download_dir) = matches.get_one::<String>("download-dir") {
-        // Only override the default if explicitly provided and not the CLI default value
-        if download_dir != "./downloads" {
-            config = config.with_download_dir(PathBuf::from(download_dir));
-        }
-        // If it's the CLI default, keep using the system default from DataGovConfig::default()
+        config = config.with_download_dir(PathBuf::from(download_dir));
     }
 
     // Parse color mode
@@ -242,7 +239,8 @@ fn run_cli_mode(
     };
 
     // Execute the command using the same logic as the REPL
-    let result = execute_command(&client, &rt, repl_command);
+    let mut ctx = SessionContext::default();
+    let result = execute_command(&client, &rt, repl_command, &mut ctx);
 
     match result {
         Ok(()) => {}

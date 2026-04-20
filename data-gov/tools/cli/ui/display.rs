@@ -63,8 +63,9 @@ pub fn print_package_details(package: &Package) {
             if let Some(desc) = &resource.description
                 && !desc.is_empty()
             {
-                let truncated = if desc.len() > 80 {
-                    format!("{}...", &desc[..80])
+                let truncated = if desc.chars().count() > 80 {
+                    let s: String = desc.chars().take(80).collect();
+                    format!("{s}...")
                 } else {
                     desc.clone()
                 };
@@ -97,25 +98,30 @@ pub fn print_cli_help() {
     let commands = vec![
         (
             "search <query> [limit]",
-            "Search for datasets",
+            "Search for datasets (filtered by active org)",
             "search \"climate data\" 20",
         ),
         (
-            "show <dataset_id>",
-            "Show detailed dataset information",
+            "show [dataset_id]",
+            "Show dataset info (uses active dataset if omitted)",
             "show electric-vehicle-population-data",
         ),
         (
-            "download <dataset_id> [index|name]",
-            "Download by index or name (partial match)",
-            "download electric-vehicle-population-data \"Comma Separated Values File\"",
+            "download [dataset] [selectors...]",
+            "Download resources (by index or name)",
+            "download electric-vehicle-population-data 0",
+        ),
+        (
+            "cd <path>",
+            "Navigate org/dataset context (like cd)",
+            "cd nasa-gov",
         ),
         (
             "list organizations",
             "List government organizations",
             "list organizations",
         ),
-        ("info", "Show client information", "info"),
+        ("info", "Show client and session information", "info"),
     ];
 
     for (cmd, desc, example) in commands {
@@ -145,30 +151,31 @@ pub fn print_repl_help() {
     let commands = vec![
         (
             "search <query> [limit]",
-            "Search for datasets",
+            "Search datasets (filtered by active org)",
             "search climate data 20",
         ),
         (
-            "show <dataset_id>",
-            "Show detailed dataset information",
+            "show [dataset_id]",
+            "Show dataset info (uses active dataset)",
             "show electric-vehicle-population-data",
         ),
         (
-            "download <dataset_id> [index|name]",
-            "Download by index or name (partial match)",
+            "download [dataset] [selectors...]",
+            "Download resources (by index or name)",
             "download electric-vehicle-population-data 0",
         ),
+        ("cd <path>", "Navigate org/dataset context", "cd epa-gov"),
         (
             "list organizations",
             "List government organizations",
             "list orgs",
         ),
         (
-            "setdir <path>",
-            "Set base download directory",
-            "setdir ./downloads",
+            "lcd <path>",
+            "Set local download directory",
+            "lcd ./downloads",
         ),
-        ("info", "Show session information", "info"),
+        ("info", "Show session and client info", "info"),
         ("help", "Show this help message", "help"),
         ("quit", "Exit the REPL", "quit"),
     ];
@@ -192,18 +199,38 @@ pub fn print_repl_help() {
         color_green("dl")
     );
     println!(
-        "  • Search supports multiple words: {}",
-        color_blue("search energy solar wind")
+        "  • Navigate like a filesystem: {}, {}, {}",
+        color_blue("cd epa-gov"),
+        color_blue("cd air-quality"),
+        color_blue("cd ..")
+    );
+    println!(
+        "  • Or jump directly: {}, {}, {}",
+        color_blue("cd /epa-gov/air-quality"),
+        color_blue("cd /nasa-gov"),
+        color_blue("cd /")
+    );
+    println!(
+        "  • Then just: {}, {}, {}",
+        color_blue("show"),
+        color_blue("download 0"),
+        color_blue("search pollution")
+    );
+    println!(
+        "  • Download multiple resources: {}",
+        color_blue("download \"RDF File\" \"XML File\"")
+    );
+    println!(
+        "  • Aliases: {} = {}, {} = {}",
+        color_green("select"),
+        color_green("cd"),
+        color_green("setdir"),
+        color_green("lcd")
     );
     println!("  • Downloads are organized by dataset name in subdirectories");
-    println!("  • Download without index downloads all resources");
     println!(
         "  • Create scripts with {} for automation",
         color_blue("#!/usr/bin/env data-gov")
-    );
-    println!(
-        "  • Run {} to use CLI mode",
-        color_blue("data-gov search \"climate\" 10")
     );
     println!();
 }

@@ -1,7 +1,7 @@
 [package]
 rust-version = "1.90"
 name = "data-gov-mcp-server"
-version = "0.3.1"
+version = "0.4.0"
 edition = "2024"
 
 description = "MCP Server for AI integration with Data.Gov"
@@ -21,5 +21,5 @@ thiserror = "2"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
 futures = "0.3"
-data-gov = "0.3.1"
-data-gov-ckan = "0.3.1"
+data-gov = "0.4.0"
+data-gov-ckan = "0.4.0"
