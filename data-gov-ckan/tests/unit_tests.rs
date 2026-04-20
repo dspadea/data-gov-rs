@@ -121,6 +121,64 @@ async fn package_search_with_no_params() {
     assert_eq!(result.count, Some(0));
 }
 
+/// Boundary: limit=0 must be sent verbatim as `rows=0` — not silently dropped
+/// or replaced with a default. Callers rely on this to fetch only counts.
+#[tokio::test]
+async fn package_search_with_limit_zero_sends_rows_zero_and_returns_empty_results() {
+    let server = MockServer::start().await;
+
+    Mock::given(method("GET"))
+        .and(path("/action/package_search"))
+        .and(query_param("rows", "0"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "help": "", "success": true,
+            "result": { "count": 1234, "results": [] }
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let client = test_client(&server.uri());
+    let result = client
+        .package_search(Some("climate"), Some(0), None, None)
+        .await
+        .expect("rows=0 should be a valid request");
+
+    assert_eq!(result.count, Some(1234));
+    assert!(
+        result.results.unwrap_or_default().is_empty(),
+        "server returned empty results; client must not synthesize any"
+    );
+}
+
+/// Boundary: an offset past the end of the result set returns success with an
+/// empty results array. The client must parse this as valid data, not an error.
+#[tokio::test]
+async fn package_search_with_offset_past_total_parses_empty_results_without_error() {
+    let server = MockServer::start().await;
+
+    Mock::given(method("GET"))
+        .and(path("/action/package_search"))
+        .and(query_param("start", "100000"))
+        .and(query_param("rows", "10"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "help": "", "success": true,
+            "result": { "count": 42, "results": [] }
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let client = test_client(&server.uri());
+    let result = client
+        .package_search(Some("anything"), Some(10), Some(100000), None)
+        .await
+        .expect("offset past total is a valid server response, not a client error");
+
+    assert_eq!(result.count, Some(42));
+    assert!(result.results.unwrap_or_default().is_empty());
+}
+
 // ---------------------------------------------------------------------------
 // package_show
 // ---------------------------------------------------------------------------

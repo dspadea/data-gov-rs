@@ -279,24 +279,11 @@ impl DataGovMcpServer {
         // Sanitize dataset name to prevent path traversal attacks
         let safe_dataset_slug = data_gov::util::sanitize_path_component(&dataset.name);
 
-        let resolved_output_dir = if let Some(dir) = params.output_dir.as_ref() {
-            // Reject path traversal in output_dir
-            if dir.contains("..") {
-                return Err(ServerError::InvalidParams(
-                    "output_dir must not contain '..' path components".to_string(),
-                ));
-            }
-            let mut path = PathBuf::from(dir);
-            if !path.is_absolute() {
-                path = std::env::current_dir().map_err(ServerError::Io)?.join(path);
-            }
-            if use_dataset_subdir {
-                path = path.join(&safe_dataset_slug);
-            }
-            Some(path)
-        } else {
-            None
-        };
+        let resolved_output_dir = resolve_output_dir(
+            params.output_dir.as_deref(),
+            use_dataset_subdir,
+            &safe_dataset_slug,
+        )?;
 
         let output_dir = resolved_output_dir
             .unwrap_or_else(|| self.data_gov.download_dir().join(&safe_dataset_slug));
@@ -464,5 +451,112 @@ impl DataGovMcpServer {
             self.portal_base_url.trim_end_matches('/'),
             dataset_name
         )
+    }
+}
+
+/// Resolve a client-requested download directory into an absolute path.
+///
+/// - Returns `Ok(None)` when no directory was requested (caller picks a
+///   default).
+/// - Rejects any path containing `..` components with
+///   [`ServerError::InvalidParams`].
+/// - Anchors relative paths to the current working directory.
+/// - Appends `safe_dataset_slug` when `use_dataset_subdir` is true.
+///
+/// `safe_dataset_slug` is expected to have already been run through
+/// [`data_gov::util::sanitize_path_component`].
+pub(crate) fn resolve_output_dir(
+    requested: Option<&str>,
+    use_dataset_subdir: bool,
+    safe_dataset_slug: &str,
+) -> Result<Option<PathBuf>, ServerError> {
+    let Some(dir) = requested else {
+        return Ok(None);
+    };
+
+    if dir.contains("..") {
+        return Err(ServerError::InvalidParams(
+            "output_dir must not contain '..' path components".to_string(),
+        ));
+    }
+
+    let mut path = PathBuf::from(dir);
+    if !path.is_absolute() {
+        path = std::env::current_dir().map_err(ServerError::Io)?.join(path);
+    }
+    if use_dataset_subdir {
+        path = path.join(safe_dataset_slug);
+    }
+    Ok(Some(path))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resolve_output_dir_returns_none_when_no_dir_requested() {
+        let resolved = resolve_output_dir(None, true, "slug").expect("should succeed");
+        assert!(resolved.is_none());
+    }
+
+    #[test]
+    fn resolve_output_dir_rejects_leading_parent_traversal() {
+        let err = resolve_output_dir(Some("../etc/passwd"), true, "slug")
+            .expect_err("parent traversal must be rejected");
+        match err {
+            ServerError::InvalidParams(msg) => {
+                assert!(
+                    msg.contains(".."),
+                    "error message should name the '..' component; got: {msg}"
+                );
+            }
+            other => panic!("expected InvalidParams, got: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn resolve_output_dir_rejects_embedded_parent_traversal() {
+        // An absolute-looking prefix does not make '..' safe — filesystem
+        // resolution could still escape upward via the parent segment.
+        let err = resolve_output_dir(Some("/tmp/ok/../escape"), false, "slug")
+            .expect_err("embedded '..' must be rejected");
+        assert!(matches!(err, ServerError::InvalidParams(_)));
+    }
+
+    #[test]
+    fn resolve_output_dir_rejects_windows_style_parent_traversal() {
+        // The substring check is OS-agnostic; backslash separators still match.
+        let err = resolve_output_dir(Some("C:\\Users\\me\\..\\other"), false, "slug")
+            .expect_err("'..' inside backslash path must be rejected");
+        assert!(matches!(err, ServerError::InvalidParams(_)));
+    }
+
+    #[test]
+    fn resolve_output_dir_appends_dataset_slug_when_enabled() {
+        let resolved = resolve_output_dir(Some("/tmp/downloads"), true, "climate-data")
+            .expect("should succeed")
+            .expect("should produce path");
+        assert_eq!(resolved, PathBuf::from("/tmp/downloads/climate-data"));
+    }
+
+    #[test]
+    fn resolve_output_dir_omits_dataset_slug_when_disabled() {
+        let resolved = resolve_output_dir(Some("/tmp/downloads"), false, "climate-data")
+            .expect("should succeed")
+            .expect("should produce path");
+        assert_eq!(resolved, PathBuf::from("/tmp/downloads"));
+    }
+
+    #[test]
+    fn resolve_output_dir_anchors_relative_path_to_cwd() {
+        let resolved = resolve_output_dir(Some("mydir"), false, "slug")
+            .expect("should succeed")
+            .expect("should produce path");
+        assert!(
+            resolved.is_absolute(),
+            "relative input should become absolute, got {resolved:?}"
+        );
+        assert!(resolved.ends_with("mydir"));
     }
 }

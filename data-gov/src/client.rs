@@ -619,4 +619,150 @@ mod tests {
         let filename = DataGovClient::get_resource_filename(&resource, None, Some(7));
         assert_eq!(filename, "archive.tar.gz-7.tar");
     }
+
+    #[test]
+    fn test_get_resource_filename_falls_back_to_url_filename_when_name_missing() {
+        let resource = Resource {
+            name: None,
+            format: None,
+            url: Some("https://example.com/downloads/report.csv".to_string()),
+            ..Default::default()
+        };
+
+        let filename = DataGovClient::get_resource_filename(&resource, None, None);
+        assert_eq!(filename, "report.csv");
+    }
+
+    #[test]
+    fn test_get_resource_filename_url_without_extension_uses_format_fallback() {
+        // URL's last segment has no dot, so URL fallback path is skipped and
+        // we drop to the "data" + format branch.
+        let resource = Resource {
+            name: None,
+            format: Some("JSON".to_string()),
+            url: Some("https://example.com/api/records".to_string()),
+            ..Default::default()
+        };
+
+        let filename = DataGovClient::get_resource_filename(&resource, None, None);
+        assert_eq!(filename, "data.json");
+    }
+
+    #[test]
+    fn test_get_resource_filename_no_name_no_url_returns_data_dat() {
+        let resource = Resource {
+            name: None,
+            format: None,
+            url: None,
+            ..Default::default()
+        };
+
+        let filename = DataGovClient::get_resource_filename(&resource, None, None);
+        assert_eq!(filename, "data.dat");
+    }
+
+    #[test]
+    fn test_get_resource_filename_uses_fallback_name_when_provided() {
+        let resource = Resource {
+            name: None,
+            format: Some("CSV".to_string()),
+            url: None,
+            ..Default::default()
+        };
+
+        let filename =
+            DataGovClient::get_resource_filename(&resource, Some("climate-dataset"), None);
+        assert_eq!(filename, "climate-dataset.csv");
+    }
+
+    #[test]
+    fn test_get_resource_filename_fallback_with_index_inserts_before_extension() {
+        let resource = Resource {
+            name: None,
+            format: None,
+            url: None,
+            ..Default::default()
+        };
+
+        let filename = DataGovClient::get_resource_filename(&resource, None, Some(2));
+        assert_eq!(filename, "data-2.dat");
+    }
+
+    // -----------------------------------------------------------------------
+    // validate_download_dir
+    // -----------------------------------------------------------------------
+
+    fn client_with_download_dir(dir: std::path::PathBuf) -> DataGovClient {
+        let config = crate::config::DataGovConfig::default()
+            .with_mode(crate::config::OperatingMode::Interactive)
+            .with_download_dir(dir);
+        DataGovClient::with_config(config).expect("test client must build")
+    }
+
+    #[tokio::test]
+    async fn validate_download_dir_accepts_existing_writable_directory() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let client = client_with_download_dir(tmp.path().to_path_buf());
+
+        client
+            .validate_download_dir()
+            .await
+            .expect("existing writable dir should validate");
+    }
+
+    #[tokio::test]
+    async fn validate_download_dir_creates_missing_directory() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let nested = tmp.path().join("a").join("b").join("c");
+        assert!(!nested.exists());
+
+        let client = client_with_download_dir(nested.clone());
+        client
+            .validate_download_dir()
+            .await
+            .expect("missing dir should be auto-created");
+
+        assert!(nested.is_dir(), "nested directory should now exist");
+    }
+
+    #[tokio::test]
+    async fn validate_download_dir_rejects_path_that_is_a_file() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let file_path = tmp.path().join("not-a-dir.txt");
+        tokio::fs::write(&file_path, b"hello")
+            .await
+            .expect("write setup file");
+
+        let client = client_with_download_dir(file_path);
+        let err = client
+            .validate_download_dir()
+            .await
+            .expect_err("should reject non-directory path");
+
+        match err {
+            DataGovError::ConfigError { message } => {
+                assert!(
+                    message.contains("not a directory"),
+                    "error message should name the failure mode, got: {message}"
+                );
+            }
+            other => panic!("expected ConfigError, got: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn validate_download_dir_leaves_no_probe_file_behind() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let client = client_with_download_dir(tmp.path().to_path_buf());
+
+        client
+            .validate_download_dir()
+            .await
+            .expect("should succeed");
+
+        assert!(
+            !tmp.path().join(".write_test").exists(),
+            "probe file must be removed after validation"
+        );
+    }
 }
