@@ -23,3 +23,6 @@ tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
 futures = "0.3"
 data-gov = "0.4.0"
 data-gov-ckan = "0.4.0"
+
+[dev-dependencies]
+wiremock = "0.6"
