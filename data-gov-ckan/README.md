@@ -1,12 +1,24 @@
 # data-gov-ckan
 
-Async Rust client for CKAN APIs with first-class support for [data.gov](https://data.gov). It provides typed models, ergonomic helpers, and works with any CKAN-compatible portal.
+Async Rust client for CKAN APIs. Typed models, ergonomic helpers, works with any CKAN-compatible portal.
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](../LICENSE)
 
-> **Note:** The client targets data.gov and its public API first. The code should
-> work with other CKAN deployments that follow the same API surface, but those
-> combinations have not been officially tested.
+> ## ⚠️ data.gov no longer uses CKAN
+>
+> As of 2026 the data.gov catalog is served by a purpose-built
+> [Catalog API](https://resources.data.gov/catalog-api/) — see the
+> [`data-gov-catalog`](../data-gov-catalog/) crate in this workspace.
+>
+> **This crate is retained, not deprecated.** CKAN still powers many other
+> open-data portals (European, state, municipal, and university instances) and
+> the client works unchanged against any compliant CKAN deployment — just
+> point `Configuration::base_path` at your target host.
+>
+> **Maintenance status.** Active workspace development now focuses on the
+> Catalog API. `data-gov-ckan` will continue to receive bug fixes and security
+> patches, but new features are unlikely unless a contributor steps up.
+> Issues and PRs are welcome.
 
 ## Requirements
 
@@ -24,7 +36,7 @@ Use the published crate from crates.io:
 
 ```toml
 [dependencies]
-data-gov-ckan = "0.2.0"
+data-gov-ckan = "0.4"
 tokio = { version = "1", features = ["full"] }
 ```
 
@@ -32,11 +44,13 @@ Working inside this repository? Point to the local path instead: `data-gov-ckan 
 
 ## Highlights
 
-- 🔁 Full coverage of CKAN `action/*` endpoints used by data.gov
+- 🔁 Coverage of the common CKAN `action/*` endpoints (`package_search`,
+  `package_show`, `organization_list`, `group_list`, `tag_list`, `user_list`,
+  and the matching autocomplete helpers)
 - ✅ Strongly typed models generated from the official OpenAPI spec
 - 🌐 Configurable base URL, authentication, and user-agent handling
 - ⚙️ Async support via `reqwest` + `tokio`
-- 🧪 Integration tests that target the live data.gov API
+- 🧪 Wiremock-based unit tests plus optional live integration tests
 
 ## Quick start
 
@@ -118,12 +132,14 @@ Core methods include `package_search`, `package_show`, `organization_list`, `gro
 git clone https://github.com/dspadea/data-gov-rs.git
 cd data-gov-rs/data-gov-ckan
 cargo build
-cargo test        # includes integration tests hitting data.gov
+cargo test        # unit + wiremock tests; live integration tests are #[ignore]'d
 cargo run --example debug_search
 cargo run --example raw_response
 ```
 
-Integration tests require network access. Use `cargo test -- --ignored` to skip or select them as needed.
+Live-network integration tests are marked `#[ignore]` and target a CKAN
+instance you configure (legacy data.gov fixtures are kept for historical
+reference). Run them explicitly with `cargo test -- --ignored`.
 
 ## Authentication options
 
