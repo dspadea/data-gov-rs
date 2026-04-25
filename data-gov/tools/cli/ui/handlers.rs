@@ -643,6 +643,10 @@ fn list_dataset_distributions(
         color_green_bold("Found"),
         distributions.len()
     );
+    // Distributions are zero-indexed because `download N` is zero-indexed
+    // (and the `show` output already displays them that way). Don't tempt
+    // anyone to type `download 1` after seeing `1.` and getting the second
+    // distribution instead of the first.
     for (i, dist) in distributions.iter().enumerate() {
         let title = dist.title.as_deref().unwrap_or("(untitled)");
         let format = dist
@@ -652,7 +656,7 @@ fn list_dataset_distributions(
             .unwrap_or("?");
         println!(
             "{}. {} [{}]",
-            color_blue_bold(&format!("{:2}", i + 1)),
+            color_blue_bold(&format!("{:2}", i)),
             color_yellow(title),
             color_dimmed(format)
         );
