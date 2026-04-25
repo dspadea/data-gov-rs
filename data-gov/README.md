@@ -87,18 +87,83 @@ async fn main() -> data_gov::Result<()> {
 
 ## CLI overview
 
+The REPL treats the data.gov catalog as a four-level Unix-style filesystem:
+
+```
+/                           → root (organizations live here)
+/<org>/                     → an organization's datasets
+/<org>/<dataset>/           → a dataset's downloadable distributions
+```
+
+`cd` and `ls` work the way you'd expect from a shell. Every `cd` is
+validated against the catalog before adopting the new context, so a
+typo doesn't silently leave you in a bogus location.
+
+### REPL session walkthrough
+
+```
+$ data-gov
+🇺🇸 Data.gov Interactive Explorer
+
+data-gov:/> ls                              # list organizations
+ 1. census
+ 2. noaa
+ 3. epa
+ ...
+data-gov:/> cd /epa                         # validated against the org list
+OK Active context: /epa
+data-gov:/epa> ls                           # datasets in EPA, paginated 50 at a time
+ambient-air-quality-data-inventory  Ambient Air Quality Data Inventory  [modified 2025-07-31]
+xrd-raw-data  XRD Raw data  [1 file, modified 2026-04-21]
+...
+Found 50 datasets (type 'next' for more)
+data-gov:/epa> next                         # advance one page
+... 50 more datasets ...
+data-gov:/epa> cd integrated-risk-information-system-iris
+OK Active context: /epa/integrated-risk-information-system-iris
+data-gov:/epa/integrated-risk-information-system-iris> ls    # distributions
+ 0. (untitled) [text/csv]
+ 1. (untitled) [application/json]
+data-gov:/epa/integrated-risk-information-system-iris> show .   # '.' = current dataset
+... dataset details ...
+data-gov:/epa/integrated-risk-information-system-iris> download 0
+... downloads distribution[0] ...
+data-gov:/epa/integrated-risk-information-system-iris> cd ..
+OK Active context: /epa
+```
+
+Notes on the metaphor:
+
+- `cd /<single-segment>` resolves as either an org *or* a dataset slug —
+  data.gov has a flat slug namespace, so the REPL tries org first and
+  falls back to dataset. When a single segment matches a dataset, the
+  org context is auto-populated from the dataset's publisher.
+- `cd ..` walks up one level. `cd /` returns to root.
+- `.` always means "the current dataset" in commands that take a slug
+  (e.g. `show .`, where supported). Errors clearly when nothing is
+  selected.
+- Distribution indexes in `ls` are zero-based and match what `download N`
+  expects — no off-by-one between displayed and addressable indexes.
+- `next` advances the most recent paginated `search` or `ls`. `cd` clears
+  the cursor (so a stale `next` doesn't reach back into the previous
+  location).
+
+### One-shot CLI usage
+
+The same commands work as one-shot invocations from your shell:
+
 ```
 data-gov search "climate change" 5
 data-gov show electric-vehicle-population-data
-data-gov download electric-vehicle-population-data 0                                 # Download by index
-data-gov download electric-vehicle-population-data "Comma Separated Values File"    # Download by title (quoted)
-data-gov download electric-vehicle-population-data csv                               # Partial title match
-data-gov list organizations
+data-gov download electric-vehicle-population-data 0                                 # by index
+data-gov download electric-vehicle-population-data "Comma Separated Values File"    # by title (quoted)
+data-gov download electric-vehicle-population-data csv                               # partial title match
+data-gov ls                                                                          # at root, lists orgs
 ```
 
 Key defaults:
 
-- **Interactive mode:** `data-gov` launches a REPL that stores downloads under `~/Downloads/<dataset>/`
+- **Interactive mode:** `data-gov` launches the REPL and stores downloads under `~/Downloads/<dataset>/`
 - **Non-interactive mode:** Commands run directly in your current directory (`./<dataset>/`)
 - Override download location with `--download-dir`, toggle colours with `--color`, and silence progress bars via `NO_PROGRESS=1`
 
@@ -106,12 +171,15 @@ Key defaults:
 
 | Command | Purpose |
 | ------- | ------- |
-| `search <query> [limit]` | Full-text search with optional page size |
-| `show <dataset_slug>` | Inspect dataset details and distributions |
-| `download <dataset_slug> [index\|title]` | Download all distributions, or specific ones by index or title substring |
-| `list organizations` | List publishing organisations |
-| `setdir <path>` | Change the active download directory (REPL only) |
-| `info` | Display current configuration |
+| `cd <path>` | Navigate to an org or dataset (validated). Examples: `cd /epa`, `cd /epa/air-quality-data`, `cd ..`, `cd /` |
+| `ls` | List the contents of the current location (orgs at `/`, datasets at `/<org>`, distributions at `/<org>/<dataset>`). Paginated 50 at a time |
+| `next` (alias `n`) | Fetch the next page of the most recent `ls` or `search` |
+| `search <query> [limit]` | Full-text search; honors active org filter; results paginate via `next` |
+| `show [dataset_slug\|.]` | Show dataset info; `.` or omitted means the current dataset |
+| `download [dataset_slug] [selectors...]` | Download distributions by zero-based index or title substring; with no selectors, downloads all |
+| `list organizations` | Bulk org list (regardless of context) |
+| `lcd <path>` | Change the active download directory (REPL only) |
+| `info` | Display current session and client configuration |
 | `help`, `quit` | Help and exit commands |
 
 ### Automation
@@ -121,9 +189,12 @@ The REPL accepts stdin, so shebang scripts work out of the box:
 ```bash
 #!/usr/bin/env data-gov
 # Simple automation example
+cd /epa
+ls
 search "electric vehicle" 3
-show electric-vehicle-population-data
-download electric-vehicle-population-data "Comma Separated Values File"    # Download by title (quoted)
+cd /electric-vehicle-population-data
+show .
+download 0
 quit
 ```
 
@@ -131,9 +202,9 @@ See [`../examples/scripting`](../examples/scripting) for ready-made scripts such
 
 ### Pagination
 
-The Catalog API uses cursor-based pagination. The search response carries an
-`after` field when more pages are available; pass it back on the next call to
-advance:
+In the REPL, `search` and `ls` results paginate automatically — type `next`
+(or `n`) to advance, and the previous-page cursor is forgotten when you `cd`.
+Programmatically, the underlying client uses cursor-based pagination:
 
 ```rust
 let page1 = client.search("climate", Some(20), None, None).await?;

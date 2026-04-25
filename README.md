@@ -61,13 +61,30 @@ rustc --version  # should be 1.90 or newer
 cargo install data-gov
 ```
 
-Common commands:
+The REPL treats the data.gov catalog as a Unix-style filesystem
+(`/` → orgs → datasets → distributions). Quick tour:
+
+```
+$ data-gov
+data-gov:/> ls                      # list orgs
+data-gov:/> cd /epa                 # validated against the catalog
+data-gov:/epa> ls                   # 50 datasets, paginated
+data-gov:/epa> next                 # next page
+data-gov:/epa> cd integrated-risk-information-system-iris
+data-gov:/epa/iris> show .          # '.' = current dataset
+data-gov:/epa/iris> download 0      # zero-based, matches `ls`
+```
+
+Or use the same commands as one-shots from your shell:
 
 - `data-gov search "climate change" 10`
 - `data-gov show electric-vehicle-population-data`
-- `data-gov download electric-vehicle-population-data 0`                              # Download by index
-- `data-gov download electric-vehicle-population-data "Comma Separated Values File"`  # Download by title (quoted)
+- `data-gov download electric-vehicle-population-data 0`
+- `data-gov ls`
 - `data-gov list organizations`
+
+See [`data-gov/README.md`](./data-gov/README.md) for the full command
+reference and metaphor walkthrough.
 
 The CLI automatically adjusts colour and progress output for TTY / non-TTY environments. Tune behaviour with `--color`, `NO_COLOR`, or `NO_PROGRESS` as needed.
 
@@ -77,8 +94,9 @@ The binary doubles as an interactive REPL. You can automate workflows with sheba
 
 ```bash
 #!/usr/bin/env data-gov
-search climate 5
-download consumer-complaint-database 0
+cd /electric-vehicle-population-data
+show .
+download 0
 quit
 ```
 
