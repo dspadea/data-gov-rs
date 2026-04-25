@@ -105,12 +105,6 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
         .about("Interactive REPL and CLI for exploring data.gov datasets")
         .version(env!("CARGO_PKG_VERSION"))
         .arg(
-            Arg::new("api-key")
-                .long("api-key")
-                .value_name("KEY")
-                .help("CKAN API key for higher rate limits")
-        )
-        .arg(
             Arg::new("download-dir")
                 .long("download-dir")
                 .short('d')
@@ -151,8 +145,8 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
              \x20 data-gov list organizations\n\n\
              Available commands:\n\
              \x20 search <query> [limit]              Search for datasets\n\
-             \x20 show [dataset_id]                   Show dataset details\n\
-             \x20 download [dataset] [selectors...]   Download resources by index or name\n\
+             \x20 show [dataset_slug]                 Show dataset details\n\
+             \x20 download [dataset] [selectors...]   Download distributions by index or title\n\
              \x20 cd <path>                           Navigate org/dataset (cd, select, sel)\n\
              \x20 list <organizations>                List organizations\n\
              \x20 info                                Show client info"
@@ -163,10 +157,6 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     // Build configuration
     let mut config = DataGovConfig::default();
     let mut color_mode = ColorMode::default();
-
-    if let Some(api_key) = matches.get_one::<String>("api-key") {
-        config = config.with_api_key(api_key);
-    }
 
     if let Some(download_dir) = matches.get_one::<String>("download-dir") {
         config = config.with_download_dir(PathBuf::from(download_dir));

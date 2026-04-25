@@ -1,17 +1,18 @@
-//! Concurrency and partial-failure tests for [`DataGovClient::download_resources`].
+//! Concurrency and partial-failure tests for
+//! [`DataGovClient::download_distributions`].
 //!
 //! Each test constructs a `DataGovClient` pointed at a `wiremock` server and
-//! supplies a slice of [`Resource`] records whose URLs target the mock. Tests
-//! assert on caller-observable behavior:
+//! supplies a slice of [`Distribution`] records whose URLs target the mock.
+//! Tests assert on caller-observable behavior:
 //!
 //! - Return-vector length and ordering match the input
-//! - Partial failures surface as per-resource `Err` without short-circuiting
-//! - Filenames for resources with identical names are disambiguated by index
+//! - Partial failures surface as per-distribution `Err` without short-circuiting
+//! - Filenames for duplicate titles are disambiguated by index
 //! - The `max_concurrent_downloads` limit is actually enforced
 
 use std::time::{Duration, Instant};
 
-use data_gov::ckan::models::Resource;
+use data_gov::catalog::models::Distribution;
 use data_gov::{DataGovClient, DataGovConfig, DataGovError, OperatingMode};
 use tempfile::TempDir;
 use wiremock::matchers::{method, path_regex};
@@ -27,26 +28,28 @@ fn test_client(download_dir: std::path::PathBuf, max_concurrent: usize) -> DataG
     DataGovClient::with_config(config).expect("test client must build")
 }
 
-/// Create a Resource whose `url` points at the given mock path.
-fn mock_resource(mock_uri: &str, file_path: &str, name: &str, format: &str) -> Resource {
-    Resource {
-        name: Some(name.to_string()),
+/// Create a Distribution whose `downloadURL` points at the given mock path.
+fn mock_distribution(mock_uri: &str, file_path: &str, title: &str, format: &str) -> Distribution {
+    Distribution {
+        type_hint: None,
+        title: Some(title.to_string()),
+        description: None,
+        download_url: Some(format!("{mock_uri}{file_path}")),
+        access_url: None,
+        media_type: None,
         format: Some(format.to_string()),
-        url: Some(format!("{mock_uri}{file_path}")),
-        ..Default::default()
+        license: None,
+        described_by: None,
+        described_by_type: None,
     }
 }
 
-// ---------------------------------------------------------------------------
-// Boundary: empty and single-element input
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
-async fn download_resources_with_empty_slice_returns_empty_vec() {
+async fn empty_slice_returns_empty_vec() {
     let tmp = TempDir::new().expect("tempdir");
     let client = test_client(tmp.path().to_path_buf(), 3);
 
-    let results = client.download_resources(&[], None).await;
+    let results = client.download_distributions(&[], None).await;
 
     assert!(
         results.is_empty(),
@@ -56,7 +59,7 @@ async fn download_resources_with_empty_slice_returns_empty_vec() {
 }
 
 #[tokio::test]
-async fn download_resources_with_single_resource_returns_single_result() {
+async fn single_distribution_returns_single_result() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path_regex(r"^/files/.*"))
@@ -67,22 +70,23 @@ async fn download_resources_with_single_resource_returns_single_result() {
     let tmp = TempDir::new().expect("tempdir");
     let client = test_client(tmp.path().to_path_buf(), 3);
 
-    let resources = vec![mock_resource(&server.uri(), "/files/one.csv", "one", "CSV")];
+    let distributions = vec![mock_distribution(
+        &server.uri(),
+        "/files/one.csv",
+        "one",
+        "CSV",
+    )];
     let results = client
-        .download_resources(&resources, Some(tmp.path()))
+        .download_distributions(&distributions, Some(tmp.path()))
         .await;
 
-    assert_eq!(results.len(), 1, "one input must produce one result");
+    assert_eq!(results.len(), 1);
     let path = results.into_iter().next().unwrap().expect("should succeed");
     assert!(path.exists(), "downloaded file must exist at {path:?}");
 }
 
-// ---------------------------------------------------------------------------
-// Happy path: all succeed, results line up one-to-one
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
-async fn download_resources_returns_one_result_per_input_in_order() {
+async fn returns_one_result_per_input_in_order() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path_regex(r"^/files/.*"))
@@ -93,75 +97,71 @@ async fn download_resources_returns_one_result_per_input_in_order() {
     let tmp = TempDir::new().expect("tempdir");
     let client = test_client(tmp.path().to_path_buf(), 3);
 
-    let resources = vec![
-        mock_resource(&server.uri(), "/files/a.csv", "a", "CSV"),
-        mock_resource(&server.uri(), "/files/b.csv", "b", "CSV"),
-        mock_resource(&server.uri(), "/files/c.csv", "c", "CSV"),
+    let distributions = vec![
+        mock_distribution(&server.uri(), "/files/a.csv", "a", "CSV"),
+        mock_distribution(&server.uri(), "/files/b.csv", "b", "CSV"),
+        mock_distribution(&server.uri(), "/files/c.csv", "c", "CSV"),
     ];
     let results = client
-        .download_resources(&resources, Some(tmp.path()))
-        .await;
-
-    assert_eq!(results.len(), 3, "result count must match input count");
-    for (i, r) in results.iter().enumerate() {
-        assert!(r.is_ok(), "resource {i} should have succeeded: {r:?}");
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Partial failure: a resource with no URL must not short-circuit the batch
-// ---------------------------------------------------------------------------
-
-#[tokio::test]
-async fn download_resources_with_mixed_url_and_no_url_returns_mixed_results() {
-    let server = MockServer::start().await;
-    Mock::given(method("GET"))
-        .and(path_regex(r"^/files/.*"))
-        .respond_with(ResponseTemplate::new(200).set_body_bytes(b"payload".to_vec()))
-        .mount(&server)
-        .await;
-
-    let tmp = TempDir::new().expect("tempdir");
-    let client = test_client(tmp.path().to_path_buf(), 3);
-
-    let resources = vec![
-        mock_resource(&server.uri(), "/files/ok1.csv", "ok1", "CSV"),
-        Resource {
-            name: Some("no-url".to_string()),
-            format: Some("CSV".to_string()),
-            url: None,
-            ..Default::default()
-        },
-        mock_resource(&server.uri(), "/files/ok2.csv", "ok2", "CSV"),
-    ];
-
-    let results = client
-        .download_resources(&resources, Some(tmp.path()))
+        .download_distributions(&distributions, Some(tmp.path()))
         .await;
 
     assert_eq!(results.len(), 3);
-    assert!(results[0].is_ok(), "first resource must succeed");
+    for (i, r) in results.iter().enumerate() {
+        assert!(r.is_ok(), "distribution {i} should have succeeded: {r:?}");
+    }
+}
+
+#[tokio::test]
+async fn mixed_url_and_no_url_returns_mixed_results() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path_regex(r"^/files/.*"))
+        .respond_with(ResponseTemplate::new(200).set_body_bytes(b"payload".to_vec()))
+        .mount(&server)
+        .await;
+
+    let tmp = TempDir::new().expect("tempdir");
+    let client = test_client(tmp.path().to_path_buf(), 3);
+
+    let distributions = vec![
+        mock_distribution(&server.uri(), "/files/ok1.csv", "ok1", "CSV"),
+        Distribution {
+            type_hint: None,
+            title: Some("no-url".to_string()),
+            description: None,
+            download_url: None,
+            access_url: None,
+            media_type: None,
+            format: Some("CSV".to_string()),
+            license: None,
+            described_by: None,
+            described_by_type: None,
+        },
+        mock_distribution(&server.uri(), "/files/ok2.csv", "ok2", "CSV"),
+    ];
+
+    let results = client
+        .download_distributions(&distributions, Some(tmp.path()))
+        .await;
+
+    assert_eq!(results.len(), 3);
+    assert!(results[0].is_ok(), "first distribution must succeed");
     match &results[1] {
         Err(DataGovError::ResourceNotFound { message }) => {
             assert!(
-                message.contains("no URL") || message.contains("URL"),
+                message.contains("downloadURL"),
                 "error message should explain missing URL, got: {message}"
             );
         }
         other => panic!("expected ResourceNotFound, got {other:?}"),
     }
-    assert!(results[2].is_ok(), "third resource must still succeed");
+    assert!(results[2].is_ok(), "third distribution must still succeed");
 }
 
-// ---------------------------------------------------------------------------
-// Partial failure: per-resource HTTP errors surface without aborting the batch
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
-async fn download_resources_propagates_per_resource_http_errors() {
+async fn propagates_per_distribution_http_errors() {
     let server = MockServer::start().await;
-
-    // /good/* returns 200; /bad/* returns 500
     Mock::given(method("GET"))
         .and(path_regex(r"^/good/.*"))
         .respond_with(ResponseTemplate::new(200).set_body_bytes(b"ok".to_vec()))
@@ -176,18 +176,18 @@ async fn download_resources_propagates_per_resource_http_errors() {
     let tmp = TempDir::new().expect("tempdir");
     let client = test_client(tmp.path().to_path_buf(), 3);
 
-    let resources = vec![
-        mock_resource(&server.uri(), "/good/a.csv", "a", "CSV"),
-        mock_resource(&server.uri(), "/bad/b.csv", "b", "CSV"),
-        mock_resource(&server.uri(), "/good/c.csv", "c", "CSV"),
+    let distributions = vec![
+        mock_distribution(&server.uri(), "/good/a.csv", "a", "CSV"),
+        mock_distribution(&server.uri(), "/bad/b.csv", "b", "CSV"),
+        mock_distribution(&server.uri(), "/good/c.csv", "c", "CSV"),
     ];
 
     let results = client
-        .download_resources(&resources, Some(tmp.path()))
+        .download_distributions(&distributions, Some(tmp.path()))
         .await;
 
     assert_eq!(results.len(), 3);
-    assert!(results[0].is_ok(), "good resource must succeed");
+    assert!(results[0].is_ok());
     match &results[1] {
         Err(DataGovError::DownloadError { message }) => {
             assert!(
@@ -197,15 +197,11 @@ async fn download_resources_propagates_per_resource_http_errors() {
         }
         other => panic!("expected DownloadError with 500, got {other:?}"),
     }
-    assert!(results[2].is_ok(), "third resource must not be affected");
+    assert!(results[2].is_ok());
 }
 
-// ---------------------------------------------------------------------------
-// Filename disambiguation: duplicate names must not overwrite each other
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
-async fn download_resources_disambiguates_duplicate_filenames_by_index() {
+async fn disambiguates_duplicate_filenames_by_index() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path_regex(r"^/same/.*"))
@@ -216,16 +212,14 @@ async fn download_resources_disambiguates_duplicate_filenames_by_index() {
     let tmp = TempDir::new().expect("tempdir");
     let client = test_client(tmp.path().to_path_buf(), 3);
 
-    // Three resources with the same name + format — filenames would collide
-    // without index insertion.
-    let resources = vec![
-        mock_resource(&server.uri(), "/same/1.csv", "report", "CSV"),
-        mock_resource(&server.uri(), "/same/2.csv", "report", "CSV"),
-        mock_resource(&server.uri(), "/same/3.csv", "report", "CSV"),
+    let distributions = vec![
+        mock_distribution(&server.uri(), "/same/1.csv", "report", "CSV"),
+        mock_distribution(&server.uri(), "/same/2.csv", "report", "CSV"),
+        mock_distribution(&server.uri(), "/same/3.csv", "report", "CSV"),
     ];
 
     let results = client
-        .download_resources(&resources, Some(tmp.path()))
+        .download_distributions(&distributions, Some(tmp.path()))
         .await;
 
     let paths: Vec<_> = results
@@ -233,7 +227,6 @@ async fn download_resources_disambiguates_duplicate_filenames_by_index() {
         .map(|r| r.expect("all downloads must succeed"))
         .collect();
 
-    // All three paths must be distinct, otherwise one download overwrote another.
     assert_eq!(paths.len(), 3);
     assert_ne!(paths[0], paths[1]);
     assert_ne!(paths[1], paths[2]);
@@ -244,17 +237,9 @@ async fn download_resources_disambiguates_duplicate_filenames_by_index() {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Concurrency cap is enforced: a small max_concurrent_downloads with many
-// slow responses must serialize into batches.
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
-async fn download_resources_honors_max_concurrent_downloads_cap() {
+async fn honors_max_concurrent_downloads_cap() {
     let server = MockServer::start().await;
-    // Each response is delayed ~150ms. With max_concurrent=2 and 4 resources,
-    // the wall-clock total must be at least ~300ms (two batches) — far above
-    // the unlimited-parallel lower bound of ~150ms.
     let per_request_delay = Duration::from_millis(150);
     Mock::given(method("GET"))
         .and(path_regex(r"^/slow/.*"))
@@ -269,9 +254,9 @@ async fn download_resources_honors_max_concurrent_downloads_cap() {
     let tmp = TempDir::new().expect("tempdir");
     let client = test_client(tmp.path().to_path_buf(), 2);
 
-    let resources: Vec<Resource> = (0..4)
+    let distributions: Vec<Distribution> = (0..4)
         .map(|i| {
-            mock_resource(
+            mock_distribution(
                 &server.uri(),
                 &format!("/slow/{i}.csv"),
                 &format!("res-{i}"),
@@ -282,7 +267,7 @@ async fn download_resources_honors_max_concurrent_downloads_cap() {
 
     let start = Instant::now();
     let results = client
-        .download_resources(&resources, Some(tmp.path()))
+        .download_distributions(&distributions, Some(tmp.path()))
         .await;
     let elapsed = start.elapsed();
 
@@ -290,8 +275,6 @@ async fn download_resources_honors_max_concurrent_downloads_cap() {
         assert!(r.is_ok(), "every download must succeed: {r:?}");
     }
 
-    // Lower bound: two sequential batches of 2 = ~2x the per-request delay,
-    // minus a safety margin for scheduling. Use 1.5x to stay robust.
     let min_expected = per_request_delay.mul_f32(1.5);
     assert!(
         elapsed >= min_expected,
@@ -299,9 +282,6 @@ async fn download_resources_honors_max_concurrent_downloads_cap() {
          (proves concurrency is bounded), got {elapsed:?}"
     );
 
-    // Upper bound: well under full serialization (4x delay). Allows generous
-    // headroom for CI jitter while still catching a regression that forces
-    // serial execution.
     let max_expected = per_request_delay.mul_f32(3.5);
     assert!(
         elapsed < max_expected,

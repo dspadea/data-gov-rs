@@ -1,66 +1,75 @@
-use data_gov::{DataGovClient, ckan::models::Package};
+use data_gov::DataGovClient;
+use data_gov::catalog::models::SearchHit;
 
 use super::{
     color_blue, color_blue_bold, color_bold, color_dimmed, color_green, color_green_bold,
     color_yellow, color_yellow_bold,
 };
 
-/// Print package details (shared between REPL and CLI modes)
-pub fn print_package_details(package: &Package) {
+/// Print dataset details (shared between REPL and CLI modes).
+pub fn print_package_details(hit: &SearchHit) {
     println!("\n{}", color_blue_bold("📦 Dataset Details"));
-    println!("{}: {}", color_bold("Name"), color_yellow(&package.name));
+    if let Some(slug) = &hit.slug {
+        println!("{}: {}", color_bold("Slug"), color_yellow(slug));
+    }
 
-    if let Some(title) = &package.title {
+    if let Some(title) = &hit.title {
         println!("{}: {}", color_bold("Title"), title);
     }
 
-    if let Some(notes) = &package.notes {
+    if let Some(description) = &hit.description {
         println!("\n{}: ", color_bold("Description"));
-        println!("{}", color_dimmed(notes));
+        println!("{}", color_dimmed(description));
     }
 
-    if let Some(license_title) = &package.license_title {
+    if let Some(dcat) = &hit.dcat
+        && let Some(license) = &dcat.license
+    {
+        println!("\n{}: {}", color_bold("License"), color_green(license));
+    }
+
+    if let Some(dcat) = &hit.dcat
+        && let Some(contact) = &dcat.contact_point
+        && let Some(name) = &contact.fn_
+    {
+        println!("{}: {}", color_bold("Contact"), name);
+    }
+
+    if let Some(org) = &hit.organization
+        && let Some(name) = &org.name
+    {
+        println!("{}: {}", color_bold("Organization"), name);
+    }
+
+    let distributions = hit
+        .dcat
+        .as_ref()
+        .map(DataGovClient::get_downloadable_distributions)
+        .unwrap_or_default();
+
+    if !distributions.is_empty() {
         println!(
-            "\n{}: {}",
-            color_bold("License"),
-            color_green(license_title)
-        );
-    }
-
-    if let Some(author) = &package.author {
-        println!("{}: {}", color_bold("Author"), author);
-    }
-
-    if let Some(maintainer) = &package.maintainer {
-        println!("{}: {}", color_bold("Maintainer"), maintainer);
-    }
-
-    // Display resources
-    let resources = DataGovClient::get_downloadable_resources(package);
-    if !resources.is_empty() {
-        println!(
-            "\n{} {} downloadable resources:",
+            "\n{} {} downloadable distributions:",
             color_bold("📁"),
-            resources.len()
+            distributions.len()
         );
 
-        for (i, resource) in resources.iter().enumerate() {
-            let name = resource.name.as_deref().unwrap_or("Unnamed");
-            let format = resource.format.as_deref().unwrap_or("Unknown");
-            let size = resource
-                .size
-                .map(|s| format!(" ({})", s))
-                .unwrap_or_default();
+        for (i, dist) in distributions.iter().enumerate() {
+            let title = dist.title.as_deref().unwrap_or("Unnamed");
+            let format = dist
+                .format
+                .as_deref()
+                .or(dist.media_type.as_deref())
+                .unwrap_or("Unknown");
 
             println!(
-                "  {}. {} {} {}",
+                "  {}. {} {}",
                 color_blue_bold(&i.to_string()),
-                color_yellow(name),
-                color_green(&format!("[{}]", format)),
-                color_dimmed(&size)
+                color_yellow(title),
+                color_green(&format!("[{format}]")),
             );
 
-            if let Some(desc) = &resource.description
+            if let Some(desc) = &dist.description
                 && !desc.is_empty()
             {
                 let truncated = if desc.chars().count() > 80 {
@@ -73,24 +82,29 @@ pub fn print_package_details(package: &Package) {
             }
         }
 
-        println!(
-            "\n{} Use 'data-gov download {}' to download all resources",
-            color_bold("💡"),
-            color_yellow(&package.name)
-        );
-        println!(
-            "{} Use 'data-gov download {} <index|name>' to download by index or name",
-            color_bold("💡"),
-            color_yellow(&package.name)
-        );
+        if let Some(slug) = &hit.slug {
+            println!(
+                "\n{} Use 'data-gov download {}' to download all distributions",
+                color_bold("💡"),
+                color_yellow(slug)
+            );
+            println!(
+                "{} Use 'data-gov download {} <index|name>' to download by index or name",
+                color_bold("💡"),
+                color_yellow(slug)
+            );
+        }
     } else {
-        println!("\n{} No downloadable resources found", color_yellow("⚠️"));
+        println!(
+            "\n{} No downloadable distributions found",
+            color_yellow("⚠️")
+        );
     }
 
     println!();
 }
 
-/// Print help for CLI mode
+/// Print help for CLI mode.
 pub fn print_cli_help() {
     println!("\n{}", color_blue_bold("📚 CLI Mode Commands"));
     println!();
@@ -102,13 +116,13 @@ pub fn print_cli_help() {
             "search \"climate data\" 20",
         ),
         (
-            "show [dataset_id]",
+            "show [dataset_slug]",
             "Show dataset info (uses active dataset if omitted)",
             "show electric-vehicle-population-data",
         ),
         (
             "download [dataset] [selectors...]",
-            "Download resources (by index or name)",
+            "Download distributions (by index or title)",
             "download electric-vehicle-population-data 0",
         ),
         (
@@ -143,7 +157,7 @@ pub fn print_cli_help() {
     println!();
 }
 
-/// Print help for REPL mode
+/// Print help for REPL mode.
 pub fn print_repl_help() {
     println!("\n{}", color_blue_bold("📚 Available Commands"));
     println!();
@@ -155,13 +169,13 @@ pub fn print_repl_help() {
             "search climate data 20",
         ),
         (
-            "show [dataset_id]",
+            "show [dataset_slug]",
             "Show dataset info (uses active dataset)",
             "show electric-vehicle-population-data",
         ),
         (
             "download [dataset] [selectors...]",
-            "Download resources (by index or name)",
+            "Download distributions (by index or title)",
             "download electric-vehicle-population-data 0",
         ),
         ("cd <path>", "Navigate org/dataset context", "cd epa-gov"),
@@ -217,7 +231,7 @@ pub fn print_repl_help() {
         color_blue("search pollution")
     );
     println!(
-        "  • Download multiple resources: {}",
+        "  • Download multiple distributions: {}",
         color_blue("download \"RDF File\" \"XML File\"")
     );
     println!(
@@ -227,7 +241,7 @@ pub fn print_repl_help() {
         color_green("setdir"),
         color_green("lcd")
     );
-    println!("  • Downloads are organized by dataset name in subdirectories");
+    println!("  • Downloads are organized by dataset slug in subdirectories");
     println!(
         "  • Create scripts with {} for automation",
         color_blue("#!/usr/bin/env data-gov")

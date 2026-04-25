@@ -6,56 +6,58 @@ async fn main() -> Result<(), Box<dyn Error>> {
     println!("🇺🇸 Data.gov Rust Client Demo");
     println!("================================\n");
 
-    // Create a client
     let client = DataGovClient::new()?;
 
-    // 1. Search for datasets
     println!("🔍 Searching for 'climate' datasets...");
-    let search_results = client.search("climate", Some(5), None, None, None).await?;
+    let page = client.search("climate", Some(5), None, None).await?;
 
-    println!("Found {} results:\n", search_results.count.unwrap_or(0));
-
-    if let Some(results) = &search_results.results {
-        for (i, dataset) in results.iter().enumerate() {
-            println!(
-                "{}. {} ({})",
-                i + 1,
-                dataset.title.as_deref().unwrap_or(&dataset.name),
-                dataset.name
-            );
-
-            // Show resource count
-            let resources = DataGovClient::get_downloadable_resources(dataset);
-            println!("   📁 {} downloadable resources", resources.len());
-
-            if let Some(notes) = &dataset.notes {
-                let truncated = if notes.chars().count() > 100 {
-                    let s: String = notes.chars().take(100).collect();
-                    format!("{s}...")
-                } else {
-                    notes.clone()
-                };
-                println!("   📄 {}", truncated);
-            }
-            println!();
-        }
+    if page.after.is_some() {
+        println!(
+            "Found {} results on this page (more available):\n",
+            page.results.len()
+        );
+    } else {
+        println!("Found {} results:\n", page.results.len());
     }
 
-    // 2. Get organizations
+    for (i, hit) in page.results.iter().enumerate() {
+        let slug = hit.slug.as_deref().unwrap_or("(no-slug)");
+        let title = hit.title.as_deref().unwrap_or(slug);
+        println!("{}. {title} ({slug})", i + 1);
+
+        let distribution_count = hit
+            .dcat
+            .as_ref()
+            .map(DataGovClient::get_downloadable_distributions)
+            .map(|d| d.len())
+            .unwrap_or(0);
+        println!("   📁 {distribution_count} downloadable distributions");
+
+        if let Some(description) = &hit.description {
+            let truncated = if description.chars().count() > 100 {
+                let s: String = description.chars().take(100).collect();
+                format!("{s}...")
+            } else {
+                description.clone()
+            };
+            println!("   📄 {truncated}");
+        }
+        println!();
+    }
+
     println!("🏛️  Listing government organizations...");
     let orgs = client.list_organizations(Some(10)).await?;
-    println!("Found {} organizations:", orgs.len());
+    println!("Found {} organization slugs:", orgs.len());
     for (i, org) in orgs.iter().enumerate().take(5) {
-        println!("  {}. {}", i + 1, org);
+        println!("  {}. {org}", i + 1);
     }
     println!();
 
-    // 3. Autocomplete example
-    println!("🔍 Autocomplete for 'energy'...");
+    println!("🔍 Dataset title suggestions for 'energy'...");
     let suggestions = client.autocomplete_datasets("energy", Some(5)).await?;
     println!("Suggestions:");
     for suggestion in suggestions {
-        println!("  • {}", suggestion);
+        println!("  • {suggestion}");
     }
     println!();
 
@@ -65,15 +67,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     println!("Example CLI commands:");
     println!("  data-gov search \"electric vehicle\"");
     println!("  data-gov show electric-vehicle-population-data");
-    println!(
-        "  data-gov download electric-vehicle-population-data 0                           # By index"
-    );
-    println!(
-        "  data-gov download electric-vehicle-population-data \"Comma Separated Values File\"  # By name (quoted)"
-    );
-    println!(
-        "  data-gov download electric-vehicle-population-data json                        # Partial match"
-    );
+    println!("  data-gov download electric-vehicle-population-data 0");
     println!("  data-gov list organizations");
     println!("  data-gov --help");
 

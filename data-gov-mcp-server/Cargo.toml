@@ -7,7 +7,7 @@ edition = "2024"
 description = "MCP Server for AI integration with Data.Gov"
 license = "Apache-2.0"
 repository = "https://github.com/dspadea/data-gov-rs"
-keywords = ["data", "government", "ckan", "mcp", "ai"]
+keywords = ["data", "government", "catalog", "mcp", "ai"]
 categories = []
 authors = ["David Spadea"]
 homepage = "https://github.com/dspadea/data-gov-rs"
@@ -22,7 +22,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
 futures = "0.3"
 data-gov = "0.4.0"
-data-gov-ckan = "0.4.0"
+data-gov-catalog = "0.4.0"
 
 [dev-dependencies]
 wiremock = "0.6"

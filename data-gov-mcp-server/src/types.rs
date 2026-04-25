@@ -1,6 +1,5 @@
 //! JSON-RPC request/response types and MCP parameter structs.
 
-use data_gov_ckan::CkanError;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::{Value, json};
 use thiserror::Error;
@@ -91,11 +90,6 @@ impl From<ServerError> for ResponseError {
                 message: err.to_string(),
                 data: None,
             },
-            ServerError::Ckan(err) => Self {
-                code: -32011,
-                message: err.to_string(),
-                data: None,
-            },
             ServerError::Serialization(err) => Self {
                 code: -32603,
                 message: err.to_string(),
@@ -126,9 +120,6 @@ pub enum ServerError {
     /// High-level data-gov client error.
     #[error(transparent)]
     DataGov(#[from] data_gov::DataGovError),
-    /// Low-level CKAN client error.
-    #[error(transparent)]
-    Ckan(#[from] CkanError),
     /// Serialization error (distinct from parse errors).
     #[error("serialization error: {0}")]
     Serialization(serde_json::Error),
@@ -168,18 +159,16 @@ where
 // ---------------------------------------------------------------------------
 
 /// Parameters for `data_gov.search`.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Default, Deserialize)]
 pub(crate) struct SearchParams {
     #[serde(default)]
     pub query: String,
     #[serde(default)]
     pub limit: Option<i32>,
     #[serde(default)]
-    pub offset: Option<i32>,
+    pub after: Option<String>,
     #[serde(default)]
     pub organization: Option<String>,
-    #[serde(default, rename = "format")]
-    pub format: Option<String>,
     #[serde(default, rename = "organizationContains")]
     pub organization_contains: Option<String>,
 }
@@ -188,8 +177,8 @@ pub(crate) struct SearchParams {
 #[derive(Debug, Serialize)]
 pub(crate) struct DatasetSummary {
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub id: Option<String>,
-    pub name: String,
+    pub identifier: Option<String>,
+    pub slug: String,
     pub title: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub organization: Option<String>,
@@ -203,7 +192,7 @@ pub(crate) struct DatasetSummary {
     pub formats: Vec<String>,
 }
 
-/// Parameters for `data_gov.dataset` and `ckan.packageShow`.
+/// Parameters for `data_gov.dataset`.
 #[derive(Debug, Deserialize)]
 pub(crate) struct DatasetParams {
     pub id: String,
@@ -286,8 +275,8 @@ pub(crate) struct ClientInfoSummary {
 pub(crate) struct DownloadResourcesParams {
     #[serde(rename = "datasetId")]
     pub dataset_id: String,
-    #[serde(default, rename = "resourceIds")]
-    pub resource_ids: Option<Vec<String>>,
+    #[serde(default, rename = "distributionIndexes")]
+    pub distribution_indexes: Option<Vec<usize>>,
     #[serde(default)]
     pub formats: Option<Vec<String>>,
     #[serde(default, rename = "outputDir")]
@@ -301,30 +290,6 @@ pub(crate) struct DownloadResourcesParams {
 pub(crate) struct ListOrganizationsParams {
     #[serde(default)]
     pub limit: Option<i32>,
-}
-
-/// Parameters for `ckan.packageSearch`.
-#[derive(Debug, Default, Deserialize)]
-pub(crate) struct PackageSearchParams {
-    #[serde(default, rename = "query")]
-    pub query: Option<String>,
-    #[serde(default)]
-    pub rows: Option<i32>,
-    #[serde(default)]
-    pub start: Option<i32>,
-    #[serde(default, rename = "filter")]
-    pub filter: Option<String>,
-}
-
-/// Parameters for `ckan.organizationList`.
-#[derive(Debug, Default, Deserialize)]
-pub(crate) struct OrganizationListParams {
-    #[serde(default)]
-    pub sort: Option<String>,
-    #[serde(default)]
-    pub limit: Option<i32>,
-    #[serde(default)]
-    pub offset: Option<i32>,
 }
 
 /// Parameters for `tools/list`.
@@ -347,10 +312,6 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    // -----------------------------------------------------------------------
-    // parse_required_params / parse_optional_params
-    // -----------------------------------------------------------------------
-
     #[test]
     fn parse_required_params_succeeds_with_valid_json() {
         let params = Some(json!({"id": "my-dataset"}));
@@ -368,7 +329,7 @@ mod tests {
                 assert!(msg.contains("test_method"));
                 assert!(msg.contains("missing parameters"));
             }
-            other => panic!("expected InvalidParams, got: {:?}", other),
+            other => panic!("expected InvalidParams, got: {other:?}"),
         }
     }
 
@@ -396,10 +357,6 @@ mod tests {
         let parsed = result.expect("should succeed");
         assert_eq!(parsed.limit, Some(25));
     }
-
-    // -----------------------------------------------------------------------
-    // Response construction
-    // -----------------------------------------------------------------------
 
     #[test]
     fn response_success_has_correct_structure() {
@@ -438,10 +395,6 @@ mod tests {
         assert!(!json_str.contains("\"result\""));
     }
 
-    // -----------------------------------------------------------------------
-    // ResponseError::from(ServerError)  — JSON-RPC error codes
-    // -----------------------------------------------------------------------
-
     #[test]
     fn error_code_invalid_request() {
         let err = ResponseError::from(ServerError::InvalidRequest("bad".into()));
@@ -475,10 +428,6 @@ mod tests {
         assert_eq!(err.code, -32020);
     }
 
-    // -----------------------------------------------------------------------
-    // Request deserialization
-    // -----------------------------------------------------------------------
-
     #[test]
     fn request_deserializes_full_json_rpc() {
         let json_str = r#"{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}"#;
@@ -504,26 +453,20 @@ mod tests {
         assert!(result.is_err());
     }
 
-    // -----------------------------------------------------------------------
-    // SearchParams deserialization
-    // -----------------------------------------------------------------------
-
     #[test]
     fn search_params_all_fields() {
         let val = json!({
             "query": "climate",
             "limit": 10,
-            "offset": 20,
+            "after": "cursor-xyz",
             "organization": "epa-gov",
-            "format": "CSV",
             "organizationContains": "NASA"
         });
         let params: SearchParams = serde_json::from_value(val).expect("should parse");
         assert_eq!(params.query, "climate");
         assert_eq!(params.limit, Some(10));
-        assert_eq!(params.offset, Some(20));
+        assert_eq!(params.after.as_deref(), Some("cursor-xyz"));
         assert_eq!(params.organization.as_deref(), Some("epa-gov"));
-        assert_eq!(params.format.as_deref(), Some("CSV"));
         assert_eq!(params.organization_contains.as_deref(), Some("NASA"));
     }
 
@@ -533,18 +476,15 @@ mod tests {
         let params: SearchParams = serde_json::from_value(val).expect("should parse");
         assert_eq!(params.query, "");
         assert!(params.limit.is_none());
+        assert!(params.after.is_none());
         assert!(params.organization.is_none());
     }
-
-    // -----------------------------------------------------------------------
-    // DatasetSummary serialization
-    // -----------------------------------------------------------------------
 
     #[test]
     fn dataset_summary_skips_empty_formats() {
         let summary = DatasetSummary {
-            id: None,
-            name: "test".to_string(),
+            identifier: None,
+            slug: "test".to_string(),
             title: "Test".to_string(),
             organization: None,
             organization_slug: None,
@@ -553,16 +493,17 @@ mod tests {
             formats: vec![],
         };
         let json = serde_json::to_value(&summary).expect("should serialize");
-        assert!(!json.as_object().unwrap().contains_key("formats"));
-        assert!(!json.as_object().unwrap().contains_key("id"));
-        assert!(!json.as_object().unwrap().contains_key("organization"));
+        let obj = json.as_object().unwrap();
+        assert!(!obj.contains_key("formats"));
+        assert!(!obj.contains_key("identifier"));
+        assert!(!obj.contains_key("organization"));
     }
 
     #[test]
     fn dataset_summary_includes_non_empty_formats() {
         let summary = DatasetSummary {
-            id: Some("abc".to_string()),
-            name: "test".to_string(),
+            identifier: Some("abc".to_string()),
+            slug: "test".to_string(),
             title: "Test".to_string(),
             organization: Some("EPA".to_string()),
             organization_slug: Some("epa-gov".to_string()),
@@ -573,15 +514,11 @@ mod tests {
         let json = serde_json::to_value(&summary).expect("should serialize");
         let obj = json.as_object().unwrap();
         assert!(obj.contains_key("formats"));
-        assert!(obj.contains_key("id"));
+        assert!(obj.contains_key("identifier"));
         assert!(obj.contains_key("organization"));
         assert!(obj.contains_key("organizationSlug"));
         assert_eq!(obj["datasetUrl"], "https://example.com/dataset/test");
     }
-
-    // -----------------------------------------------------------------------
-    // InitializeResult
-    // -----------------------------------------------------------------------
 
     #[test]
     fn initialize_result_without_client_info() {

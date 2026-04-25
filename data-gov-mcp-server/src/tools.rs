@@ -52,7 +52,7 @@ impl ToolResponse {
     }
 }
 
-/// Individual content item within a `ToolResponse`.
+/// Individual content item within a [`ToolResponse`].
 #[derive(Debug, Serialize)]
 #[serde(tag = "type")]
 pub(crate) enum ToolContent {
@@ -92,16 +92,36 @@ pub(crate) static TOOL_SPECS: LazyLock<Vec<ToolSpec>> = LazyLock::new(|| {
         ToolSpec {
             tool_name: "data_gov_search",
             method_name: "data_gov.search",
-            description: "Search datasets on data.gov with optional filters. The query parameter accepts Solr-style search syntax including wildcards (*), phrase matching, and boolean operators (AND, OR, NOT). If you only want to filter by organization or format without a text query, you can omit the query parameter or pass an empty string. The response contains the raw CKAN package_search payload plus a `summaries` array with key dataset metadata.",
+            description: "Search datasets on data.gov. Pagination is cursor-based: the response \
+                          carries an `after` field when more results are available; pass it back \
+                          as `after` on the next call to advance. The response also contains a \
+                          `summaries` array with key dataset metadata.",
             input_schema: json!({
                 "type": "object",
                 "properties": {
-                    "query": {"type": "string", "description": "Full-text search query (supports Solr syntax: wildcards, phrases, boolean operators). Examples: 'climat*', \"\\\"air quality\\\"\", 'climate AND (temperature OR precipitation)'. Optional - can be empty to search by filters only.", "default": ""},
-                    "limit": {"type": "integer", "minimum": 1, "maximum": 1000, "description": "Maximum number of results"},
-                    "offset": {"type": "integer", "minimum": 0, "description": "Result offset for pagination"},
-                    "organization": {"type": "string", "description": "Filter results to a specific organization (e.g., 'sec-gov', 'nasa-gov')"},
-                    "format": {"type": "string", "description": "Filter results by resource format e.g. CSV"},
-                    "organizationContains": {"type": "string", "description": "Case-insensitive substring filter applied to organization slug, organization title, author, or maintainer (e.g., 'NASA')."}
+                    "query": {
+                        "type": "string",
+                        "description": "Full-text query. Can be empty to filter only by organization.",
+                        "default": ""
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 1000,
+                        "description": "Page size."
+                    },
+                    "after": {
+                        "type": "string",
+                        "description": "Opaque pagination cursor returned as `after` on the previous page."
+                    },
+                    "organization": {
+                        "type": "string",
+                        "description": "Filter results by organization slug (e.g. 'nasa', 'epa-gov')."
+                    },
+                    "organizationContains": {
+                        "type": "string",
+                        "description": "Case-insensitive substring filter applied client-side to organization slug, name, and publisher."
+                    }
                 },
                 "additionalProperties": false
             }),
@@ -109,11 +129,15 @@ pub(crate) static TOOL_SPECS: LazyLock<Vec<ToolSpec>> = LazyLock::new(|| {
         ToolSpec {
             tool_name: "data_gov_dataset",
             method_name: "data_gov.dataset",
-            description: "Fetch detailed metadata for a dataset by its slug or UUID. Prefer the URL slug (e.g. 'meteorite-landings') over the UUID — slugs appear in search result `name` fields and in dataset URLs.",
+            description: "Fetch a dataset by its data.gov slug (e.g. 'meteorite-landings'). \
+                          Slugs appear in search results as the `slug` field and in dataset URLs.",
             input_schema: json!({
                 "type": "object",
                 "properties": {
-                    "id": {"type": "string", "description": "Dataset slug (e.g. 'meteorite-landings') or UUID. Use the slug from search results or the dataset URL — do not construct or guess this value."}
+                    "id": {
+                        "type": "string",
+                        "description": "Dataset slug. Use the slug from search results or the dataset URL — do not construct or guess this value."
+                    }
                 },
                 "required": ["id"],
                 "additionalProperties": false
@@ -122,12 +146,13 @@ pub(crate) static TOOL_SPECS: LazyLock<Vec<ToolSpec>> = LazyLock::new(|| {
         ToolSpec {
             tool_name: "data_gov_autocomplete_datasets",
             method_name: "data_gov.autocompleteDatasets",
-            description: "Autocomplete dataset names based on a partial query",
+            description: "Return dataset titles matching a partial query. Implemented as a \
+                          capped full-text search.",
             input_schema: json!({
                 "type": "object",
                 "properties": {
-                    "partial": {"type": "string", "description": "Partial dataset name"},
-                    "limit": {"type": "integer", "minimum": 1, "maximum": 100, "description": "Maximum suggestions to return"}
+                    "partial": {"type": "string", "description": "Partial dataset title or keyword."},
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 100, "description": "Maximum suggestions to return."}
                 },
                 "required": ["partial"],
                 "additionalProperties": false
@@ -136,11 +161,11 @@ pub(crate) static TOOL_SPECS: LazyLock<Vec<ToolSpec>> = LazyLock::new(|| {
         ToolSpec {
             tool_name: "data_gov_list_organizations",
             method_name: "data_gov.listOrganizations",
-            description: "List publishing organizations (agencies) on data.gov",
+            description: "List publishing organizations on data.gov.",
             input_schema: json!({
                 "type": "object",
                 "properties": {
-                    "limit": {"type": "integer", "minimum": 1, "maximum": 1000, "description": "Maximum number of organizations to return"}
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 1000, "description": "Maximum number of organizations to return."}
                 },
                 "additionalProperties": false
             }),
@@ -148,59 +173,40 @@ pub(crate) static TOOL_SPECS: LazyLock<Vec<ToolSpec>> = LazyLock::new(|| {
         ToolSpec {
             tool_name: "data_gov_download_resources",
             method_name: "data_gov.downloadResources",
-            description: "Download one or more dataset resources to the local filesystem. By default, files are saved into a subdirectory named after the dataset slug inside the output directory. Downloaded filenames are taken directly from the resource's name field as provided by the publisher — they may be generic (e.g. 'Comma Separated Values File.csv') when the publisher has not given the resource a meaningful name.",
+            description: "Download one or more DCAT distributions for a dataset to the local \
+                          filesystem. By default, files are saved into a subdirectory named \
+                          after the dataset slug inside the output directory. Distributions \
+                          without a `downloadURL` (API-only access URLs) are skipped. You can \
+                          limit to specific distributions by zero-based index within the \
+                          downloadable list (see `data_gov.dataset` output).",
             input_schema: json!({
                 "type": "object",
                 "properties": {
-                    "datasetId": {"type": "string", "description": "Dataset slug (e.g. 'fireball-and-bolide-reports') or UUID. Use the slug from search results or the dataset URL — do not construct or guess this value."},
-                    "resourceIds": {"type": "array", "items": {"type": "string"}, "description": "Optional list of resource UUIDs to download. If omitted, all resources matching the format filter are downloaded."},
-                    "formats": {"type": "array", "items": {"type": "string"}, "description": "Optional list of resource formats to include (e.g. CSV, JSON). Case-insensitive."},
-                    "outputDir": {"type": "string", "description": "Optional directory to save files. Relative paths resolve against the current working directory. Defaults to the configured download directory."},
-                    "datasetSubdirectory": {"type": "boolean", "description": "Whether to create a dataset-named subdirectory inside the output directory. Defaults to true.", "default": true}
+                    "datasetId": {
+                        "type": "string",
+                        "description": "Dataset slug. Use the slug from search results or the dataset URL — do not construct or guess this value."
+                    },
+                    "distributionIndexes": {
+                        "type": "array",
+                        "items": {"type": "integer", "minimum": 0},
+                        "description": "Optional zero-based indexes into the downloadable distributions list. If omitted, all downloadable distributions matching the format filter are downloaded."
+                    },
+                    "formats": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Optional list of distribution formats to include (e.g. CSV, JSON). Case-insensitive, matched against both `format` and `mediaType`."
+                    },
+                    "outputDir": {
+                        "type": "string",
+                        "description": "Optional directory to save files. Relative paths resolve against the current working directory. Defaults to the configured download directory."
+                    },
+                    "datasetSubdirectory": {
+                        "type": "boolean",
+                        "description": "Whether to create a dataset-named subdirectory inside the output directory.",
+                        "default": true
+                    }
                 },
                 "required": ["datasetId"],
-                "additionalProperties": false
-            }),
-        },
-        ToolSpec {
-            tool_name: "ckan_package_search",
-            method_name: "ckan.packageSearch",
-            description: "Perform a low-level CKAN package_search request with full Solr query syntax support. Use the filter parameter for advanced Solr queries like 'organization:nasa-gov', 'res_format:CSV', or complex queries with AND/OR/NOT operators.",
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "query": {"type": ["string", "null"], "description": "Full-text search query (supports Solr syntax). Examples: 'budget*', \"national parks\""},
-                    "rows": {"type": ["integer", "null"], "minimum": 1, "maximum": 1000, "description": "Number of rows to return"},
-                    "start": {"type": ["integer", "null"], "minimum": 0, "description": "Offset into result set"},
-                    "filter": {"type": ["string", "null"], "description": "Filter query in Solr/CKAN syntax (e.g., 'organization:sec-gov', 'res_format:CSV AND tags:healthcare'). Supports boolean operators, ranges, and fielded queries."}
-                },
-                "additionalProperties": false
-            }),
-        },
-        ToolSpec {
-            tool_name: "ckan_package_show",
-            method_name: "ckan.packageShow",
-            description: "Retrieve detailed metadata for a dataset using the low-level CKAN API. Accepts a dataset slug (e.g. 'meteorite-landings') or UUID.",
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "id": {"type": "string", "description": "Dataset slug (e.g. 'meteorite-landings') or UUID. Use the slug from search results or the dataset URL — do not construct or guess this value."}
-                },
-                "required": ["id"],
-                "additionalProperties": false
-            }),
-        },
-        ToolSpec {
-            tool_name: "ckan_organization_list",
-            method_name: "ckan.organizationList",
-            description: "List CKAN organizations with optional sorting and pagination",
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "sort": {"type": ["string", "null"], "description": "Sort expression e.g. name asc"},
-                    "limit": {"type": ["integer", "null"], "minimum": 1, "maximum": 1000, "description": "Maximum organizations to return"},
-                    "offset": {"type": ["integer", "null"], "minimum": 0, "description": "Offset for pagination"}
-                },
                 "additionalProperties": false
             }),
         },
@@ -214,7 +220,7 @@ mod tests {
 
     #[test]
     fn tool_specs_has_expected_count() {
-        assert_eq!(TOOL_SPECS.len(), 8);
+        assert_eq!(TOOL_SPECS.len(), 5);
     }
 
     #[test]
@@ -263,9 +269,7 @@ mod tests {
 
     #[test]
     fn find_tool_spec_by_known_name() {
-        let spec = find_tool_spec("data_gov_search");
-        assert!(spec.is_some());
-        let spec = spec.unwrap();
+        let spec = find_tool_spec("data_gov_search").unwrap();
         assert_eq!(spec.method_name, "data_gov.search");
     }
 
@@ -276,9 +280,8 @@ mod tests {
 
     #[test]
     fn find_tool_spec_by_method_known() {
-        let spec = find_tool_spec_by_method("ckan.packageSearch");
-        assert!(spec.is_some());
-        assert_eq!(spec.unwrap().tool_name, "ckan_package_search");
+        let spec = find_tool_spec_by_method("data_gov.search").unwrap();
+        assert_eq!(spec.tool_name, "data_gov_search");
     }
 
     #[test]

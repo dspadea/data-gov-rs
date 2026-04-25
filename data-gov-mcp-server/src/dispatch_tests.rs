@@ -1,6 +1,6 @@
 //! Routing tests for [`DataGovMcpServer::dispatch`].
 //!
-//! Verifies the three routing contracts:
+//! Verifies the routing contracts:
 //!
 //! 1. `tools/call` unwraps its nested method name and wraps the result in a
 //!    `ToolResponse` envelope.
@@ -11,10 +11,7 @@
 //!
 //! Plus error-variant contracts for unknown methods and missing params.
 
-use std::sync::Arc;
-
 use data_gov::{DataGovClient, DataGovConfig, OperatingMode};
-use data_gov_ckan::{CkanClient, Configuration as CkanConfiguration};
 use serde_json::{Value, json};
 use wiremock::matchers::{method as wm_method, path as wm_path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -22,34 +19,23 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 use crate::server::DataGovMcpServer;
 use crate::types::ServerError;
 
-/// Build a `DataGovMcpServer` whose internal clients both point at the given
-/// mock URL. Callers mount `Mock`s on the same server before exercising a
-/// dispatch path.
+/// Build a `DataGovMcpServer` whose internal client points at the given mock
+/// URL. Callers mount `Mock`s on the same server before exercising a dispatch
+/// path.
 fn test_server(mock_uri: &str) -> DataGovMcpServer {
-    let ckan_config = Arc::new(CkanConfiguration {
-        base_path: mock_uri.to_string(),
-        user_agent: Some("test/1.0".to_string()),
-        ..Default::default()
-    });
-    let ckan = CkanClient::new(ckan_config);
-
-    let data_gov_config = DataGovConfig::default()
+    let config = DataGovConfig::default()
         .with_base_url(mock_uri)
         .with_mode(OperatingMode::CommandLine)
         .with_user_agent("test/1.0");
-    let data_gov = DataGovClient::with_config(data_gov_config).expect("build data_gov");
+    let data_gov = DataGovClient::with_config(config).expect("build data_gov");
 
     DataGovMcpServer {
         data_gov,
-        ckan,
         portal_base_url: mock_uri.to_string(),
     }
 }
 
 /// Extract the inner JSON payload from a `ToolResponse`-shaped value.
-///
-/// The server wraps tool results as `{ content: [{type:"text",...}, {type:"json", json: ...}] }`.
-/// Tests that assert on the wrapped payload use this to reach the inner JSON.
 fn tool_response_json(value: &Value) -> &Value {
     let content = value
         .get("content")
@@ -64,9 +50,35 @@ fn tool_response_json(value: &Value) -> &Value {
         .expect("json item must have inner 'json' field")
 }
 
-// ---------------------------------------------------------------------------
-// tools/list — not a tool itself, returns raw descriptor list
-// ---------------------------------------------------------------------------
+/// Minimal search response body matching the Catalog API shape.
+fn search_body(slug: &str, title: &str) -> Value {
+    json!({
+        "results": [{
+            "identifier": format!("id:{slug}"),
+            "slug": slug,
+            "title": title,
+            "description": "mock",
+            "publisher": "mock",
+            "organization": {
+                "id": "00000000-0000-0000-0000-000000000000",
+                "name": "Mock Org",
+                "slug": "mock-org",
+                "organization_type": "Federal Government"
+            },
+            "keyword": [],
+            "theme": [],
+            "has_spatial": false,
+            "dcat": {
+                "@type": "dcat:Dataset",
+                "title": title,
+                "description": "mock",
+                "identifier": format!("id:{slug}"),
+                "distribution": []
+            }
+        }],
+        "sort": "relevance"
+    })
+}
 
 #[tokio::test]
 async fn dispatch_tools_list_returns_raw_descriptor_array() {
@@ -78,7 +90,6 @@ async fn dispatch_tools_list_returns_raw_descriptor_array() {
         .await
         .expect("tools/list should succeed with no params");
 
-    // Non-tool methods must not be wrapped in a ToolResponse envelope.
     assert!(
         result.get("content").is_none(),
         "tools/list result must not be wrapped in a ToolResponse"
@@ -93,7 +104,6 @@ async fn dispatch_tools_list_returns_raw_descriptor_array() {
         "tools/list must return at least one tool"
     );
 
-    // Every entry must have the descriptor fields clients rely on.
     for tool in tools {
         assert!(tool.get("name").is_some(), "tool missing name: {tool}");
         assert!(
@@ -107,22 +117,13 @@ async fn dispatch_tools_list_returns_raw_descriptor_array() {
     }
 }
 
-// ---------------------------------------------------------------------------
-// tools/call — unwrap, dispatch, wrap
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn dispatch_tools_call_unwraps_and_wraps_response() {
     let mock = MockServer::start().await;
     Mock::given(wm_method("GET"))
-        .and(wm_path("/action/package_search"))
+        .and(wm_path("/search"))
         .and(query_param("q", "climate"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "help": "", "success": true,
-            "result": { "count": 1, "results": [
-                {"name": "ds-1", "title": "DS1", "id": "00000000-0000-0000-0000-000000000001"}
-            ]}
-        })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(search_body("ds-1", "DS1")))
         .expect(1)
         .mount(&mock)
         .await;
@@ -140,9 +141,21 @@ async fn dispatch_tools_call_unwraps_and_wraps_response() {
         .await
         .expect("tools/call should succeed");
 
-    // Must be wrapped: the outer value has `content`, the inner JSON has `count`.
     let inner = tool_response_json(&result);
-    assert_eq!(inner.get("count").and_then(Value::as_i64), Some(1));
+    let results = inner
+        .get("results")
+        .and_then(Value::as_array)
+        .expect("inner payload must carry results array");
+    assert_eq!(results.len(), 1);
+    let summaries = inner
+        .get("summaries")
+        .and_then(Value::as_array)
+        .expect("handler must attach summaries");
+    assert_eq!(summaries.len(), 1);
+    assert_eq!(
+        summaries[0].get("slug").and_then(Value::as_str),
+        Some("ds-1")
+    );
 }
 
 #[tokio::test]
@@ -159,9 +172,7 @@ async fn dispatch_tools_call_unknown_tool_returns_invalid_method() {
         .expect_err("unknown tool must fail");
 
     match err {
-        ServerError::InvalidMethod(name) => {
-            assert_eq!(name, "not_a_real_tool");
-        }
+        ServerError::InvalidMethod(name) => assert_eq!(name, "not_a_real_tool"),
         other => panic!("expected InvalidMethod, got {other:?}"),
     }
 }
@@ -179,24 +190,15 @@ async fn dispatch_tools_call_missing_params_returns_invalid_params() {
     assert!(matches!(err, ServerError::InvalidParams(_)));
 }
 
-// ---------------------------------------------------------------------------
-// Direct tool-method calls are also wrapped
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn dispatch_direct_tool_method_wraps_response() {
     let mock = MockServer::start().await;
     Mock::given(wm_method("GET"))
-        .and(wm_path("/action/package_show"))
-        .and(query_param("id", "my-dataset"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "help": "", "success": true,
-            "result": {
-                "name": "my-dataset",
-                "title": "My Dataset",
-                "id": "00000000-0000-0000-0000-000000000001"
-            }
-        })))
+        .and(wm_path("/search"))
+        .and(query_param("slug", "my-dataset"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(search_body("my-dataset", "My Dataset")),
+        )
         .expect(1)
         .mount(&mock)
         .await;
@@ -210,15 +212,11 @@ async fn dispatch_direct_tool_method_wraps_response() {
 
     let inner = tool_response_json(&result);
     assert_eq!(
-        inner.get("name").and_then(Value::as_str),
+        inner.get("slug").and_then(Value::as_str),
         Some("my-dataset"),
-        "wrapped payload should carry the mocked dataset name"
+        "wrapped payload should carry the mocked dataset slug"
     );
 }
-
-// ---------------------------------------------------------------------------
-// Unknown methods
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn dispatch_unknown_method_returns_invalid_method() {
@@ -235,10 +233,6 @@ async fn dispatch_unknown_method_returns_invalid_method() {
         other => panic!("expected InvalidMethod, got {other:?}"),
     }
 }
-
-// ---------------------------------------------------------------------------
-// Non-tool method: initialize
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn dispatch_initialize_returns_raw_response() {
@@ -265,56 +259,14 @@ async fn dispatch_initialize_returns_raw_response() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// Representative routing to upstream clients
-// ---------------------------------------------------------------------------
-
-#[tokio::test]
-async fn dispatch_ckan_package_search_routes_to_ckan_client() {
-    let mock = MockServer::start().await;
-    Mock::given(wm_method("GET"))
-        .and(wm_path("/action/package_search"))
-        .and(query_param("q", "routing-probe"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "help": "", "success": true,
-            "result": { "count": 7, "results": [] }
-        })))
-        .expect(1)
-        .mount(&mock)
-        .await;
-
-    let server = test_server(&mock.uri());
-
-    let result = server
-        .dispatch(
-            "ckan.packageSearch",
-            Some(json!({ "query": "routing-probe" })),
-        )
-        .await
-        .expect("ckan.packageSearch should succeed");
-
-    let inner = tool_response_json(&result);
-    assert_eq!(inner.get("count").and_then(Value::as_i64), Some(7));
-}
-
 #[tokio::test]
 async fn dispatch_data_gov_search_attaches_summaries() {
-    // data_gov.search wraps raw package_search and post-processes results into
-    // a `summaries` array. Verifies the handler, not just the router.
     let mock = MockServer::start().await;
     Mock::given(wm_method("GET"))
-        .and(wm_path("/action/package_search"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "help": "", "success": true,
-            "result": {
-                "count": 1,
-                "results": [{
-                    "name": "summary-probe",
-                    "title": "Summary Probe",
-                    "id": "00000000-0000-0000-0000-000000000042"
-                }]
-            }
-        })))
+        .and(wm_path("/search"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(search_body("summary-probe", "Summary Probe")),
+        )
         .expect(1)
         .mount(&mock)
         .await;
@@ -333,34 +285,34 @@ async fn dispatch_data_gov_search_attaches_summaries() {
         .expect("data_gov.search must produce a summaries array");
     assert_eq!(summaries.len(), 1);
     assert_eq!(
-        summaries[0].get("name").and_then(Value::as_str),
+        summaries[0].get("slug").and_then(Value::as_str),
         Some("summary-probe")
     );
 }
 
-// ---------------------------------------------------------------------------
-// Security: path traversal in downloadResources is caught by the handler,
-// not just by the resolve_output_dir helper.
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn dispatch_download_resources_rejects_parent_traversal_in_output_dir() {
     let mock = MockServer::start().await;
+    // The handler validates distributions and output_dir after fetching the
+    // dataset. Include at least one downloadable distribution so the traversal
+    // check is the one that fires.
     Mock::given(wm_method("GET"))
-        .and(wm_path("/action/package_show"))
+        .and(wm_path("/search"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "help": "", "success": true,
-            "result": {
-                "name": "some-dataset",
+            "results": [{
+                "slug": "some-dataset",
                 "title": "Some Dataset",
-                "id": "00000000-0000-0000-0000-000000000001",
-                "resources": [{
-                    "id": "11111111-1111-1111-1111-111111111111",
-                    "url": "http://localhost:1/file.csv",
-                    "format": "CSV",
-                    "name": "file"
-                }]
-            }
+                "dcat": {
+                    "@type": "dcat:Dataset",
+                    "title": "Some Dataset",
+                    "distribution": [{
+                        "@type": "dcat:Distribution",
+                        "downloadURL": "http://localhost:1/file.csv",
+                        "mediaType": "text/csv"
+                    }]
+                }
+            }],
+            "sort": "relevance"
         })))
         .mount(&mock)
         .await;

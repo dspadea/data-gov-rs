@@ -1,6 +1,7 @@
 //! Method dispatch and handler logic for MCP server requests.
 
 use data_gov::DataGovClient;
+use data_gov::catalog::models::{Distribution, SearchHit};
 use serde_json::{Value, json};
 use std::collections::HashSet;
 use std::path::PathBuf;
@@ -86,32 +87,6 @@ impl DataGovMcpServer {
                 Ok(serde_json::to_value(result).map_err(ServerError::Serialization)?)
             }
             "data_gov.downloadResources" => self.handle_download_resources(method, params).await,
-            "ckan.packageSearch" => {
-                let params: PackageSearchParams = parse_optional_params(method, params)?;
-                let result = self
-                    .ckan
-                    .package_search(
-                        params.query.as_deref(),
-                        params.rows,
-                        params.start,
-                        params.filter.as_deref(),
-                    )
-                    .await?;
-                Ok(serde_json::to_value(result).map_err(ServerError::Serialization)?)
-            }
-            "ckan.packageShow" => {
-                let params: DatasetParams = parse_required_params(method, params)?;
-                let result = self.ckan.package_show(&params.id).await?;
-                Ok(serde_json::to_value(result).map_err(ServerError::Serialization)?)
-            }
-            "ckan.organizationList" => {
-                let params: OrganizationListParams = parse_optional_params(method, params)?;
-                let result = self
-                    .ckan
-                    .organization_list(params.sort.as_deref(), params.limit, params.offset)
-                    .await?;
-                Ok(serde_json::to_value(result).map_err(ServerError::Serialization)?)
-            }
             other => Err(ServerError::InvalidMethod(other.to_string())),
         }
     }
@@ -123,14 +98,13 @@ impl DataGovMcpServer {
         params: Option<Value>,
     ) -> Result<Value, ServerError> {
         let params: SearchParams = parse_required_params(method, params)?;
-        let mut result = self
+        let mut page = self
             .data_gov
             .search(
                 &params.query,
                 params.limit,
-                params.offset,
+                params.after.as_deref(),
                 params.organization.as_deref(),
-                params.format.as_deref(),
             )
             .await?;
 
@@ -142,30 +116,17 @@ impl DataGovMcpServer {
                 Some(trimmed.to_ascii_lowercase())
             }
         }) {
-            if let Some(results) = result.results.as_mut() {
-                results.retain(|package| Self::matches_organization_filter(package, &filter));
-            }
-            result.count = Some(
-                result
-                    .results
-                    .as_ref()
-                    .map(|packages| packages.len() as i32)
-                    .unwrap_or(0),
-            );
+            page.results
+                .retain(|hit| Self::matches_organization_filter(hit, &filter));
         }
 
-        let summaries = result
+        let summaries: Vec<_> = page
             .results
-            .as_ref()
-            .map(|packages| {
-                packages
-                    .iter()
-                    .map(|package| self.to_dataset_summary(package))
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_default();
+            .iter()
+            .map(|hit| self.to_dataset_summary(hit))
+            .collect();
 
-        let mut value = serde_json::to_value(&result).map_err(ServerError::Serialization)?;
+        let mut value = serde_json::to_value(&page).map_err(ServerError::Serialization)?;
         if let Value::Object(ref mut map) = value {
             map.insert(
                 "summaries".to_string(),
@@ -183,82 +144,89 @@ impl DataGovMcpServer {
         params: Option<Value>,
     ) -> Result<Value, ServerError> {
         let params: DownloadResourcesParams = parse_required_params(method, params)?;
-        let dataset = self.data_gov.get_dataset(&params.dataset_id).await?;
-
-        let mut missing_resource_ids: Vec<String> = Vec::new();
-        let mut unavailable_formats: Vec<String> = Vec::new();
 
         if params
-            .resource_ids
+            .distribution_indexes
             .as_ref()
             .is_some_and(|ids| ids.is_empty())
         {
             return Err(ServerError::InvalidParams(format!(
-                "{method}: resourceIds cannot be empty"
+                "{method}: distributionIndexes cannot be empty"
             )));
         }
 
-        let mut resources = DataGovClient::get_downloadable_resources(&dataset);
+        let hit = self.data_gov.get_dataset(&params.dataset_id).await?;
+        let slug = hit.slug.clone().ok_or_else(|| {
+            ServerError::InvalidParams(format!(
+                "{method}: dataset returned without a slug; cannot derive download subdirectory"
+            ))
+        })?;
 
-        if let Some(resource_ids) = params.resource_ids.as_ref() {
-            let available_ids: HashSet<String> = resources
-                .iter()
-                .filter_map(|resource| {
-                    resource
-                        .id
-                        .as_ref()
-                        .map(|uuid| uuid.to_string().to_ascii_lowercase())
-                })
-                .collect();
+        let dcat = hit.dcat.as_ref().ok_or_else(|| {
+            ServerError::InvalidParams(format!(
+                "{method}: dataset has no DCAT metadata; cannot enumerate distributions"
+            ))
+        })?;
 
-            let mut id_filter = HashSet::with_capacity(resource_ids.len());
-            for id in resource_ids {
-                let trimmed = id.trim();
-                let normalized = trimmed.to_ascii_lowercase();
-                if !available_ids.contains(&normalized) {
-                    missing_resource_ids.push(trimmed.to_string());
+        let all_downloadable = DataGovClient::get_downloadable_distributions(dcat);
+
+        let mut out_of_range: Vec<usize> = Vec::new();
+        let mut unavailable_formats: Vec<String> = Vec::new();
+
+        let mut distributions: Vec<Distribution> =
+            if let Some(indexes) = params.distribution_indexes.as_ref() {
+                let mut picked = Vec::with_capacity(indexes.len());
+                let mut seen = HashSet::new();
+                for &idx in indexes {
+                    if !seen.insert(idx) {
+                        continue;
+                    }
+                    match all_downloadable.get(idx) {
+                        Some(dist) => picked.push(dist.clone()),
+                        None => out_of_range.push(idx),
+                    }
                 }
-                id_filter.insert(normalized);
-            }
-
-            resources.retain(|resource| {
-                resource
-                    .id
-                    .as_ref()
-                    .is_some_and(|uuid| id_filter.contains(&uuid.to_string().to_ascii_lowercase()))
-            });
-        }
+                picked
+            } else {
+                all_downloadable.clone()
+            };
 
         if let Some(formats) = params.formats.as_ref() {
-            let available_formats: HashSet<String> = resources
+            let available_formats: HashSet<String> = distributions
                 .iter()
-                .filter_map(|resource| resource.format.as_ref().map(|fmt| fmt.to_ascii_lowercase()))
+                .flat_map(|d| {
+                    [d.format.as_deref(), d.media_type.as_deref()]
+                        .into_iter()
+                        .flatten()
+                        .map(|s| s.to_ascii_lowercase())
+                        .collect::<Vec<_>>()
+                })
                 .collect();
 
             let mut format_filter = HashSet::with_capacity(formats.len());
             for fmt in formats {
-                let trimmed = fmt.trim();
-                let normalized = trimmed.to_ascii_lowercase();
+                let normalized = fmt.trim().to_ascii_lowercase();
                 if !available_formats.contains(&normalized) {
-                    unavailable_formats.push(trimmed.to_string());
+                    unavailable_formats.push(fmt.trim().to_string());
                 }
                 format_filter.insert(normalized);
             }
 
-            resources.retain(|resource| {
-                resource
-                    .format
-                    .as_ref()
-                    .is_some_and(|fmt| format_filter.contains(&fmt.to_ascii_lowercase()))
+            distributions.retain(|d| {
+                let fmt = d.format.as_deref().map(str::to_ascii_lowercase);
+                let media = d.media_type.as_deref().map(str::to_ascii_lowercase);
+                fmt.is_some_and(|f| format_filter.contains(&f))
+                    || media.is_some_and(|m| format_filter.contains(&m))
             });
         }
 
-        if resources.is_empty() {
-            let mut message = format!("{method}: no matching downloadable resources");
-            if !missing_resource_ids.is_empty() {
+        if distributions.is_empty() {
+            let mut message = format!("{method}: no matching downloadable distributions");
+            if !out_of_range.is_empty() {
+                let as_strings: Vec<String> = out_of_range.iter().map(|i| i.to_string()).collect();
                 message.push_str(&format!(
-                    "; missing resourceIds: {}",
-                    missing_resource_ids.join(", ")
+                    "; out-of-range distributionIndexes: {}",
+                    as_strings.join(", ")
                 ));
             }
             if !unavailable_formats.is_empty() {
@@ -275,9 +243,7 @@ impl DataGovMcpServer {
         }
 
         let use_dataset_subdir = params.dataset_subdirectory.unwrap_or(true);
-
-        // Sanitize dataset name to prevent path traversal attacks
-        let safe_dataset_slug = data_gov::util::sanitize_path_component(&dataset.name);
+        let safe_dataset_slug = data_gov::util::sanitize_path_component(&slug);
 
         let resolved_output_dir = resolve_output_dir(
             params.output_dir.as_deref(),
@@ -290,23 +256,22 @@ impl DataGovMcpServer {
 
         let download_results = self
             .data_gov
-            .download_resources(&resources, Some(output_dir.as_path()))
+            .download_distributions(&distributions, Some(output_dir.as_path()))
             .await;
 
-        let mut downloads = Vec::with_capacity(resources.len());
+        let mut downloads = Vec::with_capacity(distributions.len());
         let mut success_count = 0usize;
         let mut error_count = 0usize;
 
-        for (resource, result) in resources.iter().zip(download_results) {
-            let resource_id = resource.id.as_ref().map(|id| id.to_string());
+        for (distribution, result) in distributions.iter().zip(download_results) {
             match result {
                 Ok(path) => {
                     success_count += 1;
                     downloads.push(json!({
-                        "resourceId": resource_id,
-                        "name": resource.name,
-                        "format": resource.format,
-                        "url": resource.url,
+                        "title": distribution.title,
+                        "format": distribution.format,
+                        "mediaType": distribution.media_type,
+                        "url": distribution.download_url,
                         "status": "success",
                         "path": path.to_string_lossy(),
                     }));
@@ -314,10 +279,10 @@ impl DataGovMcpServer {
                 Err(err) => {
                     error_count += 1;
                     downloads.push(json!({
-                        "resourceId": resource_id,
-                        "name": resource.name,
-                        "format": resource.format,
-                        "url": resource.url,
+                        "title": distribution.title,
+                        "format": distribution.format,
+                        "mediaType": distribution.media_type,
+                        "url": distribution.download_url,
                         "status": "error",
                         "error": err.to_string(),
                     }));
@@ -327,9 +292,9 @@ impl DataGovMcpServer {
 
         let mut summary = json!({
             "dataset": {
-                "id": dataset.id.as_ref().map(|id| id.to_string()),
-                "name": &dataset.name,
-                "title": &dataset.title,
+                "slug": slug,
+                "title": hit.title,
+                "identifier": hit.identifier,
             },
             "downloadDirectory": output_dir.to_string_lossy(),
             "downloadCount": downloads.len(),
@@ -339,13 +304,16 @@ impl DataGovMcpServer {
             "downloads": downloads,
         });
 
-        if !missing_resource_ids.is_empty() {
-            let values = missing_resource_ids
+        if !out_of_range.is_empty() {
+            let values = out_of_range
                 .into_iter()
-                .map(Value::String)
+                .map(|i| Value::from(i as u64))
                 .collect::<Vec<_>>();
             if let Some(obj) = summary.as_object_mut() {
-                obj.insert("missingResourceIds".to_string(), Value::Array(values));
+                obj.insert(
+                    "outOfRangeDistributionIndexes".to_string(),
+                    Value::Array(values),
+                );
             }
         }
 
@@ -362,65 +330,54 @@ impl DataGovMcpServer {
         Ok(summary)
     }
 
-    /// Check whether a package matches an organization-contains filter.
-    fn matches_organization_filter(package: &data_gov_ckan::models::Package, needle: &str) -> bool {
-        let org_match = package.organization.as_ref().is_some_and(|org| {
-            org.name.to_ascii_lowercase().contains(needle)
-                || org
-                    .title
-                    .as_deref()
-                    .is_some_and(|title| title.to_ascii_lowercase().contains(needle))
-        });
+    /// Check whether a search hit matches an organization-contains filter.
+    fn matches_organization_filter(hit: &SearchHit, needle: &str) -> bool {
+        let org_slug_match = hit
+            .organization
+            .as_ref()
+            .and_then(|o| o.slug.as_deref())
+            .is_some_and(|slug| slug.to_ascii_lowercase().contains(needle));
 
-        let owner_match = package
-            .owner_org
+        let org_name_match = hit
+            .organization
+            .as_ref()
+            .and_then(|o| o.name.as_deref())
+            .is_some_and(|name| name.to_ascii_lowercase().contains(needle));
+
+        let publisher_match = hit
+            .publisher
             .as_deref()
-            .is_some_and(|owner| owner.to_ascii_lowercase().contains(needle));
+            .is_some_and(|p| p.to_ascii_lowercase().contains(needle));
 
-        let author_match = package
-            .author
-            .as_deref()
-            .is_some_and(|author| author.to_ascii_lowercase().contains(needle));
-
-        let maintainer_match = package
-            .maintainer
-            .as_deref()
-            .is_some_and(|m| m.to_ascii_lowercase().contains(needle));
-
-        org_match || owner_match || author_match || maintainer_match
+        org_slug_match || org_name_match || publisher_match
     }
 
-    /// Build a compact `DatasetSummary` from a full CKAN package.
-    pub(crate) fn to_dataset_summary(
-        &self,
-        package: &data_gov_ckan::models::Package,
-    ) -> DatasetSummary {
-        let title = package
+    /// Build a compact [`DatasetSummary`] from a full search hit.
+    pub(crate) fn to_dataset_summary(&self, hit: &SearchHit) -> DatasetSummary {
+        let slug = hit.slug.clone().unwrap_or_default();
+        let title = hit
             .title
             .as_ref()
-            .map(|value| value.trim())
-            .filter(|value| !value.is_empty())
-            .map(|value| value.to_string())
-            .unwrap_or_else(|| package.name.clone());
+            .map(|t| t.trim())
+            .filter(|t| !t.is_empty())
+            .map(str::to_string)
+            .unwrap_or_else(|| slug.clone());
 
-        let organization_slug = package
+        let organization_slug = hit.organization.as_ref().and_then(|o| o.slug.clone());
+        let organization = hit
             .organization
             .as_ref()
-            .map(|org| org.name.clone())
-            .or_else(|| package.owner_org.clone());
-
-        let organization = package
-            .organization
-            .as_ref()
-            .and_then(|org| org.title.clone())
-            .or_else(|| organization_slug.clone());
+            .and_then(|o| o.name.clone())
+            .or_else(|| organization_slug.clone())
+            .or_else(|| hit.publisher.clone());
 
         let mut formats: Vec<String> = Vec::new();
         let mut seen: HashSet<String> = HashSet::new();
-        if let Some(resources) = package.resources.as_ref() {
-            for resource in resources {
-                if let Some(format) = resource.format.as_ref() {
-                    let trimmed = format.trim();
+        if let Some(dcat) = hit.dcat.as_ref() {
+            for dist in &dcat.distribution {
+                let raw = dist.format.as_deref().or(dist.media_type.as_deref());
+                if let Some(raw) = raw {
+                    let trimmed = raw.trim();
                     if trimmed.is_empty() {
                         continue;
                     }
@@ -433,23 +390,22 @@ impl DataGovMcpServer {
         }
 
         DatasetSummary {
-            id: package.id.as_ref().map(|id| id.to_string()),
-            name: package.name.clone(),
+            identifier: hit.identifier.clone(),
+            slug: slug.clone(),
             title,
             organization,
             organization_slug,
-            description: package.notes.clone(),
-            dataset_url: self.dataset_url(&package.name),
+            description: hit.description.clone(),
+            dataset_url: self.dataset_url(&slug),
             formats,
         }
     }
 
     /// Build the portal URL for a dataset.
-    pub(crate) fn dataset_url(&self, dataset_name: &str) -> String {
+    pub(crate) fn dataset_url(&self, slug: &str) -> String {
         format!(
-            "{}/dataset/{}",
+            "{}/dataset/{slug}",
             self.portal_base_url.trim_end_matches('/'),
-            dataset_name
         )
     }
 }
@@ -508,7 +464,7 @@ mod tests {
             ServerError::InvalidParams(msg) => {
                 assert!(
                     msg.contains(".."),
-                    "error message should name the '..' component; got: {msg}"
+                    "error should name the '..' component; got: {msg}"
                 );
             }
             other => panic!("expected InvalidParams, got: {other:?}"),
@@ -517,8 +473,6 @@ mod tests {
 
     #[test]
     fn resolve_output_dir_rejects_embedded_parent_traversal() {
-        // An absolute-looking prefix does not make '..' safe — filesystem
-        // resolution could still escape upward via the parent segment.
         let err = resolve_output_dir(Some("/tmp/ok/../escape"), false, "slug")
             .expect_err("embedded '..' must be rejected");
         assert!(matches!(err, ServerError::InvalidParams(_)));
@@ -526,7 +480,6 @@ mod tests {
 
     #[test]
     fn resolve_output_dir_rejects_windows_style_parent_traversal() {
-        // The substring check is OS-agnostic; backslash separators still match.
         let err = resolve_output_dir(Some("C:\\Users\\me\\..\\other"), false, "slug")
             .expect_err("'..' inside backslash path must be rejected");
         assert!(matches!(err, ServerError::InvalidParams(_)));
@@ -553,10 +506,7 @@ mod tests {
         let resolved = resolve_output_dir(Some("mydir"), false, "slug")
             .expect("should succeed")
             .expect("should produce path");
-        assert!(
-            resolved.is_absolute(),
-            "relative input should become absolute, got {resolved:?}"
-        );
+        assert!(resolved.is_absolute());
         assert!(resolved.ends_with("mydir"));
     }
 }
