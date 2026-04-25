@@ -70,11 +70,12 @@ impl DataGovMcpServer {
             "data_gov.search" => self.handle_search(method, params).await,
             "data_gov.dataset" => {
                 let params: DatasetParams = parse_required_params(method, params)?;
-                let result = self.data_gov.get_dataset(&params.id).await?;
+                let result = self.data_gov.get_dataset(&params.slug).await?;
                 Ok(serde_json::to_value(result).map_err(ServerError::Serialization)?)
             }
             "data_gov.autocompleteDatasets" => {
                 let params: AutocompleteParams = parse_required_params(method, params)?;
+                validate_limit(method, params.limit, 1, 100)?;
                 let result = self
                     .data_gov
                     .autocomplete_datasets(&params.partial, params.limit)
@@ -83,6 +84,7 @@ impl DataGovMcpServer {
             }
             "data_gov.listOrganizations" => {
                 let params: ListOrganizationsParams = parse_optional_params(method, params)?;
+                validate_limit(method, params.limit, 1, 1000)?;
                 let result = self.data_gov.list_organizations(params.limit).await?;
                 Ok(serde_json::to_value(result).map_err(ServerError::Serialization)?)
             }
@@ -98,6 +100,7 @@ impl DataGovMcpServer {
         params: Option<Value>,
     ) -> Result<Value, ServerError> {
         let params: SearchParams = parse_required_params(method, params)?;
+        validate_limit(method, params.limit, 1, 1000)?;
         let mut page = self
             .data_gov
             .search(
@@ -192,31 +195,40 @@ impl DataGovMcpServer {
             };
 
         if let Some(formats) = params.formats.as_ref() {
-            let available_formats: HashSet<String> = distributions
+            // Match user filters as case-insensitive substrings of either
+            // `format` or `mediaType`. DCAT-US 3 distributions usually leave
+            // `format` empty and populate `mediaType` with a full MIME type
+            // (e.g., "application/json"), so users typing "JSON" should still
+            // match. Empty filter strings are dropped — they would otherwise
+            // match every distribution.
+            let normalized_filters: Vec<String> = formats
                 .iter()
-                .flat_map(|d| {
-                    [d.format.as_deref(), d.media_type.as_deref()]
-                        .into_iter()
-                        .flatten()
-                        .map(|s| s.to_ascii_lowercase())
-                        .collect::<Vec<_>>()
-                })
+                .map(|f| f.trim().to_ascii_lowercase())
+                .filter(|f| !f.is_empty())
                 .collect();
 
-            let mut format_filter = HashSet::with_capacity(formats.len());
-            for fmt in formats {
-                let normalized = fmt.trim().to_ascii_lowercase();
-                if !available_formats.contains(&normalized) {
-                    unavailable_formats.push(fmt.trim().to_string());
+            let distribution_matches = |d: &Distribution, filter: &str| -> bool {
+                d.format
+                    .as_deref()
+                    .is_some_and(|f| f.to_ascii_lowercase().contains(filter))
+                    || d.media_type
+                        .as_deref()
+                        .is_some_and(|m| m.to_ascii_lowercase().contains(filter))
+            };
+
+            for (raw, normalized) in formats.iter().zip(normalized_filters.iter()) {
+                if !distributions
+                    .iter()
+                    .any(|d| distribution_matches(d, normalized))
+                {
+                    unavailable_formats.push(raw.trim().to_string());
                 }
-                format_filter.insert(normalized);
             }
 
             distributions.retain(|d| {
-                let fmt = d.format.as_deref().map(str::to_ascii_lowercase);
-                let media = d.media_type.as_deref().map(str::to_ascii_lowercase);
-                fmt.is_some_and(|f| format_filter.contains(&f))
-                    || media.is_some_and(|m| format_filter.contains(&m))
+                normalized_filters
+                    .iter()
+                    .any(|filter| distribution_matches(d, filter))
             });
         }
 
