@@ -111,20 +111,29 @@ maintenance mode (bugfixes and security patches).
 
 ## MCP server (`data-gov-mcp-server`)
 
-JSON-RPC 2.0 over stdin/stdout. Tools currently exposed:
+JSON-RPC 2.0 over stdin/stdout. Tools are invoked via `tools/call` with the
+tool's snake_case `name`. Tools currently exposed:
 
-- `data_gov.search` — cursor-paginated; params `query`, `limit`,
-  `after`, `organization`, `organizationContains` (client-side
-  substring filter on org names)
-- `data_gov.dataset` — DCAT-US 3 metadata by slug
-- `data_gov.autocompleteDatasets` — capped full-text search
-- `data_gov.listOrganizations`
-- `data_gov.downloadResources` — params `datasetId`, optional
-  `outputDir`, optional `formats` filter (matched against `format` AND
-  `mediaType`), optional `distributionIndexes` (zero-based)
+- `data_gov_search` — cursor-paginated; arguments `query`, `limit` (1–1000),
+  `after`, `organization`, `organizationContains` (client-side substring
+  filter on org names)
+- `data_gov_dataset` — DCAT-US 3 metadata. Argument: `slug`
+- `data_gov_autocomplete_datasets` — capped full-text search; arguments
+  `partial`, `limit` (1–100)
+- `data_gov_list_organizations` — argument `limit` (1–1000)
+- `data_gov_download_resources` — arguments `datasetId` (slug), optional
+  `outputDir`, optional `formats` filter (case-insensitive substring match
+  against `format` or `mediaType` — so `"JSON"` matches `application/json`),
+  optional `distributionIndexes` (zero-based)
 
-Plus the MCP lifecycle methods (`initialize`, `tools/list`, `tools/call`,
-`shutdown`). The legacy `ckan.*` tools were removed in 0.4.0.
+Plus the MCP lifecycle methods (`initialize`, `initialized`, `shutdown`,
+`tools/list`, `tools/call`). The legacy `ckan.*` tools were removed in
+0.4.0.
+
+The same tools are also reachable as direct JSON-RPC methods under
+dot-camelCase names (`data_gov.search`, `data_gov.dataset`, etc.), but
+that's a non-MCP back-channel — generated code should always use
+`tools/call name=<snake_case>` so it works with any MCP client.
 
 ## Code-generation guidance
 
