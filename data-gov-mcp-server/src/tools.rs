@@ -134,12 +134,12 @@ pub(crate) static TOOL_SPECS: LazyLock<Vec<ToolSpec>> = LazyLock::new(|| {
             input_schema: json!({
                 "type": "object",
                 "properties": {
-                    "id": {
+                    "slug": {
                         "type": "string",
                         "description": "Dataset slug. Use the slug from search results or the dataset URL — do not construct or guess this value."
                     }
                 },
-                "required": ["id"],
+                "required": ["slug"],
                 "additionalProperties": false
             }),
         },

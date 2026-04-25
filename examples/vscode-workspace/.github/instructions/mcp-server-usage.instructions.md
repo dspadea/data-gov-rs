@@ -16,20 +16,22 @@ When working with data.gov datasets:
    calls. The tool is cursor-paginated — pass the `after` value from the
    previous response to fetch the next page. An optional
    `organizationContains` substring filter is applied client-side.
-2. **Dataset details**: Use `mcp_data-gov_data_gov_dataset` (lookup by slug)
-   instead of curl/wget to fetch DCAT-US 3 metadata.
+2. **Dataset details**: Use `mcp_data-gov_data_gov_dataset` instead of
+   curl/wget to fetch DCAT-US 3 metadata. Argument: `slug` (e.g.,
+   `electric-vehicle-population-data`).
 3. **Listing organizations**: Use
-   `mcp_data-gov_data_gov_listOrganizations`.
-4. **Autocomplete**: Use `mcp_data-gov_data_gov_autocompleteDatasets` for
+   `mcp_data-gov_data_gov_list_organizations`.
+4. **Autocomplete**: Use `mcp_data-gov_data_gov_autocomplete_datasets` for
    dataset title suggestions.
-5. **Downloading files**: Use `mcp_data-gov_data_gov_downloadResources`
+5. **Downloading files**: Use `mcp_data-gov_data_gov_download_resources`
    instead of wget, curl, or other download tools.
-   - It accepts: `datasetId` (slug), optional `outputDir`, optional
-     `formats` filter (matched against both `format` and `mediaType`),
-     and optional `distributionIndexes` (zero-based indexes of the
-     distributions to download). The legacy `resourceIds` parameter no
-     longer exists — data.gov's Catalog API exposes DCAT distributions
-     rather than CKAN resources.
+   - Accepts: `datasetId` (slug), optional `outputDir`, optional `formats`
+     filter (case-insensitive substring match against `format` or
+     `mediaType`, so `"JSON"` matches `application/json`), and optional
+     `distributionIndexes` (zero-based indexes into the downloadable
+     distributions list). The legacy `resourceIds` parameter no longer
+     exists — data.gov's Catalog API exposes DCAT distributions rather than
+     CKAN resources.
    - Provides automatic error handling, format filtering, and structured
      results.
 

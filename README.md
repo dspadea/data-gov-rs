@@ -30,7 +30,7 @@ What's different about the new API:
   `download_distribution(s)`, `get_resource_filename` →
   `get_distribution_filename`.
 - **MCP server** drops the `ckan.*` tools and renames parameters on
-  `data_gov.search` and `data_gov.downloadResources`. See
+  `data_gov_search` and `data_gov_download_resources`. See
   [CHANGELOG.md](./CHANGELOG.md) for the full diff.
 
 ### What about `data-gov-ckan`?

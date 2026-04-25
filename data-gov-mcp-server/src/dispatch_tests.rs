@@ -206,7 +206,7 @@ async fn dispatch_direct_tool_method_wraps_response() {
     let server = test_server(&mock.uri());
 
     let result = server
-        .dispatch("data_gov.dataset", Some(json!({ "id": "my-dataset" })))
+        .dispatch("data_gov.dataset", Some(json!({ "slug": "my-dataset" })))
         .await
         .expect("direct data_gov.dataset call should succeed");
 

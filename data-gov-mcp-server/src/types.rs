@@ -154,6 +154,28 @@ where
     }
 }
 
+/// Reject `limit` values outside the inclusive `[min, max]` range advertised
+/// by the tool's input schema.
+///
+/// The schema is informational on the wire; we still need to enforce it before
+/// dispatching to upstream APIs that would otherwise return their own
+/// (uglier) 4xx errors and burn a network round-trip.
+pub(crate) fn validate_limit(
+    method: &str,
+    limit: Option<i32>,
+    min: i32,
+    max: i32,
+) -> ServerResult<()> {
+    if let Some(value) = limit
+        && !(min..=max).contains(&value)
+    {
+        return Err(ServerError::InvalidParams(format!(
+            "{method}: limit must be between {min} and {max}, got {value}"
+        )));
+    }
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------
 // MCP parameter and result structs
 // ---------------------------------------------------------------------------
@@ -195,7 +217,8 @@ pub(crate) struct DatasetSummary {
 /// Parameters for `data_gov.dataset`.
 #[derive(Debug, Deserialize)]
 pub(crate) struct DatasetParams {
-    pub id: String,
+    /// data.gov dataset slug (e.g., `electric-vehicle-population-data`).
+    pub slug: String,
 }
 
 /// Parameters for `data_gov.autocompleteDatasets`.
@@ -314,10 +337,10 @@ mod tests {
 
     #[test]
     fn parse_required_params_succeeds_with_valid_json() {
-        let params = Some(json!({"id": "my-dataset"}));
+        let params = Some(json!({"slug": "my-dataset"}));
         let result: ServerResult<DatasetParams> = parse_required_params("test_method", params);
         let parsed = result.expect("should succeed");
-        assert_eq!(parsed.id, "my-dataset");
+        assert_eq!(parsed.slug, "my-dataset");
     }
 
     #[test]
@@ -338,6 +361,42 @@ mod tests {
         let params = Some(json!({"wrong_field": 42}));
         let result: ServerResult<DatasetParams> = parse_required_params("test_method", params);
         let err = result.expect_err("should fail");
+        assert!(matches!(err, ServerError::InvalidParams(_)));
+    }
+
+    #[test]
+    fn validate_limit_accepts_none() {
+        validate_limit("m", None, 1, 1000).expect("None should pass");
+    }
+
+    #[test]
+    fn validate_limit_accepts_value_in_range() {
+        validate_limit("m", Some(1), 1, 1000).expect("min should pass");
+        validate_limit("m", Some(1000), 1, 1000).expect("max should pass");
+        validate_limit("m", Some(50), 1, 1000).expect("middle should pass");
+    }
+
+    #[test]
+    fn validate_limit_rejects_below_min() {
+        let err = validate_limit("m", Some(0), 1, 1000).expect_err("below min should fail");
+        match err {
+            ServerError::InvalidParams(msg) => {
+                assert!(msg.contains("between 1 and 1000"), "got: {msg}");
+                assert!(msg.contains("got 0"), "got: {msg}");
+            }
+            other => panic!("expected InvalidParams, got: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn validate_limit_rejects_above_max() {
+        let err = validate_limit("m", Some(1500), 1, 1000).expect_err("above max should fail");
+        assert!(matches!(err, ServerError::InvalidParams(_)));
+    }
+
+    #[test]
+    fn validate_limit_rejects_negative() {
+        let err = validate_limit("m", Some(-1), 1, 1000).expect_err("negative should fail");
         assert!(matches!(err, ServerError::InvalidParams(_)));
     }
 

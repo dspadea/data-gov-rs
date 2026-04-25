@@ -85,8 +85,13 @@ impl DataGovMcpServer {
                 }
             };
 
+            // Per JSON-RPC 2.0: a request without an `id` is a notification, and
+            // the server MUST NOT reply. Still dispatch for side effects.
+            let is_notification = request.id.is_none();
             let response = self.handle_request(request).await;
-            self.write_response(&mut writer, &response).await?;
+            if !is_notification {
+                self.write_response(&mut writer, &response).await?;
+            }
         }
 
         Ok(())

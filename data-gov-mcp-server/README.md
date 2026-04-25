@@ -31,36 +31,42 @@ The process reads JSON-RPC 2.0 messages (one per line) from standard input and w
 
 ## Available Tools
 
-The MCP server exposes the following tools (methods):
+Tools are invoked the standard MCP way: `tools/call` with the tool's `name`
+and an `arguments` object. Discover them at runtime with `tools/list`.
 
 ### Data.gov tools
-- `data_gov.search` – Search datasets. Cursor-paginated via `after`, optional
-  `organization` slug filter, and a client-side `organizationContains`
-  substring filter. Response includes both the raw page and a compact
-  `summaries` array.
-- `data_gov.dataset` – Fetch full DCAT-US 3 metadata for a dataset by slug.
-- `data_gov.autocompleteDatasets` – Dataset title suggestions for a partial
+
+- `data_gov_search` — Search datasets. Cursor-paginated via `after`; optional
+  `organization` slug filter and a client-side `organizationContains`
+  substring filter. Response wraps the raw page plus a compact `summaries`
+  array.
+- `data_gov_dataset` — Fetch full DCAT-US 3 metadata for a dataset. Takes
+  `slug` (e.g., `electric-vehicle-population-data`).
+- `data_gov_autocomplete_datasets` — Dataset title suggestions for a partial
   query (implemented as a capped full-text search).
-- `data_gov.listOrganizations` – List publishing organizations.
-- `data_gov.downloadResources` – Download distributions to the local
-  filesystem, optionally limited by zero-based `distributionIndexes` and/or a
-  `formats` filter (matched against `format` and `mediaType`).
+- `data_gov_list_organizations` — List publishing organizations.
+- `data_gov_download_resources` — Download distributions to the local
+  filesystem. Optional `distributionIndexes` (zero-based) and `formats`
+  filter; `formats` is matched as a **case-insensitive substring** against
+  each distribution's `format` and `mediaType`, so `"JSON"` matches
+  `application/json`, `"CSV"` matches `text/csv`, etc.
 
 ### MCP protocol methods
-- `tools/list` – List available tools and their schemas.
-- `tools/call` – Invoke a tool by name with arguments.
-- `initialize`, `initialized`, `shutdown` – MCP protocol lifecycle.
 
-Each request follows the usual JSON-RPC 2.0 shape:
+- `tools/list` — List available tools and their schemas.
+- `tools/call` — Invoke a tool by name with arguments.
+- `initialize`, `initialized`, `shutdown` — MCP protocol lifecycle.
+
+A typical `tools/call` request:
 
 ```json
 {
   "jsonrpc": "2.0",
   "id": 1,
-  "method": "data_gov.search",
+  "method": "tools/call",
   "params": {
-    "query": "climate",
-    "limit": 5
+    "name": "data_gov_search",
+    "arguments": { "query": "climate", "limit": 5 }
   }
 }
 ```
@@ -68,17 +74,28 @@ Each request follows the usual JSON-RPC 2.0 shape:
 Responses mirror the JSON-RPC 2.0 schema and either contain a `result`
 payload or an `error` object.
 
+#### Direct method dispatch (non-MCP clients)
+
+For raw JSON-RPC clients that don't go through `tools/call`, the same tools
+are also exposed under dot-camelCase method names: `data_gov.search`,
+`data_gov.dataset`, `data_gov.autocompleteDatasets`,
+`data_gov.listOrganizations`, `data_gov.downloadResources`. Standard MCP
+clients (VSCode, Claude Desktop, etc.) only see — and only need — the
+snake_case tool names above.
+
 ### Pagination
 
-`data_gov.search` uses cursor-based pagination. When there are more pages, the
-response body carries an `after` field. Pass it back unchanged on the next
-call:
+`data_gov_search` uses cursor-based pagination. When there are more pages,
+the response body carries an `after` field. Pass it back unchanged on the
+next call:
 
 ```jsonc
-{"method": "data_gov.search", "params": {"query": "climate", "limit": 20}}
-// response: { "results": [...], "after": "WzgxLjM...", ...}
+// Page 1
+{"method":"tools/call","params":{"name":"data_gov_search","arguments":{"query":"climate","limit":20}}}
+// response: { "results": [...], "after": "WzgxLjM...", ... }
 
-{"method": "data_gov.search", "params": {"query": "climate", "limit": 20, "after": "WzgxLjM..."}}
+// Page 2 — pass the cursor back as `after`
+{"method":"tools/call","params":{"name":"data_gov_search","arguments":{"query":"climate","limit":20,"after":"WzgxLjM..."}}}
 ```
 
 ## VSCode Integration
