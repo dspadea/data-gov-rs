@@ -116,8 +116,8 @@ pub fn print_cli_help() {
             "search \"climate data\" 20",
         ),
         (
-            "show [dataset_slug]",
-            "Show dataset info (uses active dataset if omitted)",
+            "show [dataset_slug|.]",
+            "Show dataset info ('.' or omitted means current dataset)",
             "show electric-vehicle-population-data",
         ),
         (
@@ -127,13 +127,13 @@ pub fn print_cli_help() {
         ),
         (
             "cd <path>",
-            "Navigate org/dataset context (like cd)",
-            "cd nasa-gov",
+            "Navigate to an org or dataset (validated against the catalog)",
+            "cd /nasa-gov",
         ),
         (
-            "list organizations",
-            "List government organizations",
-            "list organizations",
+            "ls",
+            "List the contents of the current location (orgs / datasets / distributions)",
+            "ls",
         ),
         ("info", "Show client and session information", "info"),
     ];
@@ -178,11 +178,15 @@ pub fn print_repl_help() {
             "Download distributions (by index or title)",
             "download electric-vehicle-population-data 0",
         ),
-        ("cd <path>", "Navigate org/dataset context", "cd epa-gov"),
         (
-            "list organizations",
-            "List government organizations",
-            "list orgs",
+            "cd <path>",
+            "Navigate to an org or dataset (validated against the catalog)",
+            "cd /epa-gov",
+        ),
+        (
+            "ls",
+            "List orgs (at root), datasets (at /<org>), or distributions (at /<org>/<dataset>)",
+            "ls",
         ),
         (
             "lcd <path>",
