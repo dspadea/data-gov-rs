@@ -38,18 +38,39 @@ data-gov < script-name.sh
 1. Start with the shebang line: `#!/usr/bin/env data-gov`
 2. Add comments to describe what the script does
 3. Use any combination of data-gov commands:
-   - `search <query> [limit]`
-   - `show <dataset-id>`
-   - `download <dataset-id> [resource-index]`
-   - `list organizations`
-   - `info`
+   - `cd <path>` — navigate (`/`, `/<org>`, `/<org>/<dataset>`, or just `/<dataset>`; validated against the catalog)
+   - `ls` — list contents of the current location
+   - `next` (or `n`) — fetch the next page of the most recent `search` or `ls`
+   - `search <query> [limit]` — full-text search (filtered by active org if any)
+   - `show [dataset_slug|.]` — show dataset details (`.` = current)
+   - `download [dataset_slug] [selectors...]` — download by zero-based index or title substring
+   - `list organizations` — bulk org list (regardless of context)
+   - `info`, `help`, `quit`
 4. End with `quit` to cleanly exit
 5. Make executable with `chmod +x script.sh`
 
-Example:
+The REPL treats the data.gov catalog as a four-level Unix-style
+filesystem: root → organizations → datasets → distributions. `cd` and
+`ls` work the way you'd expect from a shell, and `cd` validates each
+path against the catalog before adopting it, so a typo errors loudly
+instead of leaving you in a bogus location.
+
+Example using the unix-fs idiom:
+
 ```bash
 #!/usr/bin/env data-gov
-# My custom data script
+# Navigate into a dataset, list its distributions, download the first one.
+cd /electric-vehicle-population-data
+ls
+download 0
+quit
+```
+
+Example using the legacy one-shot idiom (still supported):
+
+```bash
+#!/usr/bin/env data-gov
+# Search and download in flat command form.
 search "my topic" 5
 show first-dataset-id
 download first-dataset-id 0
