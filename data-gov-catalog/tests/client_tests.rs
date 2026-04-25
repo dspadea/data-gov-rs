@@ -235,6 +235,58 @@ async fn keywords_passes_size_and_min_count() {
     assert!(kw.keywords[0].count > 0);
 }
 
+/// The Catalog API returns `null` for empty repeated DCAT-US 3 fields
+/// (observed: `references`, `rights`, also seen elsewhere on `keyword`,
+/// `theme`, etc.). With plain `#[serde(default)]` only the *missing*
+/// case is covered; an explicit `null` value blows up with
+/// `invalid type: null, expected a sequence`. Make sure every `Vec<T>`
+/// field tolerates `null` and treats it as empty.
+#[tokio::test]
+async fn search_tolerates_null_for_repeated_fields() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/search"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "results": [{
+                "slug": "with-nulls",
+                "title": "Has nulls everywhere a Vec is expected",
+                "keyword": null,
+                "theme": null,
+                "distribution_titles": null,
+                "dcat": {
+                    "@type": "dcat:Dataset",
+                    "title": "Inner",
+                    "keyword": null,
+                    "theme": null,
+                    "distribution": null,
+                    "language": null,
+                    "references": null
+                }
+            }],
+            "sort": "relevance"
+        })))
+        .mount(&server)
+        .await;
+
+    let client = client_for(&server);
+    let page = client
+        .search(SearchParams::new().q("anything"))
+        .await
+        .expect("null Vec fields should not panic on parse");
+    assert_eq!(page.results.len(), 1);
+    let hit = &page.results[0];
+    assert_eq!(hit.slug.as_deref(), Some("with-nulls"));
+    assert!(hit.keyword.is_empty());
+    assert!(hit.theme.is_empty());
+    assert!(hit.distribution_titles.is_empty());
+    let dcat = hit.dcat.as_ref().expect("dcat present");
+    assert!(dcat.keyword.is_empty());
+    assert!(dcat.theme.is_empty());
+    assert!(dcat.distribution.is_empty());
+    assert!(dcat.language.is_empty());
+    assert!(dcat.references.is_empty());
+}
+
 #[tokio::test]
 async fn locations_search_returns_suggestions() {
     let server = MockServer::start().await;

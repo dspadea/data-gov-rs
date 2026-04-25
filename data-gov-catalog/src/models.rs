@@ -7,11 +7,26 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+/// Deserialize a JSON `null` as `T::default()`.
+///
+/// `#[serde(default)]` alone covers the *missing field* case but doesn't
+/// help when the field is *present and explicitly null*. The Catalog API
+/// returns `null` for empty repeated DCAT-US 3 fields like `references`,
+/// `keyword`, etc., so every `Vec<T>` field on these models needs this
+/// extra hop to avoid `invalid type: null, expected a sequence` panics.
+fn deserialize_null_as_default<'de, D, T>(deserializer: D) -> Result<T, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: serde::Deserialize<'de> + Default,
+{
+    Ok(Option::<T>::deserialize(deserializer)?.unwrap_or_default())
+}
+
 /// Envelope returned by the `/search` endpoint.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SearchResponse {
     /// Datasets matching the query on this page.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_null_as_default")]
     pub results: Vec<SearchHit>,
     /// Opaque cursor for the next page. Absent on the last page.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -46,10 +61,10 @@ pub struct SearchHit {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub organization: Option<Organization>,
     /// Free-form tags.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_null_as_default")]
     pub keyword: Vec<String>,
     /// DCAT-US themes (broad subject categories).
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_null_as_default")]
     pub theme: Vec<String>,
     /// Whether this dataset advertises spatial coverage.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -61,7 +76,7 @@ pub struct SearchHit {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_harvested_date: Option<String>,
     /// Distribution titles listed out for convenience (may be empty).
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_null_as_default")]
     pub distribution_titles: Vec<String>,
     /// URL of the harvest record for this dataset.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -122,12 +137,12 @@ pub struct Dataset {
         rename = "contactPoint"
     )]
     pub contact_point: Option<ContactPoint>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_null_as_default")]
     pub keyword: Vec<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_null_as_default")]
     pub theme: Vec<String>,
     /// Downloadable / accessible representations of the dataset.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_null_as_default")]
     pub distribution: Vec<Distribution>,
     /// Publisher's landing page for this dataset.
     #[serde(
@@ -150,7 +165,7 @@ pub struct Dataset {
         rename = "accrualPeriodicity"
     )]
     pub accrual_periodicity: Option<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_null_as_default")]
     pub language: Vec<String>,
     #[serde(
         default,
@@ -177,7 +192,7 @@ pub struct Dataset {
         rename = "describedByType"
     )]
     pub described_by_type: Option<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_null_as_default")]
     pub references: Vec<String>,
     #[serde(
         default,
@@ -278,7 +293,7 @@ impl ContactPoint {
 /// Envelope returned by `/api/organizations`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OrganizationsResponse {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_null_as_default")]
     pub organizations: Vec<Organization>,
     #[serde(default)]
     pub total: i64,
@@ -303,14 +318,14 @@ pub struct Organization {
     pub dataset_count: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_count: Option<i64>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_null_as_default")]
     pub aliases: Vec<String>,
 }
 
 /// Envelope returned by `/api/keywords`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct KeywordsResponse {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_null_as_default")]
     pub keywords: Vec<KeywordCount>,
     #[serde(default)]
     pub total: i64,
@@ -330,7 +345,7 @@ pub struct KeywordCount {
 /// Envelope returned by `/api/locations/search`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LocationsResponse {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_null_as_default")]
     pub locations: Vec<Location>,
     #[serde(default)]
     pub total: i64,
