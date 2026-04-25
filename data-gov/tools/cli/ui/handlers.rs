@@ -15,10 +15,18 @@ fn resolve_dataset<'a>(
     explicit: &'a Option<String>,
     ctx: &'a SessionContext,
 ) -> Result<&'a str, &'static str> {
-    explicit
-        .as_deref()
-        .or(ctx.dataset.as_deref())
-        .ok_or("no dataset specified and none selected (use: select /org/dataset)")
+    match explicit.as_deref() {
+        // `.` is an alias for "current dataset" — like in any unix shell.
+        Some(".") => ctx
+            .dataset
+            .as_deref()
+            .ok_or("'.' refers to the current dataset, but no dataset is selected"),
+        Some(slug) => Ok(slug),
+        None => ctx
+            .dataset
+            .as_deref()
+            .ok_or("no dataset specified and none selected (use: cd /<slug>)"),
+    }
 }
 
 /// Execute a command (shared between REPL and CLI modes).
@@ -46,11 +54,11 @@ pub fn execute_command(
         }
 
         ReplCommand::List { what } => {
-            handle_list(client, rt, &what)?;
+            handle_list(client, rt, ctx, what.as_deref())?;
         }
 
         ReplCommand::Select { path } => {
-            handle_select(ctx, &path)?;
+            handle_select(client, rt, ctx, &path)?;
         }
 
         ReplCommand::Info => {
@@ -77,9 +85,130 @@ pub fn execute_command(
 }
 
 /// Handle select/cd command.
-fn handle_select(ctx: &mut SessionContext, path: &str) -> Result<(), Box<dyn std::error::Error>> {
-    ctx.apply_navigate(path)?;
+fn handle_select(
+    client: &DataGovClient,
+    rt: &Runtime,
+    ctx: &mut SessionContext,
+    path: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    // Single-segment paths (absolute `/foo`, or relative `foo` from root) are
+    // ambiguous in data.gov's flat slug namespace — `foo` could be an
+    // organization OR a dataset. The string-only `apply_navigate` always
+    // treats them as orgs; here we do the actual catalog lookup to
+    // disambiguate.
+    if let Some(slug) = ambiguous_single_segment(ctx, path) {
+        return resolve_single_segment_cd(client, rt, ctx, slug);
+    }
 
+    // For everything else, parse locally to a candidate context, then verify
+    // the candidate exists in the catalog before adopting it. Validating
+    // before applying means a failed `cd` leaves the user where they were.
+    let mut candidate = ctx.clone();
+    candidate.apply_navigate(path)?;
+    validate_candidate_exists(client, rt, &candidate)?;
+    *ctx = candidate;
+    print_select_result(ctx);
+    Ok(())
+}
+
+/// If `path` is a single segment whose semantics are ambiguous between org
+/// and dataset, return that segment. Trailing slashes are tolerated.
+///
+/// The two ambiguous cases:
+/// - `/<seg>` — absolute, single segment
+/// - `<seg>` — relative, when no org is currently set (so it would otherwise
+///   be parsed as an org by [`SessionContext::apply_relative`]).
+fn ambiguous_single_segment<'a>(ctx: &SessionContext, path: &'a str) -> Option<&'a str> {
+    if let Some(rest) = path.strip_prefix('/') {
+        let inner = rest.trim_end_matches('/');
+        if inner.is_empty() || inner.contains('/') {
+            return None;
+        }
+        return Some(inner);
+    }
+    let trimmed = path.trim_end_matches('/');
+    if trimmed.is_empty() || trimmed == ".." || trimmed.contains('/') {
+        return None;
+    }
+    if ctx.org.is_some() {
+        // At org level, a relative single segment is unambiguously a dataset.
+        return None;
+    }
+    Some(trimmed)
+}
+
+/// Resolve a single-segment `cd` against the live catalog: try as an org
+/// first (cheap — one bulk call), fall back to a dataset slug lookup. If
+/// the segment matches a dataset, populate the org context from the
+/// dataset's publishing organization so the prompt and downstream commands
+/// have a complete location.
+fn resolve_single_segment_cd(
+    client: &DataGovClient,
+    rt: &Runtime,
+    ctx: &mut SessionContext,
+    slug: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let orgs = rt.block_on(client.list_organizations(None))?;
+    if orgs.iter().any(|s| s == slug) {
+        ctx.org = Some(slug.to_string());
+        ctx.dataset = None;
+        print_select_result(ctx);
+        return Ok(());
+    }
+
+    match rt.block_on(client.get_dataset(slug)) {
+        Ok(hit) => {
+            ctx.org = hit.organization.as_ref().and_then(|o| o.slug.clone());
+            ctx.dataset = Some(slug.to_string());
+            print_select_result(ctx);
+            Ok(())
+        }
+        Err(_) => Err(format!(
+            "'{slug}' matches no organization or dataset (run `ls` to see what's at the current level)"
+        )
+        .into()),
+    }
+}
+
+/// Verify that the candidate context names entities that actually exist.
+/// `dataset_by_slug` already verifies the slug matches (so we can trust
+/// `Ok` here means it exists); the org check is a single membership test
+/// against the bulk organizations list.
+fn validate_candidate_exists(
+    client: &DataGovClient,
+    rt: &Runtime,
+    candidate: &SessionContext,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if let Some(slug) = candidate.dataset.as_deref() {
+        let hit = rt
+            .block_on(client.get_dataset(slug))
+            .map_err(|_| format!("dataset '{slug}' not found"))?;
+
+        if let Some(expected_org) = candidate.org.as_deref() {
+            let actual_org = hit.organization.as_ref().and_then(|o| o.slug.as_deref());
+            if let Some(actual) = actual_org
+                && actual != expected_org
+            {
+                return Err(format!(
+                    "dataset '{slug}' belongs to organization '{actual}', not '{expected_org}'"
+                )
+                .into());
+            }
+        }
+        return Ok(());
+    }
+
+    if let Some(org) = candidate.org.as_deref() {
+        let orgs = rt.block_on(client.list_organizations(None))?;
+        if !orgs.iter().any(|o| o == org) {
+            return Err(format!("organization '{org}' not found").into());
+        }
+    }
+
+    Ok(())
+}
+
+fn print_select_result(ctx: &SessionContext) {
     let label = ctx.prompt_label();
     if label.is_empty() {
         println!("{} Selection cleared", color_green_bold("OK"));
@@ -90,8 +219,6 @@ fn handle_select(ctx: &mut SessionContext, path: &str) -> Result<(), Box<dyn std
             color_yellow_bold(&label)
         );
     }
-
-    Ok(())
 }
 
 /// Handle search command.
@@ -402,33 +529,134 @@ fn print_download_summary(results: &[Result<std::path::PathBuf, data_gov::DataGo
     );
 }
 
-/// Handle list command.
+/// Handle list command. Behavior depends on the explicit subject and the
+/// current session context:
+///
+/// - `ls organizations` (or `ls orgs`) — list all organizations regardless
+///   of context.
+/// - `ls` at root — same as `ls organizations`.
+/// - `ls` at `/<org>` — list that org's datasets.
+/// - `ls` at `/<org>/<dataset>` (or `//<dataset>`) — list distributions of
+///   the current dataset.
 fn handle_list(
     client: &DataGovClient,
     rt: &Runtime,
-    what: &str,
+    ctx: &SessionContext,
+    what: Option<&str>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    match what.to_lowercase().as_str() {
-        "organizations" | "orgs" => {
-            println!("{} organizations...", color_cyan("Fetching"));
-
-            let orgs = rt.block_on(client.list_organizations(Some(50)))?;
-
-            println!("\n{} organizations:", color_green_bold("Government"));
-            for (i, org) in orgs.iter().enumerate() {
-                println!(
-                    "{}. {}",
-                    color_blue_bold(&format!("{:2}", i + 1)),
-                    color_yellow(org)
-                );
+    if let Some(subject) = what {
+        match subject.to_lowercase().as_str() {
+            "organizations" | "orgs" => {
+                return list_organizations(client, rt);
             }
-        }
-        _ => {
-            println!("{} Unknown list type: {}", color_red_bold("Error:"), what);
-            println!("Available: {}", color_blue("organizations"));
+            other => {
+                println!("{} Unknown list type: {}", color_red_bold("Error:"), other);
+                println!("Available: {}", color_blue("organizations"));
+                return Ok(());
+            }
         }
     }
 
+    match (&ctx.org, &ctx.dataset) {
+        (_, Some(slug)) => list_dataset_distributions(client, rt, slug),
+        (Some(org), None) => list_org_datasets(client, rt, org),
+        (None, None) => list_organizations(client, rt),
+    }
+}
+
+fn list_organizations(
+    client: &DataGovClient,
+    rt: &Runtime,
+) -> Result<(), Box<dyn std::error::Error>> {
+    println!("{} organizations...", color_cyan("Fetching"));
+    let orgs = rt.block_on(client.list_organizations(Some(50)))?;
+    println!("\n{} organizations:", color_green_bold("Government"));
+    for (i, org) in orgs.iter().enumerate() {
+        println!(
+            "{}. {}",
+            color_blue_bold(&format!("{:2}", i + 1)),
+            color_yellow(org)
+        );
+    }
+    Ok(())
+}
+
+fn list_org_datasets(
+    client: &DataGovClient,
+    rt: &Runtime,
+    org: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    println!("{} datasets in '{}'...", color_cyan("Fetching"), org);
+    // Empty query + organization filter = "all datasets in this org".
+    let page = rt.block_on(client.search("", Some(50), None, Some(org)))?;
+    if page.results.is_empty() {
+        println!(
+            "{} No datasets found in '{}'.",
+            color_yellow_bold("Note:"),
+            org
+        );
+        return Ok(());
+    }
+    let suffix = if page.after.is_some() {
+        " (more available — pagination not yet implemented)"
+    } else {
+        ""
+    };
+    println!(
+        "\n{} {} datasets in {}{}:",
+        color_green_bold("Found"),
+        page.results.len(),
+        color_yellow(org),
+        suffix
+    );
+    for (i, hit) in page.results.iter().enumerate() {
+        let slug = hit.slug.as_deref().unwrap_or("(no-slug)");
+        let title = hit.title.as_deref().unwrap_or("");
+        println!(
+            "{}. {} {}",
+            color_blue_bold(&format!("{:2}", i + 1)),
+            color_yellow_bold(slug),
+            color_dimmed(title)
+        );
+    }
+    Ok(())
+}
+
+fn list_dataset_distributions(
+    client: &DataGovClient,
+    rt: &Runtime,
+    slug: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    println!("{} distributions of '{}'...", color_cyan("Fetching"), slug);
+    let hit = rt.block_on(client.get_dataset(slug))?;
+    let distributions = downloadable_for(&hit)?;
+    if distributions.is_empty() {
+        println!(
+            "{} No downloadable distributions in '{}'.",
+            color_yellow_bold("Note:"),
+            slug
+        );
+        return Ok(());
+    }
+    println!(
+        "\n{} {} distributions:",
+        color_green_bold("Found"),
+        distributions.len()
+    );
+    for (i, dist) in distributions.iter().enumerate() {
+        let title = dist.title.as_deref().unwrap_or("(untitled)");
+        let format = dist
+            .format
+            .as_deref()
+            .or(dist.media_type.as_deref())
+            .unwrap_or("?");
+        println!(
+            "{}. {} [{}]",
+            color_blue_bold(&format!("{:2}", i + 1)),
+            color_yellow(title),
+            color_dimmed(format)
+        );
+    }
     Ok(())
 }
 

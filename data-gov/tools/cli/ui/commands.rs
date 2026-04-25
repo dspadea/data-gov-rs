@@ -18,8 +18,11 @@ pub enum ReplCommand {
         args: Vec<String>,
     },
     List {
-        what: String,
-    }, // organizations, formats, etc.
+        /// Explicit subject (`organizations`/`orgs`). When `None`, the command
+        /// is context-dependent: at root it lists organizations, at an org it
+        /// lists that org's datasets, and at a dataset it lists distributions.
+        what: Option<String>,
+    },
     Select {
         path: String,
     },
@@ -214,12 +217,14 @@ impl ReplCommand {
                 })
             }
             "list" | "ls" => {
-                if parts.len() != 2 {
-                    return Err("Usage: list <organizations|orgs>".to_string());
-                }
-                Ok(ReplCommand::List {
-                    what: parts[1].clone(),
-                })
+                let what = match parts.len() {
+                    1 => None,
+                    2 => Some(parts[1].clone()),
+                    _ => {
+                        return Err("Usage: ls [organizations|orgs]".to_string());
+                    }
+                };
+                Ok(ReplCommand::List { what })
             }
             "lcd" | "setdir" => {
                 if parts.len() != 2 {
