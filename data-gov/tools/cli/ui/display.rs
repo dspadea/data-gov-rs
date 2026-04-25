@@ -189,6 +189,11 @@ pub fn print_repl_help() {
             "ls",
         ),
         (
+            "next",
+            "Fetch the next page of the most recent search or ls (alias: 'n')",
+            "next",
+        ),
+        (
             "lcd <path>",
             "Set local download directory",
             "lcd ./downloads",

@@ -3,7 +3,7 @@ use data_gov::catalog::models::Distribution;
 use data_gov::util::sanitize_path_component;
 use tokio::runtime::Runtime;
 
-use super::commands::{ReplCommand, SessionContext};
+use super::commands::{ListingCursor, ReplCommand, SessionContext};
 use super::display::{print_cli_help, print_package_details};
 use super::{
     color_blue, color_blue_bold, color_bold, color_cyan, color_dimmed, color_green,
@@ -57,6 +57,10 @@ pub fn execute_command(
             handle_list(client, rt, ctx, what.as_deref())?;
         }
 
+        ReplCommand::Next => {
+            handle_next(client, rt, ctx)?;
+        }
+
         ReplCommand::Select { path } => {
             handle_select(client, rt, ctx, &path)?;
         }
@@ -106,6 +110,7 @@ fn handle_select(
     let mut candidate = ctx.clone();
     candidate.apply_navigate(path)?;
     validate_candidate_exists(client, rt, &candidate)?;
+    candidate.last_listing = None;
     *ctx = candidate;
     print_select_result(ctx);
     Ok(())
@@ -152,6 +157,7 @@ fn resolve_single_segment_cd(
     if orgs.iter().any(|s| s == slug) {
         ctx.org = Some(slug.to_string());
         ctx.dataset = None;
+        ctx.last_listing = None;
         print_select_result(ctx);
         return Ok(());
     }
@@ -160,6 +166,7 @@ fn resolve_single_segment_cd(
         Ok(hit) => {
             ctx.org = hit.organization.as_ref().and_then(|o| o.slug.clone());
             ctx.dataset = Some(slug.to_string());
+            ctx.last_listing = None;
             print_select_result(ctx);
             Ok(())
         }
@@ -221,16 +228,25 @@ fn print_select_result(ctx: &SessionContext) {
     }
 }
 
-/// Handle search command.
+/// Default page size for `search` and `ls` listings when the user
+/// doesn't specify one. Each command's underlying API tops out around
+/// 1000 results per page; 50 is small enough to fit comfortably in a
+/// terminal viewport while still being useful for scripting.
+const DEFAULT_PAGE_SIZE: i32 = 50;
+
+/// Handle search command. Renders all returned hits (no artificial
+/// display cap), and stashes the next-page cursor on the session
+/// context so a subsequent `next` can advance.
 fn handle_search(
     client: &DataGovClient,
     rt: &Runtime,
     query: &str,
     limit: Option<i32>,
-    ctx: &SessionContext,
+    ctx: &mut SessionContext,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let org = ctx.org.as_deref();
-    if let Some(org_name) = org {
+    let org = ctx.org.clone();
+    let effective_limit = limit.unwrap_or(DEFAULT_PAGE_SIZE);
+    if let Some(org_name) = org.as_deref() {
         println!(
             "{} '{}' in org {}...",
             color_cyan("Searching for"),
@@ -241,25 +257,28 @@ fn handle_search(
         println!("{} '{}'...", color_cyan("Searching for"), query);
     }
 
-    let page = rt.block_on(client.search(query, limit, None, org))?;
-    let more_available = page.after.is_some();
-    let shown = page.results.len();
+    let page = rt.block_on(client.search(query, Some(effective_limit), None, org.as_deref()))?;
+    print_search_hits(&page.results);
+    summarize_listing(page.results.len(), page.after.as_deref(), "results");
 
-    if more_available {
-        println!(
-            "\n{} {} results on this page (more available):\n",
-            color_green_bold("Found"),
-            shown
-        );
-    } else {
-        println!("\n{} {} results:\n", color_green_bold("Found"), shown);
-    }
+    ctx.last_listing = page.after.map(|after| ListingCursor::SearchResults {
+        query: query.to_string(),
+        organization: org,
+        after,
+        page_size: effective_limit,
+    });
 
-    for (i, hit) in page.results.iter().enumerate().take(20) {
+    Ok(())
+}
+
+/// Render search hits in a compact list with an optional truncated
+/// description. Caller decides how many to show — there's no hard
+/// display cap.
+fn print_search_hits(hits: &[data_gov::catalog::models::SearchHit]) {
+    for hit in hits {
         let slug = hit.slug.as_deref().unwrap_or("(no-slug)");
         println!(
-            "{}. {} {}",
-            color_blue_bold(&format!("{:2}", i + 1)),
+            "{} {}",
             color_yellow_bold(slug),
             color_dimmed(hit.title.as_deref().unwrap_or(""))
         );
@@ -273,13 +292,78 @@ fn handle_search(
             };
             println!("   {}", color_dimmed(&truncated));
         }
-        println!();
     }
+}
 
-    if shown > 20 {
-        println!("... and {} more results on this page", shown - 20);
+/// Print the standard `Found N <unit>` line, with a `next` hint when
+/// more pages are available.
+fn summarize_listing(count: usize, after: Option<&str>, unit: &str) {
+    if after.is_some() {
+        println!(
+            "\n{} {} {} (type 'next' for more)",
+            color_green_bold("Found"),
+            count,
+            unit
+        );
+    } else {
+        println!("\n{} {} {}", color_green_bold("Found"), count, unit);
     }
+}
 
+/// Advance the most recent paginated listing by one page. Errors clearly
+/// when nothing has been listed yet (or when the previous listing was
+/// already on its last page).
+fn handle_next(
+    client: &DataGovClient,
+    rt: &Runtime,
+    ctx: &mut SessionContext,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let cursor = ctx.last_listing.take().ok_or(
+        "nothing to continue — run a `search` or `ls` that reports 'more available' first",
+    )?;
+
+    match cursor {
+        ListingCursor::OrgDatasets {
+            org,
+            after,
+            page_size,
+        } => {
+            let page = rt.block_on(client.search(
+                "",
+                Some(page_size),
+                Some(after.as_str()),
+                Some(org.as_str()),
+            ))?;
+            print_dataset_hits(&page.results);
+            summarize_listing(page.results.len(), page.after.as_deref(), "more datasets");
+            ctx.last_listing = page.after.map(|after| ListingCursor::OrgDatasets {
+                org,
+                after,
+                page_size,
+            });
+        }
+        ListingCursor::SearchResults {
+            query,
+            organization,
+            after,
+            page_size,
+        } => {
+            let page = rt.block_on(client.search(
+                &query,
+                Some(page_size),
+                Some(after.as_str()),
+                organization.as_deref(),
+            ))?;
+            print_search_hits(&page.results);
+            summarize_listing(page.results.len(), page.after.as_deref(), "more results");
+            ctx.last_listing = page.after.map(|after| ListingCursor::SearchResults {
+                query,
+                organization,
+                after,
+                page_size,
+            });
+        }
+    }
     Ok(())
 }
 
@@ -541,12 +625,13 @@ fn print_download_summary(results: &[Result<std::path::PathBuf, data_gov::DataGo
 fn handle_list(
     client: &DataGovClient,
     rt: &Runtime,
-    ctx: &SessionContext,
+    ctx: &mut SessionContext,
     what: Option<&str>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     if let Some(subject) = what {
         match subject.to_lowercase().as_str() {
             "organizations" | "orgs" => {
+                ctx.last_listing = None;
                 return list_organizations(client, rt);
             }
             other => {
@@ -558,9 +643,20 @@ fn handle_list(
     }
 
     match (&ctx.org, &ctx.dataset) {
-        (_, Some(slug)) => list_dataset_distributions(client, rt, slug),
-        (Some(org), None) => list_org_datasets(client, rt, org),
-        (None, None) => list_organizations(client, rt),
+        (_, Some(slug)) => {
+            // Distributions aren't paginated; the dataset record carries them all.
+            let slug = slug.clone();
+            ctx.last_listing = None;
+            list_dataset_distributions(client, rt, &slug)
+        }
+        (Some(org), None) => {
+            let org = org.clone();
+            list_org_datasets(client, rt, ctx, &org)
+        }
+        (None, None) => {
+            ctx.last_listing = None;
+            list_organizations(client, rt)
+        }
     }
 }
 
@@ -569,7 +665,9 @@ fn list_organizations(
     rt: &Runtime,
 ) -> Result<(), Box<dyn std::error::Error>> {
     println!("{} organizations...", color_cyan("Fetching"));
-    let orgs = rt.block_on(client.list_organizations(Some(50)))?;
+    // The org list comes back as a single bulk response (~60-70 orgs);
+    // there's no API-level pagination, so show them all.
+    let orgs = rt.block_on(client.list_organizations(None))?;
     println!("\n{} organizations:", color_green_bold("Government"));
     for (i, org) in orgs.iter().enumerate() {
         println!(
@@ -584,12 +682,13 @@ fn list_organizations(
 fn list_org_datasets(
     client: &DataGovClient,
     rt: &Runtime,
+    ctx: &mut SessionContext,
     org: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
     println!("{} datasets in '{}'...", color_cyan("Fetching"), org);
-    // Empty query + organization filter = "all datasets in this org".
-    let page = rt.block_on(client.search("", Some(50), None, Some(org)))?;
+    let page = rt.block_on(client.search("", Some(DEFAULT_PAGE_SIZE), None, Some(org)))?;
     if page.results.is_empty() {
+        ctx.last_listing = None;
         println!(
             "{} No datasets found in '{}'.",
             color_yellow_bold("Note:"),
@@ -597,29 +696,50 @@ fn list_org_datasets(
         );
         return Ok(());
     }
-    let suffix = if page.after.is_some() {
-        " (more available — pagination not yet implemented)"
-    } else {
-        ""
-    };
-    println!(
-        "\n{} {} datasets in {}{}:",
-        color_green_bold("Found"),
-        page.results.len(),
-        color_yellow(org),
-        suffix
-    );
-    for (i, hit) in page.results.iter().enumerate() {
+    print_dataset_hits(&page.results);
+    summarize_listing(page.results.len(), page.after.as_deref(), "datasets");
+
+    ctx.last_listing = page.after.map(|after| ListingCursor::OrgDatasets {
+        org: org.to_string(),
+        after,
+        page_size: DEFAULT_PAGE_SIZE,
+    });
+    Ok(())
+}
+
+/// Render datasets as `<slug> — <title>` with a tiny "[N files, modified
+/// YYYY-MM-DD]" tail when those fields are populated. Distribution count
+/// and last-harvested date come from the search response, so no extra
+/// network call is needed.
+fn print_dataset_hits(hits: &[data_gov::catalog::models::SearchHit]) {
+    for hit in hits {
         let slug = hit.slug.as_deref().unwrap_or("(no-slug)");
         let title = hit.title.as_deref().unwrap_or("");
+
+        let mut tail_parts: Vec<String> = Vec::new();
+        let dist_count = hit.distribution_titles.len();
+        if dist_count > 0 {
+            let unit = if dist_count == 1 { "file" } else { "files" };
+            tail_parts.push(format!("{dist_count} {unit}"));
+        }
+        if let Some(date) = hit.last_harvested_date.as_deref() {
+            // Display just the date portion if it's an ISO timestamp.
+            let short = date.split('T').next().unwrap_or(date);
+            tail_parts.push(format!("modified {short}"));
+        }
+        let tail = if tail_parts.is_empty() {
+            String::new()
+        } else {
+            format!("  [{}]", tail_parts.join(", "))
+        };
+
         println!(
-            "{}. {} {}",
-            color_blue_bold(&format!("{:2}", i + 1)),
+            "{} {}{}",
             color_yellow_bold(slug),
-            color_dimmed(title)
+            color_dimmed(title),
+            color_dimmed(&tail),
         );
     }
-    Ok(())
 }
 
 fn list_dataset_distributions(
