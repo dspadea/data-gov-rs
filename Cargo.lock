@@ -299,7 +299,7 @@ dependencies = [
  "anyhow",
  "clap",
  "colored",
- "data-gov-ckan",
+ "data-gov-catalog",
  "dirs",
  "futures",
  "indicatif",
@@ -313,6 +313,17 @@ dependencies = [
  "tokio",
  "tokio-util",
  "url",
+ "wiremock",
+]
+
+[[package]]
+name = "data-gov-catalog"
+version = "0.4.0"
+dependencies = [
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tokio",
  "wiremock",
 ]
 
@@ -338,7 +349,7 @@ name = "data-gov-mcp-server"
 version = "0.4.0"
 dependencies = [
  "data-gov",
- "data-gov-ckan",
+ "data-gov-catalog",
  "futures",
  "serde",
  "serde_json",
