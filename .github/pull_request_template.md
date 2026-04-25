@@ -12,16 +12,23 @@ Brief description of changes made in this PR.
 - [ ] Refactoring (no functional changes)
 - [ ] Other (please describe):
 
-## CKAN API Changes (if applicable)
-- [ ] Adds support for new CKAN API endpoint
-- [ ] Modifies existing API endpoint support
-- [ ] Changes API response models
-- [ ] Updates authentication handling
+## Affected crate(s)
+- [ ] `data-gov-catalog`
+- [ ] `data-gov-ckan`
+- [ ] `data-gov`
+- [ ] `data-gov-mcp-server`
+- [ ] Workspace / CI / docs only
+
+## API Changes (if applicable)
+- [ ] Adds support for a new endpoint
+- [ ] Modifies an existing endpoint
+- [ ] Changes response/request models
+- [ ] Updates authentication or configuration
 
 If yes, please specify:
-- Endpoint(s): 
-- CKAN documentation: 
-- Tested against: [ ] data.gov [ ] demo.ckan.org [ ] other: 
+- Endpoint(s) / method name(s):
+- Upstream documentation (Catalog API / CKAN):
+- Tested against: [ ] data.gov Catalog API [ ] CKAN instance (specify) [ ] wiremock fixtures only
 
 ## Testing
 - [ ] Unit tests added/updated

@@ -15,11 +15,16 @@ A clear and concise description of what you want to happen.
 **Describe alternatives you've considered**
 A clear and concise description of any alternative solutions or features you've considered.
 
-**CKAN API context (if applicable)**
-- Which CKAN API endpoint(s) would this use?
-- Link to CKAN documentation: 
-- Is this endpoint available on data.gov?
-- Example API response (if you have one):
+**Which crate should this land in?**
+- [ ] `data-gov-catalog` (data.gov Catalog API)
+- [ ] `data-gov-ckan` (generic CKAN Action API)
+- [ ] `data-gov` (high-level client / CLI)
+- [ ] `data-gov-mcp-server` (MCP tool)
+
+**Underlying-API context (if applicable)**
+- Which endpoint(s) would this use?
+- Link to upstream docs (Catalog API or CKAN):
+- Example response (if you have one):
 
 ```json
 {
