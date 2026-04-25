@@ -23,6 +23,8 @@ pub enum ReplCommand {
         /// lists that org's datasets, and at a dataset it lists distributions.
         what: Option<String>,
     },
+    /// Fetch the next page of the most recent listing or search.
+    Next,
     Select {
         path: String,
     },
@@ -34,11 +36,35 @@ pub enum ReplCommand {
     Quit,
 }
 
+/// Cursor describing what was last listed so a subsequent `next` knows
+/// what to advance.
+#[derive(Debug, Clone)]
+pub enum ListingCursor {
+    /// Datasets in `org`, paginated via `after`.
+    OrgDatasets {
+        org: String,
+        after: String,
+        page_size: i32,
+    },
+    /// Search results for `query` (optionally filtered by org), paginated
+    /// via `after`. Mirrors the args originally passed to `search`.
+    SearchResults {
+        query: String,
+        organization: Option<String>,
+        after: String,
+        page_size: i32,
+    },
+}
+
 /// Active session context set via `select /org/dataset`.
 #[derive(Debug, Clone, Default)]
 pub struct SessionContext {
     pub org: Option<String>,
     pub dataset: Option<String>,
+    /// Pagination cursor from the most recent listing or search. Populated
+    /// when the previous response carried an `after` cursor; consumed by
+    /// the `next` command.
+    pub last_listing: Option<ListingCursor>,
 }
 
 impl SessionContext {
@@ -235,6 +261,12 @@ impl ReplCommand {
                 })
             }
             "info" | "status" => Ok(ReplCommand::Info),
+            "next" | "n" | "more" => {
+                if parts.len() != 1 {
+                    return Err("Usage: next  (no arguments)".to_string());
+                }
+                Ok(ReplCommand::Next)
+            }
             "help" | "h" | "?" => Ok(ReplCommand::Help),
             "quit" | "exit" | "q" => Ok(ReplCommand::Quit),
             _ => Err(format!("Unknown command: {}", parts[0])),
@@ -397,6 +429,7 @@ mod tests {
         let mut ctx = SessionContext {
             org: Some("epa-gov".to_string()),
             dataset: Some("air-quality".to_string()),
+            last_listing: None,
         };
         ctx.apply_navigate("/").unwrap();
         assert!(ctx.org.is_none());
@@ -409,6 +442,7 @@ mod tests {
         let mut ctx = SessionContext {
             org: Some("old-org".to_string()),
             dataset: Some("old-dataset".to_string()),
+            last_listing: None,
         };
         ctx.apply_navigate("/new-org/new-dataset").unwrap();
         assert_eq!(ctx.org, Some("new-org".to_string()));
@@ -420,6 +454,7 @@ mod tests {
         let mut ctx = SessionContext {
             org: Some("old-org".to_string()),
             dataset: Some("old-dataset".to_string()),
+            last_listing: None,
         };
         ctx.apply_navigate("/new-org").unwrap();
         assert_eq!(ctx.org, Some("new-org".to_string()));
@@ -441,6 +476,7 @@ mod tests {
         let mut ctx = SessionContext {
             org: Some("epa-gov".to_string()),
             dataset: None,
+            last_listing: None,
         };
         ctx.apply_navigate("water-data").unwrap();
         assert_eq!(ctx.org, Some("epa-gov".to_string()));
@@ -452,6 +488,7 @@ mod tests {
         let mut ctx = SessionContext {
             org: Some("epa-gov".to_string()),
             dataset: Some("air-quality".to_string()),
+            last_listing: None,
         };
         let result = ctx.apply_navigate("something");
         assert!(result.is_err());
@@ -463,6 +500,7 @@ mod tests {
         let mut ctx = SessionContext {
             org: Some("epa-gov".to_string()),
             dataset: Some("air-quality".to_string()),
+            last_listing: None,
         };
         ctx.apply_navigate("..").unwrap();
         assert_eq!(ctx.org, Some("epa-gov".to_string()));
@@ -474,6 +512,7 @@ mod tests {
         let mut ctx = SessionContext {
             org: Some("epa-gov".to_string()),
             dataset: None,
+            last_listing: None,
         };
         ctx.apply_navigate("..").unwrap();
         assert!(ctx.org.is_none());
@@ -503,6 +542,7 @@ mod tests {
         let ctx = SessionContext {
             org: Some("epa-gov".to_string()),
             dataset: Some("air-quality".to_string()),
+            last_listing: None,
         };
         assert_eq!(ctx.prompt_label(), "/epa-gov/air-quality");
     }
@@ -512,6 +552,7 @@ mod tests {
         let ctx = SessionContext {
             org: None,
             dataset: Some("orphan-ds".to_string()),
+            last_listing: None,
         };
         assert_eq!(ctx.prompt_label(), "//orphan-ds");
     }
