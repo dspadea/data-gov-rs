@@ -300,13 +300,25 @@ impl CatalogClient {
     /// Returns `Ok(None)` if no dataset with that slug exists. The returned
     /// [`SearchHit`](models::SearchHit) carries the denormalized fields and a
     /// nested `dcat` record with the full DCAT-US 3 metadata.
+    ///
+    /// # Notes
+    ///
+    /// The Catalog API does not actually honor a `slug=` query parameter
+    /// today — it returns the top relevance hit regardless of the value.
+    /// We work around this by using a full-text query (`q=<slug>`) and then
+    /// scanning the first page for a hit whose `slug` exactly matches.
+    /// Slug-shaped queries reliably rank the exact match first when it
+    /// exists; we look at the top 20 results to leave headroom for ties.
     pub async fn dataset_by_slug(
         &self,
         slug: &str,
     ) -> Result<Option<models::SearchHit>, CatalogError> {
-        let params = SearchParams::new().slug(slug).per_page(1);
-        let mut response: models::SearchResponse = self.search(params).await?;
-        Ok(response.results.pop())
+        let params = SearchParams::new().q(slug).per_page(20);
+        let response: models::SearchResponse = self.search(params).await?;
+        Ok(response
+            .results
+            .into_iter()
+            .find(|hit| hit.slug.as_deref() == Some(slug)))
     }
 
     /// List all organizations known to the catalog.

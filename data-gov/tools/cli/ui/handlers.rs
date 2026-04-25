@@ -201,6 +201,18 @@ fn handle_download(
         let id = ctx.dataset.as_deref().unwrap();
         (id, args)
     } else if let Some(first) = args.first() {
+        // Guard: a numeric first arg with no dataset in context is almost
+        // always a user mistake — they meant `download <index>` after
+        // selecting a dataset, but no dataset is selected. Without this
+        // guard the digit would be sent to the catalog as a "slug" and we
+        // would download whatever the API returned for it (data.gov
+        // silently ignores unmatched slugs and returns the top result).
+        if first.chars().all(|c| c.is_ascii_digit()) {
+            return Err(format!(
+                "no dataset selected — to download by index, first navigate into a dataset (e.g. `cd /<slug>`); '{first}' is not a valid dataset slug"
+            )
+            .into());
+        }
         (first.as_str(), &args[1..])
     } else {
         return Err("no dataset specified and none selected (use: select /org/dataset)".into());

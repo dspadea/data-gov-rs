@@ -94,26 +94,21 @@ async fn search_with_org_slug_passes_filter() {
 #[tokio::test]
 async fn dataset_by_slug_returns_first_hit() {
     let server = MockServer::start().await;
+    // dataset_by_slug uses q=<slug> (the API doesn't honor slug= today)
+    // and matches the slug client-side.
     Mock::given(method("GET"))
         .and(path("/search"))
-        .and(query_param(
-            "slug",
-            "tiger-line-shapefile-2022-nation-u-s-2020-census-5-digit-zip-code-tabulation-area-zcta5",
-        ))
+        .and(query_param("q", "crime-data-from-2020-to-present"))
         .respond_with(
-            ResponseTemplate::new(200).set_body_raw(
-                fixture("search_by_slug.json"),
-                "application/json",
-            ),
+            ResponseTemplate::new(200)
+                .set_body_raw(fixture("search_by_slug.json"), "application/json"),
         )
         .mount(&server)
         .await;
 
     let client = client_for(&server);
     let hit = client
-        .dataset_by_slug(
-            "tiger-line-shapefile-2022-nation-u-s-2020-census-5-digit-zip-code-tabulation-area-zcta5",
-        )
+        .dataset_by_slug("crime-data-from-2020-to-present")
         .await
         .expect("slug lookup succeeds")
         .expect("slug matches a dataset");
@@ -137,6 +132,65 @@ async fn dataset_by_slug_returns_none_when_empty() {
     let client = client_for(&server);
     let result = client.dataset_by_slug("nonexistent").await.unwrap();
     assert!(result.is_none());
+}
+
+/// The live Catalog API doesn't honor a `slug=` query parameter — it
+/// returns the top relevance hit regardless. We work around it with
+/// `q=<slug>` plus a client-side slug-equality check. Make sure that
+/// check actually fires when the API returns a non-matching hit.
+#[tokio::test]
+async fn dataset_by_slug_returns_none_when_top_hit_has_a_different_slug() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/search"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "results": [{
+                "slug": "crime-data-from-2020-to-present",
+                "title": "Crime Data from 2020 to 2024"
+            }],
+            "sort": "relevance"
+        })))
+        .mount(&server)
+        .await;
+
+    let client = client_for(&server);
+    let result = client.dataset_by_slug("nasa-thesaurus").await.unwrap();
+    assert!(
+        result.is_none(),
+        "expected None when API returns a hit with a different slug, got Some(_)"
+    );
+}
+
+/// When the response includes the requested slug among multiple hits
+/// (for example, a `q=<slug>` query that fans out to similarly-named
+/// datasets), `dataset_by_slug` should pick the exact match rather than
+/// the top-ranked or first hit.
+#[tokio::test]
+async fn dataset_by_slug_picks_exact_match_among_multiple_hits() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/search"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "results": [
+                { "slug": "ev-population-history", "title": "Decoy 1" },
+                { "slug": "electric-vehicle-population-data", "title": "Real" },
+                { "slug": "ev-population-by-county",   "title": "Decoy 2" }
+            ],
+            "sort": "relevance"
+        })))
+        .mount(&server)
+        .await;
+
+    let client = client_for(&server);
+    let hit = client
+        .dataset_by_slug("electric-vehicle-population-data")
+        .await
+        .unwrap()
+        .expect("exact match should be found");
+    assert_eq!(
+        hit.slug.as_deref(),
+        Some("electric-vehicle-population-data")
+    );
 }
 
 #[tokio::test]
