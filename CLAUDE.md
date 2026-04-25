@@ -2,11 +2,15 @@
 
 ## Project overview
 
-Rust workspace with three crates:
+Rust workspace with four crates:
 
-- `data-gov-ckan` — async, type-safe CKAN client (low-level)
-- `data-gov` — high-level client + CLI binary
+- `data-gov-catalog` — async client for the data.gov Catalog API (current
+  backend; DCAT-US 3, cursor-paginated)
+- `data-gov` — high-level client + CLI binary (built on `data-gov-catalog`)
 - `data-gov-mcp-server` — MCP server for AI integration
+- `data-gov-ckan` — async CKAN Action API client. data.gov retired its CKAN
+  endpoint in 2026; this crate is retained as a general-purpose client for
+  other CKAN-compatible portals (European, state, municipal, university).
 
 Rust 2024 edition, MSRV **1.90**, Apache-2.0 license.
 
@@ -126,7 +130,7 @@ cargo test --test solr_syntax_tests -- --ignored  # Solr syntax (network)
 
 ### No `unwrap()` or `expect()` in library code
 
-Library crates (`data-gov-ckan`, `data-gov`, `data-gov-mcp-server`) must not
+Library crates (`data-gov-catalog`, `data-gov-ckan`, `data-gov`, `data-gov-mcp-server`) must not
 use `.unwrap()` or `.expect()` in non-test code. Propagate errors with `?` or
 convert them into the crate's error type. If a condition is truly unreachable,
 use `unreachable!()` with a comment explaining why.
@@ -233,8 +237,10 @@ minor bumps may include breaking changes, but still be intentional about it.
 | Security fix                                   | Patch   |
 
 **Checklist before a version bump:**
-- Update version in all three `Cargo.toml` files.
+- Update version in all four `Cargo.toml` files (`data-gov-catalog`,
+  `data-gov-ckan`, `data-gov`, `data-gov-mcp-server`).
 - Update inter-crate dependency versions if they reference each other.
+- Update version strings in README dependency snippets.
 - Add a `CHANGELOG.md` entry under the new version.
 - Tag the release after merging to `main`.
 
