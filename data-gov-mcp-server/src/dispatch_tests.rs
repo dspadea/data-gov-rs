@@ -193,9 +193,11 @@ async fn dispatch_tools_call_missing_params_returns_invalid_params() {
 #[tokio::test]
 async fn dispatch_direct_tool_method_wraps_response() {
     let mock = MockServer::start().await;
+    // dataset_by_slug uses q=<slug> on the wire (the API doesn't honor slug=)
+    // and matches the slug client-side.
     Mock::given(wm_method("GET"))
         .and(wm_path("/search"))
-        .and(query_param("slug", "my-dataset"))
+        .and(query_param("q", "my-dataset"))
         .respond_with(
             ResponseTemplate::new(200).set_body_json(search_body("my-dataset", "My Dataset")),
         )
