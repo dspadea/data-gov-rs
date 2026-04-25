@@ -16,6 +16,7 @@ fn create_test_client() -> CkanClient {
 }
 
 #[tokio::test]
+#[ignore = "data.gov retired its CKAN endpoint in 2026; point at a live CKAN instance and run with --ignored"]
 async fn test_ckan_wildcard_and_fq() {
     let client = create_test_client();
 

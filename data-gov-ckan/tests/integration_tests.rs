@@ -22,6 +22,7 @@ fn create_test_client() -> CkanClient {
 }
 
 #[tokio::test]
+#[ignore = "data.gov retired its CKAN endpoint in 2026; point at a live CKAN instance and run with --ignored"]
 async fn test_basic_search() {
     let client = create_test_client();
 
@@ -56,6 +57,7 @@ async fn test_basic_search() {
 }
 
 #[tokio::test]
+#[ignore = "data.gov retired its CKAN endpoint in 2026; point at a live CKAN instance and run with --ignored"]
 async fn test_filtered_search() {
     let client = create_test_client();
 
@@ -74,6 +76,7 @@ async fn test_filtered_search() {
 }
 
 #[tokio::test]
+#[ignore = "data.gov retired its CKAN endpoint in 2026; point at a live CKAN instance and run with --ignored"]
 async fn test_pagination() {
     let client = create_test_client();
 
@@ -112,6 +115,7 @@ async fn test_pagination() {
 }
 
 #[tokio::test]
+#[ignore = "data.gov retired its CKAN endpoint in 2026; point at a live CKAN instance and run with --ignored"]
 async fn test_package_show() {
     let client = create_test_client();
 
@@ -138,6 +142,7 @@ async fn test_package_show() {
 }
 
 #[tokio::test]
+#[ignore = "data.gov retired its CKAN endpoint in 2026; point at a live CKAN instance and run with --ignored"]
 async fn test_package_show_by_name() {
     let client = create_test_client();
 
@@ -158,6 +163,7 @@ async fn test_package_show_by_name() {
 }
 
 #[tokio::test]
+#[ignore = "data.gov retired its CKAN endpoint in 2026; point at a live CKAN instance and run with --ignored"]
 async fn test_organization_list() {
     let client = create_test_client();
 
@@ -175,6 +181,7 @@ async fn test_organization_list() {
 }
 
 #[tokio::test]
+#[ignore = "data.gov retired its CKAN endpoint in 2026; point at a live CKAN instance and run with --ignored"]
 async fn test_group_list() {
     let client = create_test_client();
 
@@ -191,6 +198,7 @@ async fn test_group_list() {
 }
 
 #[tokio::test]
+#[ignore = "data.gov retired its CKAN endpoint in 2026; point at a live CKAN instance and run with --ignored"]
 async fn test_dataset_autocomplete() {
     let client = create_test_client();
 
@@ -220,6 +228,7 @@ async fn test_dataset_autocomplete() {
 }
 
 #[tokio::test]
+#[ignore = "data.gov retired its CKAN endpoint in 2026; point at a live CKAN instance and run with --ignored"]
 async fn test_tag_autocomplete() {
     let client = create_test_client();
 
@@ -245,6 +254,7 @@ async fn test_tag_autocomplete() {
 }
 
 #[tokio::test]
+#[ignore = "data.gov retired its CKAN endpoint in 2026; point at a live CKAN instance and run with --ignored"]
 async fn test_user_autocomplete() {
     let client = create_test_client();
 
@@ -271,6 +281,7 @@ async fn test_user_autocomplete() {
 }
 
 #[tokio::test]
+#[ignore = "data.gov retired its CKAN endpoint in 2026; point at a live CKAN instance and run with --ignored"]
 async fn test_group_autocomplete() {
     let client = create_test_client();
 
@@ -292,6 +303,7 @@ async fn test_group_autocomplete() {
 }
 
 #[tokio::test]
+#[ignore = "data.gov retired its CKAN endpoint in 2026; point at a live CKAN instance and run with --ignored"]
 async fn test_organization_autocomplete() {
     let client = create_test_client();
 
@@ -313,6 +325,7 @@ async fn test_organization_autocomplete() {
 }
 
 #[tokio::test]
+#[ignore = "data.gov retired its CKAN endpoint in 2026; point at a live CKAN instance and run with --ignored"]
 async fn test_resource_format_autocomplete() {
     let client = create_test_client();
 
@@ -337,6 +350,7 @@ async fn test_resource_format_autocomplete() {
 }
 
 #[tokio::test]
+#[ignore = "data.gov retired its CKAN endpoint in 2026; point at a live CKAN instance and run with --ignored"]
 async fn test_error_handling() {
     let client = create_test_client();
 
@@ -357,6 +371,7 @@ async fn test_error_handling() {
 }
 
 #[tokio::test]
+#[ignore = "data.gov retired its CKAN endpoint in 2026; point at a live CKAN instance and run with --ignored"]
 async fn test_large_result_handling() {
     let client = create_test_client();
 
@@ -384,6 +399,7 @@ async fn test_large_result_handling() {
 }
 
 #[tokio::test]
+#[ignore = "data.gov retired its CKAN endpoint in 2026; point at a live CKAN instance and run with --ignored"]
 async fn test_concurrent_requests() {
     let client = create_test_client();
 
@@ -414,6 +430,7 @@ mod performance_tests {
     use std::time::Instant;
 
     #[tokio::test]
+    #[ignore = "data.gov retired its CKAN endpoint in 2026; point at a live CKAN instance and run with --ignored"]
     async fn test_search_performance() {
         let client = create_test_client();
 
