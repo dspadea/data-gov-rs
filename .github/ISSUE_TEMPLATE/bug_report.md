@@ -25,11 +25,11 @@ What actually happened, including any error messages.
 **Code example**
 ```rust
 // Minimal code example that reproduces the issue
-use data_gov_ckan::CkanClient;
+use data_gov::DataGovClient;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let client = CkanClient::new_data_gov(None)?;
+    let client = DataGovClient::new()?;
     // ... rest of your code
     Ok(())
 }
@@ -37,9 +37,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 **Environment (please complete the following information):**
 - OS: [e.g. Ubuntu 22.04, macOS 13.0, Windows 11]
-- Rust version: [e.g. 1.70.0] (run `rustc --version`)
-- Library version: [e.g. 0.1.0]
-- CKAN instance: [e.g. data.gov, demo.ckan.org, other]
+- Rust version: [e.g. 1.90.0] (run `rustc --version`)
+- Crate(s) and version: [e.g. data-gov 0.4.0, data-gov-mcp-server 0.4.0]
+- API target: [e.g. data.gov Catalog API, demo.ckan.org, other CKAN instance]
 
 **Error output**
 If applicable, paste the complete error message:

@@ -2,310 +2,200 @@
 applyTo: '**'
 ---
 
-# data-gov-rs Project Context and AI Guidelines
+# data-gov-rs — Project Context for AI Assistants
 
-This file provides essential context about data.gov, CKAN APIs, and this project's architecture that AI assistants should understand when generating code, reviewing changes, or answering questions.
+This file is the "what does this project actually do" briefing for AI
+assistants generating, reviewing, or editing code in this workspace. For
+the engineering rules (testing, error handling, security checklist,
+versioning), see [`CLAUDE.md`](../../CLAUDE.md) at the repo root.
 
-## Project Overview
+## Project overview
 
-### What This Project Does
-- **data-gov-rs** is a Rust workspace for interacting with US government open data APIs
-- **Primary focus**: data.gov (the US government's open data portal) which runs on CKAN
-- **Architecture**: Cargo workspace with multiple crates:
-  - `data-gov-ckan`: Complete CKAN API client (main crate)
-  - `data-gov`: Higher-level utilities (planned)
+`data-gov-rs` is a Rust workspace publishing four crates for working with
+US government open data:
 
-### Key Design Philosophy
-- **Type safety over convenience**: Use strong Rust types for API responses
-- **Async-first**: All network operations use async/await with tokio
-- **Real-world tested**: Integration tests against actual data.gov APIs
-- **Government-friendly**: Respects rate limits, handles authentication properly
-- **Idiomatic Rust**: Follows Rust conventions, not just OpenAPI generation patterns
+| Crate                | Purpose                                                                   |
+|----------------------|---------------------------------------------------------------------------|
+| `data-gov-catalog`   | Async client for the data.gov [Catalog API](https://resources.data.gov/catalog-api/) (current backend; DCAT-US 3, cursor-paginated) |
+| `data-gov`           | High-level client + CLI binary built on `data-gov-catalog`                |
+| `data-gov-mcp-server`| MCP server exposing `data-gov` to AI tools over JSON-RPC on stdin/stdout  |
+| `data-gov-ckan`      | Generic CKAN Action API client for non-data.gov portals (state, municipal, university, European). Maintenance mode. |
 
-## CKAN Knowledge Base
+Rust 2024 edition, MSRV 1.90, Apache-2.0.
 
-### What is CKAN?
-- **CKAN** (Comprehensive Knowledge Archive Network) is open-source data portal software
-- **data.gov** runs on CKAN, as do many other government data portals worldwide
-- **REST API** with JSON responses, following consistent patterns
-- **Terminology**: "packages" = datasets, "resources" = files/data within datasets
+## Important — backend migration in 0.4.0
 
-### CKAN API Structure
+**As of 2026 data.gov no longer uses CKAN.** It serves the catalog through a
+purpose-built Catalog API. If you read older docs, blog posts, or training
+data, assume they describe the retired CKAN endpoint. Concretely:
+
+- The high-level `data-gov` crate is backed by `data-gov-catalog`, NOT
+  `data-gov-ckan`.
+- `package_search` / `package_show` / `organization_list` are CKAN concepts.
+  They live in `data-gov-ckan` and are valid against third-party CKAN
+  portals — but **never** generate code that calls them against
+  `catalog.data.gov` (it will 404).
+- `data.gov` returns DCAT-US 3 (`Dataset`, `Distribution`, `Publisher`,
+  `ContactPoint`), not CKAN's `Package`/`Resource`.
+
+## Catalog API quick reference
+
 ```
-Base URL: https://catalog.data.gov/api/3/action/
-Authentication: Optional API key via header, URL param, or POST body
-Response format: {"success": bool, "result": {...}, "help": "..."}
+Base URL:   https://catalog.data.gov
+Auth:       none (public)
+Pagination: cursor-based via `after`; pass response.after on the next call
+Format:     DCAT-US 3 JSON (https://resources.data.gov/resources/dcat-us/)
 ```
 
-### Key CKAN Concepts for Code Generation
+Endpoints currently covered by `data-gov-catalog`:
 
-#### 1. **Packages (Datasets)**
-- **package_search**: Search datasets with complex filtering
-- **package_show**: Get detailed dataset information by ID/name
-- **package_list**: List all dataset names (simple)
-- Fields: `name` (ID), `title`, `notes` (description), `tags`, `resources`, `organization`
+- `/search` — full-text search with cursor pagination (`SearchParams`
+  builder for `q`, `per_page`, `after`, `org_slug`, `org_type`,
+  `keyword(s)`, `spatial_*`, `slug`, `sort`)
+- `/api/organizations` — list publishing organizations
+- `/api/keywords` — keyword facets
+- `/api/locations/search`, `/api/location/{id}` — spatial lookups
+- `/harvest_record/{id}`, `/harvest_record/{id}/raw`,
+  `/harvest_record/{id}/transformed` — raw + transformed harvest records
 
-#### 2. **Resources (Files)**
-- Files/data within a dataset
-- Fields: `url`, `format`, `name`, `description`, `size`
-- Common formats: CSV, JSON, XML, PDF, API endpoints
+### High-level shortcuts (`data-gov`)
 
-#### 3. **Organizations & Groups**  
-- **Organizations**: Government agencies that publish data (e.g., "epa-gov", "gsa-gov")
-- **Groups**: Thematic categorizations (e.g., "climate", "health")
-- Both have: `name`, `title`, `description`, `image_url`
-
-#### 4. **Search & Discovery**
-- **Full-text search**: Query across titles, descriptions, tags
-- **Faceted search**: Filter by organization, format, tags, etc.
-- **Autocomplete**: For datasets, orgs, groups, tags, users
-- **Pagination**: `rows` (limit) and `start` (offset)
-
-### Common CKAN API Patterns
-
-#### Authentication (All Optional)
 ```rust
-// API Key (recommended for higher rate limits)
-Configuration {
-    api_key: Some(ApiKey { key: "xxx".to_string(), prefix: None }),
-    // ...
-}
+use data_gov::DataGovClient;
 
-// Basic Auth (some CKAN instances)
-Configuration {
-    basic_auth: Some(("username".to_string(), Some("password".to_string()))),
-    // ...
-}
-```
+# async fn run() -> data_gov::Result<()> {
+let client = DataGovClient::new()?;
 
-#### Error Handling Patterns
-```rust
-// CKAN API responses always have this structure
-{"success": false, "error": {"__type": "Not Found Error", "message": "..."}}
+// Cursor-based pagination — `per_page` is the page size, `after` is the cursor.
+let page = client.search("climate", Some(20), None, None).await?;
+let next = client.search("climate", Some(20), page.after.as_deref(), None).await?;
 
-// Map to appropriate Rust error types
-CkanError::NotFound { message, error_type }
-CkanError::ValidationError { message, details }
-CkanError::NetworkError(reqwest::Error)
-```
+// Lookup is by slug. Harvest-record UUIDs go through a separate method.
+let hit = client.get_dataset("consumer-complaint-database").await?;
+let dataset = client.get_dataset_by_harvest_record("…uuid…").await?;
 
-#### Search Patterns
-```rust
-// Basic text search
-client.package_search(Some("climate"), Some(10), Some(0), None).await?
-
-// Advanced filtering with fq parameter  
-let filter = json!({"organization": "epa-gov", "res_format": "CSV"});
-client.package_search(Some("water"), Some(20), Some(0), Some(filter)).await?
-```
-
-## Data.gov Specifics
-
-### Known Stable Datasets (for testing)
-- `"consumer-complaint-database"`: CFPB complaints, regularly updated
-- `"federal-employee-salaries"`: OPM salary data, annual updates
-- `"lobbying-disclosure-contributions"`: Senate lobbying data
-
-### Common Organizations
-- `"gsa-gov"`: General Services Administration
-- `"epa-gov"`: Environmental Protection Agency  
-- `"omb-gov"`: Office of Management and Budget
-- `"ed-gov"`: Department of Education
-
-### API Endpoints Available on data.gov
-```
-✅ /api/3/action/package_search - Dataset search
-✅ /api/3/action/package_show - Dataset details
-✅ /api/3/action/organization_list - List agencies
-✅ /api/3/action/group_list - List topic groups
-✅ /api/util/dataset/autocomplete - Dataset name autocomplete
-✅ /api/util/organization/autocomplete - Agency autocomplete
-❌ User management endpoints (not public)
-❌ Dataset creation/editing (requires auth + permissions)
-```
-
-### Rate Limiting & Best Practices
-- No official rate limits published, but be respectful
-- Use pagination rather than requesting everything at once
-- Cache results when possible to reduce API calls
-- Handle network timeouts gracefully (government servers can be slow)
-
-## Code Generation Guidelines
-
-### Rust Patterns to Follow
-
-#### 1. **Error Handling**
-```rust
-// Always use Result types for fallible operations
-pub async fn package_show(&self, id: &str) -> Result<Package, CkanError> {
-    // Implementation with proper error mapping
-}
-
-// Provide rich error context
-#[derive(Debug, thiserror::Error)]
-pub enum CkanError {
-    #[error("Dataset not found: {message}")]
-    NotFound { message: String, error_type: String },
-    // ...
-}
-```
-
-#### 2. **Configuration Patterns**
-```rust
-// Provide sensible defaults for data.gov
-impl Configuration {
-    pub fn new_data_gov() -> Result<Configuration, CkanError> {
-        Ok(Configuration {
-            base_path: "https://catalog.data.gov/api/3".to_string(),
-            user_agent: Some("data-gov-rs/3.0".to_string()),
-            client: reqwest::Client::new(),
-            // ... other defaults
-        })
+// Distributions, not resources.
+if let Some(dcat) = hit.dcat.as_ref() {
+    let dists = DataGovClient::get_downloadable_distributions(dcat);
+    if let Some(d) = dists.first() {
+        client.download_distribution(d, None).await?;
     }
 }
+# Ok(()) }
 ```
 
-#### 3. **API Method Patterns**
-```rust
-// Use Option<T> for optional parameters, not magic values
-pub async fn package_search(
-    &self,
-    q: Option<&str>,           // Search query
-    rows: Option<u32>,         // Number of results (default: 10)
-    start: Option<u32>,        // Offset (default: 0)  
-    fq: Option<serde_json::Value>, // Advanced filters
-) -> Result<PackageSearchResult, CkanError>
+### Common Catalog API parameters (cheat sheet)
 
-// Provide convenience methods
-pub async fn search_by_organization(&self, org: &str) -> Result<PackageSearchResult, CkanError> {
-    let fq = json!({"organization": org});
-    self.package_search(None, None, None, Some(fq)).await
-}
-```
+| Need                          | Use                                                 |
+|-------------------------------|-----------------------------------------------------|
+| Free-text search              | `SearchParams::new().q("…")`                        |
+| Filter by publisher slug      | `.org_slug("epa-gov")`                              |
+| Filter by org type            | `.org_type("Federal Government")`                   |
+| Keyword facets                | `.keyword("…")` or `.keywords([…])`                 |
+| Geographic intersection       | `.spatial_geometry(geojson).spatial_within(false)`  |
+| Page size                     | `.per_page(50)` (default 10, server caps the max)   |
+| Next page                     | `.after(prev_response.after.unwrap())`              |
+| Lookup a known slug           | `.slug("dataset-slug")` or `client.dataset_by_slug` |
 
-#### 4. **Type Safety**
-```rust
-// Use strong types, not stringly-typed APIs
-pub struct Package {
-    pub name: String,              // Required - dataset ID
-    pub title: Option<String>,     // Optional - human readable name
-    pub notes: Option<String>,     // Optional - description
-    pub tags: Option<Vec<Tag>>,    // Optional - list of tags
-    pub resources: Option<Vec<Resource>>, // Optional - files/data
-    // ... other fields with appropriate Option<T>
-}
+## CKAN API (for `data-gov-ckan` only)
 
-// Derive appropriate traits
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct Tag {
-    pub name: String,
-    pub display_name: Option<String>,
-}
-```
+The `data-gov-ckan` crate covers the standard CKAN Action API surface:
+`package_search`, `package_show`, `organization_list`, `group_list`,
+`tag_list`, `user_list`, plus the matching `*_autocomplete` helpers.
+Authentication is via `Configuration.api_key`, basic auth, or custom
+headers on the `reqwest::Client`.
 
-### Testing Guidelines
+**Use this crate only against non-data.gov CKAN deployments.** Active
+development focuses on `data-gov-catalog`; CKAN coverage is in
+maintenance mode (bugfixes and security patches).
 
-#### Integration Test Patterns
-```rust
-#[tokio::test]
-async fn test_package_search() -> Result<(), CkanError> {
-    let client = CkanClient::new_data_gov(None)?;
-    
-    // Use stable, known datasets for testing
-    let result = client.package_search(Some("climate"), Some(5), Some(0), None).await?;
-    
-    // Test structure, not specific content (data changes)
-    assert!(result.count > 0);
-    assert!(result.results.is_some());
-    
-    Ok(())
-}
+## MCP server (`data-gov-mcp-server`)
 
-// Test error conditions
-#[tokio::test]  
-async fn test_package_not_found() {
-    let client = CkanClient::new_data_gov(None).unwrap();
-    let result = client.package_show("definitely-does-not-exist").await;
-    
-    match result {
-        Err(CkanError::NotFound { .. }) => {}, // Expected
-        other => panic!("Expected NotFound error, got: {:?}", other),
-    }
-}
-```
+JSON-RPC 2.0 over stdin/stdout. Tools currently exposed:
 
-### Documentation Patterns
+- `data_gov.search` — cursor-paginated; params `query`, `limit`,
+  `after`, `organization`, `organizationContains` (client-side
+  substring filter on org names)
+- `data_gov.dataset` — DCAT-US 3 metadata by slug
+- `data_gov.autocompleteDatasets` — capped full-text search
+- `data_gov.listOrganizations`
+- `data_gov.downloadResources` — params `datasetId`, optional
+  `outputDir`, optional `formats` filter (matched against `format` AND
+  `mediaType`), optional `distributionIndexes` (zero-based)
 
-#### Rustdoc Examples
-```rust
-/// Search for datasets on data.gov
-///
-/// # Arguments
-/// * `q` - Search query string (searches title, description, tags)
-/// * `rows` - Maximum number of results to return (default: 10, max: 1000)
-/// * `start` - Number of results to skip for pagination (default: 0)
-/// * `fq` - Advanced filter query as JSON object
-///
-/// # Examples
-///
-/// Basic search:
-/// ```rust
-/// # use data_gov_ckan::CkanClient;
-/// # #[tokio::main]
-/// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
-/// let client = CkanClient::new_data_gov(None)?;
-/// let results = client.package_search(Some("climate"), Some(10), Some(0), None).await?;
-/// println!("Found {} datasets", results.count);
-/// # Ok(())
-/// # }
-/// ```
-///
-/// Search with filters:
-/// ```rust,no_run
-/// # use data_gov_ckan::CkanClient;
-/// # use serde_json::json;
-/// # #[tokio::main]  
-/// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
-/// let client = CkanClient::new_data_gov(None)?;
-/// let filter = json!({"organization": "epa-gov", "res_format": "CSV"});
-/// let results = client.package_search(Some("water"), None, None, Some(filter)).await?;
-/// # Ok(())
-/// # }
-/// ```
-pub async fn package_search(/* ... */) -> Result<PackageSearchResult, CkanError>
-```
+Plus the MCP lifecycle methods (`initialize`, `tools/list`, `tools/call`,
+`shutdown`). The legacy `ckan.*` tools were removed in 0.4.0.
 
-### Common Gotchas to Avoid
+## Code-generation guidance
 
-1. **Don't assume all fields are present** - CKAN data is messy, use Option<T> liberally
-2. **Don't hardcode URLs** - Allow configuration for different CKAN instances  
-3. **Don't ignore rate limits** - Provide configurable delays between requests
-4. **Don't log sensitive data** - API keys or PII that might be in responses
-5. **Don't make breaking changes lightly** - Government developers need stability
+### When asked to "search data.gov"
 
-### Performance Considerations
+Use `data_gov::DataGovClient::search(query, per_page, after, organization)`
+or, for advanced filters, drop down to `data_gov_catalog::SearchParams`
+via `client.catalog_client()`. Do NOT generate `package_search` calls.
 
-- **Reuse HTTP clients** - Don't create new reqwest::Client for each request
-- **Use connection pooling** - reqwest does this automatically  
-- **Implement reasonable timeouts** - Government servers can be slow
-- **Cache when appropriate** - Organization lists don't change often
-- **Paginate large results** - Don't fetch thousands of records at once
+### When asked to "download files from data.gov"
 
-## When Adding New Features
+Use `download_distribution` or `download_distributions` on
+`DataGovClient`. The Catalog API exposes DCAT `Distribution` objects with
+`download_url` and (sometimes) `access_url`. A distribution is
+"downloadable" when it carries a `download_url` — `accessURL`-only
+entries are API references, not files.
 
-### For New CKAN API Endpoints
-1. Check CKAN documentation: https://docs.ckan.org/en/latest/api/
-2. Test manually against data.gov first
-3. Add appropriate Rust models in `models/` directory
-4. Implement client method with proper error handling
-5. Add unit and integration tests
-6. Update documentation with real examples
+### When asked about API keys for data.gov
 
-### For Data.gov Specific Features  
-1. Verify the feature works on catalog.data.gov
-2. Consider how it works on other CKAN instances
-3. Handle data.gov quirks gracefully
-4. Test against known stable datasets
-5. Document any data.gov-specific behavior
+There aren't any. The Catalog API is public. The `--api-key` CLI flag and
+`DataGovConfig::with_api_key` were removed in 0.4.0. If a user has an
+old CKAN API key, it is no longer used.
 
-This context should guide all AI-generated code to be production-ready, idiomatic Rust that works well with real government data APIs.
+### When asked to add a new endpoint
+
+1. Add the response model in the relevant crate's `models.rs` (catalog)
+   or model module (CKAN). Use `Option<T>` liberally — both APIs return
+   sparse fields.
+2. Add the client method in `client.rs`, returning the crate's `Result`
+   alias.
+3. Cover it with a wiremock fixture test in `tests/`.
+4. Add an `#[ignore]`'d live integration test for documentation.
+5. Add a rustdoc comment with `# Errors` and a runnable example
+   (`no_run` if it requires network access).
+
+### Common gotchas
+
+1. **DCAT field names use camelCase in JSON** (`downloadURL`, `mediaType`,
+   `accessURL`) — serde rename attributes handle the mapping. Don't
+   guess Rust field names; consult `data-gov-catalog/src/models.rs`.
+2. **Slugs vs. identifiers**: a dataset's `slug` is what the
+   `dataset_by_slug` endpoint accepts; `identifier` is the publisher's
+   own ID and is opaque. Harvest-record UUIDs are different again — use
+   `get_dataset_by_harvest_record`.
+3. **No offsets**: pages can only be walked forward via `after`.
+4. **Distribution count varies wildly** — some datasets have one CSV,
+   others have 50+ files across formats. Don't assume `distributions[0]`
+   is "the data".
+5. **No silent error swallowing** — `let _ =`, `.ok()`, and empty
+   `Err(_) => {}` arms are not allowed in library code (see
+   [`CLAUDE.md`](../../CLAUDE.md)).
+6. **No `unsafe`, no blocking in async, no `unwrap()` in library code.**
+
+### Stable test fixtures
+
+For wiremock or assertion targets that need a real-looking dataset, these
+slugs have been stable for years:
+
+- `consumer-complaint-database` (CFPB)
+- `electric-vehicle-population-data`
+
+Org slugs that have been stable: `epa-gov`, `gsa-gov`, `omb-gov`,
+`ed-gov`.
+
+## Where to look
+
+| Question                         | File                                              |
+|----------------------------------|---------------------------------------------------|
+| Engineering rules (tests, errors)| [`CLAUDE.md`](../../CLAUDE.md)                    |
+| Catalog client surface           | `data-gov-catalog/src/client.rs`                  |
+| Catalog DCAT models              | `data-gov-catalog/src/models.rs`                  |
+| High-level helpers               | `data-gov/src/client.rs`                          |
+| MCP tool registry & dispatch     | `data-gov-mcp-server/src/{tools,handlers}.rs`     |
+| What changed and when            | [`CHANGELOG.md`](../../CHANGELOG.md)              |

@@ -6,7 +6,7 @@ edition = "2024"
 description = "Rust client library and CLI for data.gov - search, explore, and download U.S. government datasets"
 license = "Apache-2.0"
 repository = "https://github.com/dspadea/data-gov-rs"
-keywords = ["data", "government", "api", "ckan", "cli"]
+keywords = ["data", "government", "api", "catalog", "cli"]
 categories = ["api-bindings", "command-line-utilities", "web-programming"]
 authors = ["David Spadea"]
 homepage = "https://github.com/dspadea/data-gov-rs"
@@ -16,7 +16,7 @@ name = "data-gov"
 path = "tools/cli/main.rs"
 
 [dependencies]
-data-gov-ckan = "0.4.0"
+data-gov-catalog = "0.4.0"
 reqwest = { version = "0.13.2", features = ["json", "stream"] }
 serde = { version = "1.0.226", features = ["derive"] }
 serde_json = "1.0.145"

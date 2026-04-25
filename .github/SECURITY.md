@@ -2,41 +2,41 @@
 
 ## Supported Versions
 
-We actively support the following versions of data-gov-rs:
+The project is pre-1.0; only the latest released minor receives security
+fixes.
 
 | Version | Supported          |
 | ------- | ------------------ |
-| 3.x.x   | :white_check_mark: |
-| 2.x.x   | :x:                |
-| < 2.0   | :x:                |
+| 0.4.x   | :white_check_mark: |
+| < 0.4   | :x:                |
 
 ## Reporting a Vulnerability
 
-We take security vulnerabilities seriously. If you discover a security vulnerability in data-gov-rs, please follow these steps:
+If you discover a security vulnerability in data-gov-rs, please **open a
+GitHub issue** in this repository:
 
-### For Security Issues
+<https://github.com/dspadea/data-gov-rs/issues/new/choose>
 
-**DO NOT** create a public GitHub issue for security vulnerabilities.
+Include:
 
-Instead, please:
+- A description of the vulnerability
+- Steps to reproduce
+- Potential impact
+- Any suggested fixes, if you have them
 
-1. **Email us directly** at [security@yourproject.com] with details about the vulnerability
-2. **Include the following information:**
-   - Description of the vulnerability
-   - Steps to reproduce the issue
-   - Potential impact
-   - Any suggested fixes (if you have them)
-   - Your contact information
+Use the same channel for non-security bug reports and feature requests —
+this is a small, single-maintainer project and GitHub issues are the only
+supported intake. There is no private security disclosure channel; if a
+report would be harmful to publish, please describe the issue at a high
+level in the issue and we'll coordinate next steps from there.
 
-3. **Wait for our response** - We will acknowledge your report within 48 hours and provide a detailed response within 7 days.
+### What to expect
 
-### What to Expect
-
-- **Acknowledgment**: We'll confirm receipt of your vulnerability report
-- **Assessment**: We'll assess the severity and impact of the vulnerability  
-- **Fix Development**: We'll work on a fix and coordinate the release timeline with you
-- **Disclosure**: We'll coordinate responsible disclosure of the vulnerability
-- **Credit**: We'll credit you appropriately (if desired) when we announce the fix
+Best-effort response from a single maintainer. There is no formal SLA;
+typical turnaround for an acknowledgment is a few days. Fixes for
+confirmed issues will land in a patch release of the latest supported
+minor (see the version table above), and reporters will be credited in
+the changelog unless they prefer otherwise.
 
 ### Security Considerations for Government Data APIs
 
@@ -117,7 +117,8 @@ This project follows secure development practices:
 
 ### Questions?
 
-If you have questions about security practices or this policy, please create a public issue (for general questions) or contact us privately (for security-sensitive topics).
+For any question about this policy, security or otherwise, open a GitHub
+issue: <https://github.com/dspadea/data-gov-rs/issues/new/choose>.
 
 ---
 

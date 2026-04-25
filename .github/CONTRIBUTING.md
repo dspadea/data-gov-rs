@@ -1,14 +1,30 @@
 # Contributing to data-gov-rs
 
-Thank you for your interest in contributing to data-gov-rs! This project provides Rust libraries for working with US government open data APIs, particularly data.gov and CKAN-powered portals.
+Thank you for your interest in contributing! This workspace publishes four
+Rust crates for working with US government open data:
+
+- [`data-gov-catalog`](../data-gov-catalog/) — async client for the data.gov
+  Catalog API (current backend; DCAT-US 3, cursor-paginated)
+- [`data-gov`](../data-gov/) — high-level client + CLI built on
+  `data-gov-catalog`
+- [`data-gov-mcp-server`](../data-gov-mcp-server/) — MCP server exposing
+  `data-gov` to AI tools
+- [`data-gov-ckan`](../data-gov-ckan/) — generic CKAN Action API client for
+  portals other than data.gov
+
+See [`CLAUDE.md`](../CLAUDE.md) for the full development guide (testing,
+error-handling, security, and dependency rules). This file is a quick
+orientation for new contributors.
 
 ## Getting Started
 
 ### Prerequisites
 
-- Rust 1.70 or later
+- **Rust 1.90 or later** (the workspace uses the Rust 2024 edition)
 - Git
-- Basic familiarity with CKAN APIs and data.gov (helpful but not required)
+- Basic familiarity with the data.gov [Catalog API](https://resources.data.gov/catalog-api/)
+  is helpful but not required (CKAN familiarity helps for the
+  `data-gov-ckan` crate specifically)
 
 ### Development Setup
 
@@ -43,12 +59,14 @@ Thank you for your interest in contributing to data-gov-rs! This project provide
 
 ### Types of Contributions Welcome
 
-1. **Bug fixes** - Fix issues in existing functionality
-2. **New API endpoints** - Add support for additional CKAN API endpoints
-3. **Documentation** - Improve docs, examples, or code comments  
-4. **Performance improvements** - Optimize existing code
-5. **New data sources** - Add support for other government APIs
-6. **Testing** - Add test coverage or improve existing tests
+1. **Bug fixes** — Fix issues in existing functionality
+2. **New endpoint coverage** — Add Catalog API endpoints in
+   `data-gov-catalog`, or CKAN action endpoints in `data-gov-ckan`
+3. **Documentation** — Improve docs, examples, or code comments
+4. **Performance improvements** — Optimize existing code
+5. **New tools / commands** — MCP tools in `data-gov-mcp-server`, REPL
+   commands in `data-gov`
+6. **Testing** — Add test coverage or improve existing tests
 
 ### Development Process
 
@@ -64,19 +82,17 @@ Thank you for your interest in contributing to data-gov-rs! This project provide
    - Integration tests in `tests/` directories
    - Example usage in `examples/` directories
 
-4. **Run the full test suite**:
+4. **Run the full quality gates** (CI enforces all of these):
    ```bash
-   # Run all tests
-   cargo test
-   
-   # Run integration tests (requires network)
-   cd data-gov-ckan && cargo test --test integration_tests
-   
-   # Check formatting
-   cargo fmt --check
-   
-   # Run clippy
-   cargo clippy -- -D warnings
+   cargo fmt --all -- --check                                  # Formatting
+   cargo clippy --all-targets --all-features -- -D warnings    # Lint (warnings = errors)
+   cargo test --all-features                                   # Unit + fixture tests
+   cargo doc --all-features --no-deps                          # Rustdoc builds clean
+   ```
+
+   Live-network integration tests are marked `#[ignore]` and run separately:
+   ```bash
+   cargo test -p data-gov-catalog --test integration_tests -- --ignored
    ```
 
 5. **Update documentation** as needed:
@@ -121,32 +137,48 @@ Thank you for your interest in contributing to data-gov-rs! This project provide
 - Provide both low-level and high-level APIs when appropriate
 - Consider backwards compatibility for public APIs
 
-## Working with CKAN APIs
+## Working with the underlying APIs
 
-### Understanding the Data
+### Catalog API (data.gov)
 
-- CKAN is used by data.gov and many other government data portals
-- APIs follow REST principles with JSON responses
-- Most endpoints support both GET and POST methods
-- Authentication via API keys is optional but recommended for higher rate limits
+- Documented at <https://resources.data.gov/catalog-api/>.
+- Returns DCAT-US 3 metadata; cursor-paginated via `after`.
+- Public — no API key. Be respectful with request volume; government
+  servers can be slow.
+- Add coverage in `data-gov-catalog` first (low-level), then surface it
+  through `data-gov` (high-level) and `data-gov-mcp-server` (MCP tools)
+  as needed.
 
-### Testing Against Real APIs
+### CKAN Action API (other portals)
 
-- Integration tests run against the real data.gov API
-- Be mindful of rate limits during development
-- Some tests may be flaky due to network conditions - that's expected
-- Use specific, stable datasets in tests when possible
+- Documented at <https://docs.ckan.org/en/latest/api/>.
+- The `data-gov-ckan` crate is no longer used by data.gov but is retained
+  for European, state, municipal, and university CKAN deployments.
+- Authentication via API key, basic auth, or custom headers is supported.
 
-### Adding New Endpoints
+### Testing against live APIs
 
-When adding support for new CKAN API endpoints:
+- Live-network tests are gated behind `#[ignore]`. Run them with
+  `cargo test -- --ignored`.
+- Use specific, stable datasets (e.g., `consumer-complaint-database`) in
+  assertions; structures change less often than counts and content.
+- Prefer wiremock-based fixture tests for routine coverage so CI stays
+  network-independent.
 
-1. **Study the CKAN documentation** for the endpoint
-2. **Test manually** with curl or similar tools
-3. **Add appropriate models** in the `models/` directory
-4. **Implement the client method** in `client.rs`
-5. **Add comprehensive tests** including error cases
-6. **Document with examples** showing real usage
+### Adding new endpoints
+
+When adding support for a new endpoint:
+
+1. **Study the upstream documentation** (Catalog API or CKAN, as appropriate).
+2. **Test manually** with `curl` or similar against a known instance.
+3. **Add the response model** alongside existing types in `src/models.rs`
+   (catalog) or the relevant CKAN model module.
+4. **Implement the client method** in `src/client.rs`, returning the
+   crate's `Result` alias.
+5. **Add fixture-based tests** in `tests/` using `wiremock`.
+6. **Add an `#[ignore]`'d live integration test** that hits the real API.
+7. **Document the method** with a rustdoc comment, `# Errors` section, and
+   a runnable example.
 
 ## Pull Request Guidelines
 

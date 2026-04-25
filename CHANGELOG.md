@@ -6,6 +6,61 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 (0.x releases may include breaking changes on minor bumps).
 
+## [Unreleased]
+
+### Breaking — Catalog API migration
+
+- **data.gov retired its CKAN Action API.** The workspace now targets the new
+  [Catalog API](https://resources.data.gov/catalog-api/) (cursor-paginated,
+  DCAT-US 3 payloads, no API keys).
+- **New `data-gov-catalog` crate** replaces `data-gov-ckan` as the backend
+  for `data-gov` and `data-gov-mcp-server`. The CKAN crate is retained as a
+  general-purpose client for other CKAN-compatible portals, but is no longer
+  used by data.gov.
+- **`DataGovClient::search` signature** changed: `offset`/`format` parameters
+  removed; a cursor-based `after: Option<&str>` replaces offset. Returns
+  `SearchResponse` (from the catalog crate) instead of CKAN's
+  `PackageSearchResult`.
+- **`DataGovClient::get_dataset(slug)`** now returns a `SearchHit` (not
+  `Package`) and resolves strictly by slug; harvest-record UUIDs go through
+  the new `get_dataset_by_harvest_record(id)`.
+- **`DataGovClient::download_resources`** renamed to `download_distributions`
+  and takes `&[Distribution]`. `download_resource` → `download_distribution`.
+- **`DataGovClient::get_downloadable_resources`** renamed to
+  `get_downloadable_distributions` and takes `&Dataset`.
+- **`DataGovClient::get_resource_filename`** renamed to
+  `get_distribution_filename`.
+- **`DataGovClient::ckan_client()`** replaced by `catalog_client()`.
+- **`DataGovConfig::with_api_key` removed** — the Catalog API is unauthenticated.
+- **`data_gov::ckan` re-export** replaced by `data_gov::catalog`.
+- **`DATA_GOV_BASE_URL`** constant now points at `https://catalog.data.gov`
+  (was `https://catalog.data.gov/api/3`).
+- **CLI `--api-key` flag removed** (Catalog API is public).
+- **MCP server** drops the `ckan.packageSearch`, `ckan.packageShow`, and
+  `ckan.organizationList` tools. The `data_gov.search` params lost `offset`
+  and `format`; the new `after` cursor and `organizationContains` client-side
+  filter remain. `data_gov.downloadResources` replaces `resourceIds` with
+  `distributionIndexes`; the `formats` filter is now matched client-side
+  against both `format` and `mediaType`.
+
+### Added
+
+- **`data-gov-catalog`** — new crate wrapping the Catalog API with typed
+  models for DCAT-US 3 (`Dataset`, `Distribution`, `Publisher`,
+  `ContactPoint`), search envelopes (`SearchResponse`, `SearchHit`),
+  organizations, keywords, locations, and harvest records. Endpoint coverage:
+  `/search` (with `SearchParams` builder), `/api/organizations`,
+  `/api/keywords`, `/api/locations/search`, `/api/location/{id}`,
+  `/harvest_record/{id}`, `/harvest_record/{id}/raw`,
+  `/harvest_record/{id}/transformed`.
+
+### Deprecated
+
+- **`data-gov-ckan`** crate-level docs and README now note that data.gov no
+  longer uses CKAN. The crate remains published and functional for use against
+  other CKAN-compatible instances (European, state, municipal, university
+  portals).
+
 ## [0.4.0] - 2026-03-07
 
 ### Breaking

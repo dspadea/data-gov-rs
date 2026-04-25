@@ -11,47 +11,46 @@ use crate::ui::{
     DownloadBatch, DownloadFailed, DownloadFinished, DownloadProgress, DownloadStarted,
     StatusReporter,
 };
-use data_gov_ckan::{
-    CkanClient,
-    models::{Package, PackageSearchResult, Resource},
+use data_gov_catalog::{
+    CatalogClient, SearchParams,
+    models::{Dataset, Distribution, Organization, SearchHit, SearchResponse},
 };
 
 /// Async client for exploring data.gov datasets.
 ///
-/// `DataGovClient` layers ergonomic helpers on top of the lower-level
-/// [`data_gov_ckan::CkanClient`]. In addition to search and metadata lookups it
-/// handles download destinations, progress reporting, and colour-aware output
-/// that matches the `data-gov` CLI defaults.
+/// `DataGovClient` layers ergonomic helpers on top of
+/// [`data_gov_catalog::CatalogClient`]. In addition to search and metadata
+/// lookups it handles download destinations, progress reporting, and
+/// status-reporter integration used by the `data-gov` CLI.
 #[derive(Debug)]
 pub struct DataGovClient {
-    ckan: CkanClient,
+    catalog: CatalogClient,
     config: DataGovConfig,
     http_client: reqwest::Client,
 }
 
 impl DataGovClient {
-    /// Create a new DataGov client with default configuration
+    /// Create a new DataGov client with default configuration.
     pub fn new() -> Result<Self> {
         Self::with_config(DataGovConfig::new())
     }
 
-    /// Access the current configuration
+    /// Access the current configuration.
     pub fn config(&self) -> &DataGovConfig {
         &self.config
     }
 
-    /// Create a new DataGov client with custom configuration
+    /// Create a new DataGov client with custom configuration.
     pub fn with_config(config: DataGovConfig) -> Result<Self> {
-        let ckan = CkanClient::new(config.ckan_config.clone());
+        let catalog = CatalogClient::new(config.catalog_config.clone());
 
-        // Create HTTP client with timeout for downloads
         let http_client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(config.download_timeout_secs))
             .user_agent(&config.user_agent)
             .build()?;
 
         Ok(Self {
-            ckan,
+            catalog,
             config,
             http_client,
         })
@@ -62,232 +61,250 @@ impl DataGovClient {
     /// Search for datasets on data.gov.
     ///
     /// # Arguments
-    /// * `query` - Search terms (searches titles, descriptions, tags)
+    /// * `query` - Full-text query (searches titles, descriptions, keywords).
+    ///   Pass an empty string to search without a text query.
+    /// * `per_page` - Page size. Server default is 10.
+    /// * `after` - Opaque cursor returned by a previous page's
+    ///   [`SearchResponse::after`]. Pass `None` for the first page.
+    /// * `organization` - Organization slug (e.g. `nasa`) to filter by.
     ///
-    /// Solr syntax: The `query` string may include Solr-style expressions such as
-    /// wildcards (e.g. `climat*`), phrase searches (`"air quality"`), and boolean
-    /// operators (`AND`, `OR`, `NOT`). When combined with structured filters the
-    /// underlying CKAN `package_search` endpoint interprets `q` and `fq` using
-    /// Solr semantics, so complex queries are supported.
-    /// * `limit` - Maximum number of results (default: 10, max: 1000)
-    /// * `offset` - Number of results to skip for pagination (default: 0)
-    /// * `organization` - Filter by organization name (optional)
-    /// * `format` - Filter by resource format (optional, e.g., "CSV", "JSON")
+    /// Pagination is cursor-based; there is no random-access offset.
     ///
     /// # Examples
     ///
-    /// Basic search:
     /// ```rust,no_run
     /// # use data_gov::DataGovClient;
     /// # #[tokio::main]
     /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// let client = DataGovClient::new()?;
-    /// let results = client.search("climate data", Some(20), None, None, None).await?;
-    /// # Ok(())
-    /// # }
-    /// ```
-    ///
-    /// Search with filters:
-    /// ```rust,no_run
-    /// # use data_gov::DataGovClient;
-    /// # #[tokio::main]
-    /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// # let client = DataGovClient::new()?;
-    /// let results = client.search("energy", Some(10), None, Some("doe-gov"), Some("CSV")).await?;
-    /// # Ok(())
-    /// # }
+    /// let page = client.search("climate", Some(20), None, None).await?;
+    /// let next = client.search("climate", Some(20), page.after.as_deref(), None).await?;
+    /// # Ok(()) }
     /// ```
     pub async fn search(
         &self,
         query: &str,
-        limit: Option<i32>,
-        offset: Option<i32>,
+        per_page: Option<i32>,
+        after: Option<&str>,
         organization: Option<&str>,
-        format: Option<&str>,
-    ) -> Result<PackageSearchResult> {
-        // Build filter query for advanced filtering
-        // Use quotes around values to ensure proper Solr parsing
-        let fq = match (organization, format) {
-            (Some(org), Some(fmt)) => Some(format!(
-                r#"organization:"{}" AND res_format:"{}""#,
-                org, fmt
-            )),
-            (Some(org), None) => Some(format!(r#"organization:"{}""#, org)),
-            (None, Some(fmt)) => Some(format!(r#"res_format:"{}""#, fmt)),
-            (None, None) => None,
-        };
-
-        // Only pass query if it's non-empty (don't use "*" as it interferes with filters)
-        let query_param = if query.is_empty() { None } else { Some(query) };
-
-        let result = self
-            .ckan
-            .package_search(query_param, limit, offset, fq.as_deref())
-            .await?;
-
-        Ok(result)
+    ) -> Result<SearchResponse> {
+        let mut params = SearchParams::new();
+        if !query.is_empty() {
+            params = params.q(query);
+        }
+        if let Some(n) = per_page {
+            params = params.per_page(n);
+        }
+        if let Some(cursor) = after {
+            params = params.after(cursor);
+        }
+        if let Some(org) = organization {
+            params = params.org_slug(org);
+        }
+        Ok(self.catalog.search(params).await?)
     }
 
-    /// Fetch the full `package_show` payload for a dataset.
-    pub async fn get_dataset(&self, dataset_id: &str) -> Result<Package> {
-        let package = self.ckan.package_show(dataset_id).await?;
-        Ok(package)
+    /// Fetch a single dataset by its data.gov slug.
+    ///
+    /// Returns `Err(ResourceNotFound)` if no dataset matches.
+    pub async fn get_dataset(&self, slug: &str) -> Result<SearchHit> {
+        self.catalog
+            .dataset_by_slug(slug)
+            .await?
+            .ok_or_else(|| DataGovError::resource_not_found(format!("slug {slug} not found")))
     }
 
-    /// Fetch dataset name suggestions for interactive prompts.
+    /// Fetch the DCAT-US 3 record for a harvest-record UUID.
+    pub async fn get_dataset_by_harvest_record(&self, id: &str) -> Result<Dataset> {
+        Ok(self.catalog.harvest_record_transformed(id).await?)
+    }
+
+    /// Fetch dataset title suggestions for interactive prompts.
+    ///
+    /// Implemented as a capped full-text search; the new API does not offer a
+    /// dedicated dataset-autocomplete endpoint.
     pub async fn autocomplete_datasets(
         &self,
         partial: &str,
         limit: Option<i32>,
     ) -> Result<Vec<String>> {
-        let suggestions = self.ckan.dataset_autocomplete(Some(partial), limit).await?;
-        Ok(suggestions.into_iter().filter_map(|s| s.name).collect())
+        let page = self.search(partial, limit.or(Some(10)), None, None).await?;
+        Ok(page
+            .results
+            .into_iter()
+            .filter_map(|hit| hit.title)
+            .collect())
     }
 
-    /// List the publisher slugs for government organizations.
+    /// List the publisher slugs for government organizations, capped to `limit`.
     pub async fn list_organizations(&self, limit: Option<i32>) -> Result<Vec<String>> {
-        let orgs = self.ckan.organization_list(None, limit, None).await?;
-        Ok(orgs)
+        let orgs = self.catalog.organizations().await?;
+        let iter = orgs.organizations.into_iter().filter_map(|o| o.slug);
+        Ok(match limit {
+            Some(n) if n >= 0 => iter.take(n as usize).collect(),
+            _ => iter.collect(),
+        })
     }
 
-    /// Fetch organization name suggestions for interactive prompts.
+    /// Fetch full organization records for the catalog.
+    pub async fn list_organization_records(&self) -> Result<Vec<Organization>> {
+        Ok(self.catalog.organizations().await?.organizations)
+    }
+
+    /// Fetch organization name suggestions matching `partial`.
+    ///
+    /// Implemented as a client-side case-insensitive filter over
+    /// [`CatalogClient::organizations`](data_gov_catalog::CatalogClient::organizations).
     pub async fn autocomplete_organizations(
         &self,
         partial: &str,
         limit: Option<i32>,
     ) -> Result<Vec<String>> {
-        let suggestions = self
-            .ckan
-            .organization_autocomplete(Some(partial), limit)
-            .await?;
-        Ok(suggestions.into_iter().filter_map(|s| s.name).collect())
+        let needle = partial.to_lowercase();
+        let orgs = self.catalog.organizations().await?;
+        let matches = orgs.organizations.into_iter().filter(|o| {
+            let name_hit = o
+                .name
+                .as_deref()
+                .is_some_and(|n| n.to_lowercase().contains(&needle));
+            let slug_hit = o
+                .slug
+                .as_deref()
+                .is_some_and(|s| s.to_lowercase().contains(&needle));
+            name_hit || slug_hit
+        });
+        let names = matches.filter_map(|o| o.name.or(o.slug));
+        Ok(match limit {
+            Some(n) if n >= 0 => names.take(n as usize).collect(),
+            _ => names.collect(),
+        })
     }
 
-    // === Resource Management ===
+    // === Distribution Management ===
 
-    /// Return resources that look like downloadable files.
+    /// Return distributions that look like downloadable files.
     ///
-    /// The returned list is filtered to resources that expose a direct URL, are
-    /// not marked as API endpoints, and advertise a file format.
-    pub fn get_downloadable_resources(package: &Package) -> Vec<Resource> {
-        package
-            .resources
-            .as_ref()
-            .unwrap_or(&Vec::new())
+    /// A distribution qualifies when it carries a `downloadURL` (as opposed to
+    /// API-only `accessURL` entries).
+    pub fn get_downloadable_distributions(dataset: &Dataset) -> Vec<Distribution> {
+        dataset
+            .distribution
             .iter()
-            .filter(|resource| {
-                // Has a URL and is not an API endpoint
-                resource.url.is_some()
-                    && resource.url_type.as_deref() != Some("api")
-                    && resource.format.is_some()
-            })
+            .filter(|d| d.download_url.is_some())
             .cloned()
             .collect()
     }
 
-    /// Pick a filesystem-friendly filename for a resource download.
-    /// Pick a filesystem-friendly filename for a resource download.
+    /// Pick a filesystem-friendly filename for a distribution.
     ///
     /// # Arguments
-    /// * `resource` - The resource to generate a filename for
-    /// * `fallback_name` - Optional fallback name if resource has no name
-    /// * `resource_index` - Optional index to append to prevent conflicts when multiple resources have the same name
-    ///
-    /// When downloading multiple resources, the index should be provided to ensure unique filenames
-    /// even when resources have duplicate names.
-    pub fn get_resource_filename(
-        resource: &Resource,
+    /// * `distribution` - The distribution to generate a filename for.
+    /// * `fallback_name` - Used when the distribution has no title and no URL
+    ///   segment we can derive a name from.
+    /// * `index` - Appended before the extension to disambiguate multi-file
+    ///   batches with duplicate titles.
+    pub fn get_distribution_filename(
+        distribution: &Distribution,
         fallback_name: Option<&str>,
-        resource_index: Option<usize>,
+        index: Option<usize>,
     ) -> String {
-        // Determine base filename and whether it has an extension
-        let (base_filename, has_extension) = if let Some(name) = &resource.name {
-            if let Some(format) = &resource.format {
-                let format_lower = format.to_lowercase();
-                if name.ends_with(&format!(".{}", format_lower)) {
-                    (name.clone(), true)
+        let (base, has_ext) = Self::base_filename(distribution, fallback_name);
+        match index {
+            Some(i) if has_ext => {
+                if let Some(dot) = base.rfind('.') {
+                    let (stem, ext) = base.split_at(dot);
+                    format!("{stem}-{i}{ext}")
                 } else {
-                    (format!("{}.{}", name, format_lower), true)
+                    format!("{base}-{i}")
                 }
-            } else {
-                (name.clone(), false)
             }
-        } else if let Some(url) = &resource.url
-            && let Ok(parsed_url) = Url::parse(url)
-            && let Some(mut segments) = parsed_url.path_segments()
-            && let Some(filename) = segments.next_back()
-            && !filename.is_empty()
-            && filename.contains('.')
-        {
-            (filename.to_string(), true)
-        } else {
-            // Use fallback with format extension
-            let base_name = fallback_name.unwrap_or("data");
-            if let Some(format) = &resource.format {
-                (format!("{}.{}", base_name, format.to_lowercase()), true)
-            } else {
-                (format!("{}.dat", base_name), true)
-            }
-        };
+            Some(i) => format!("{base}-{i}"),
+            None => base,
+        }
+    }
 
-        // Append resource index if provided (to handle duplicate names)
-        if let Some(index) = resource_index {
-            if has_extension {
-                // Insert index before the extension
-                if let Some(dot_pos) = base_filename.rfind('.') {
-                    let (name, ext) = base_filename.split_at(dot_pos);
-                    return format!("{}-{}{}", name, index, ext);
+    fn base_filename(distribution: &Distribution, fallback_name: Option<&str>) -> (String, bool) {
+        if let Some(title) = &distribution.title {
+            return Self::apply_format_extension(title, distribution.format.as_deref());
+        }
+        if let Some(url) = distribution
+            .download_url
+            .as_deref()
+            .or(distribution.access_url.as_deref())
+            && let Ok(parsed) = Url::parse(url)
+            && let Some(mut segments) = parsed.path_segments()
+            && let Some(last) = segments.next_back()
+            && !last.is_empty()
+            && last.contains('.')
+        {
+            return (last.to_string(), true);
+        }
+        let stem = fallback_name.unwrap_or("data");
+        if let Some(fmt) = &distribution.format {
+            (format!("{stem}.{}", fmt.to_lowercase()), true)
+        } else {
+            (format!("{stem}.dat"), true)
+        }
+    }
+
+    fn apply_format_extension(name: &str, format: Option<&str>) -> (String, bool) {
+        match format {
+            Some(fmt) => {
+                let lower = fmt.to_lowercase();
+                if name.to_lowercase().ends_with(&format!(".{lower}")) {
+                    (name.to_string(), true)
+                } else {
+                    (format!("{name}.{lower}"), true)
                 }
             }
-            // No extension or couldn't find dot, just append
-            format!("{}-{}", base_filename, index)
-        } else {
-            base_filename
+            None => (name.to_string(), name.contains('.')),
         }
     }
 
     // === File Downloads ===
 
-    /// Download a single resource to the specified directory.
+    /// Download a single distribution to the specified directory.
     ///
     /// # Arguments
-    /// * `resource` - The resource to download
-    /// * `output_dir` - Directory where the file will be saved. If None, uses the base download directory.
+    /// * `distribution` - The distribution to download.
+    /// * `output_dir` - Directory where the file will be saved. If `None`,
+    ///   uses the configured base download directory.
     ///
-    /// Returns the full path where the file was saved.
-    pub async fn download_resource(
+    /// Returns the path where the file was written.
+    pub async fn download_distribution(
         &self,
-        resource: &Resource,
+        distribution: &Distribution,
         output_dir: Option<&Path>,
     ) -> Result<PathBuf> {
-        let url = match resource.url.as_deref() {
+        let url = match distribution.download_url.as_deref() {
             Some(url) => url,
             None => {
                 if let Some(reporter) = self.config.status_reporter.as_ref() {
                     let event = DownloadFailed {
-                        resource_name: resource.name.clone(),
+                        resource_name: distribution.title.clone(),
                         dataset_name: None,
                         output_path: None,
-                        error: "Resource has no URL".to_string(),
+                        error: "Distribution has no downloadURL".to_string(),
                     };
                     reporter.on_download_failed(&event);
                 }
-                return Err(DataGovError::resource_not_found("Resource has no URL"));
+                return Err(DataGovError::resource_not_found(
+                    "Distribution has no downloadURL",
+                ));
             }
         };
 
         let output_dir = output_dir
             .map(|p| p.to_path_buf())
             .unwrap_or_else(|| self.config.get_base_download_dir());
-        // No resource index needed for single download
-        let filename = Self::get_resource_filename(resource, None, None);
+        let filename = Self::get_distribution_filename(distribution, None, None);
         let output_path = output_dir.join(filename);
 
         Self::perform_download(
             &self.http_client,
             url,
             &output_path,
-            resource.name.clone(),
+            distribution.title.clone(),
             None,
             self.reporter(),
         )
@@ -296,30 +313,29 @@ impl DataGovClient {
         Ok(output_path)
     }
 
-    /// Download multiple resources concurrently to the specified directory.
+    /// Download multiple distributions concurrently.
     ///
-    /// # Arguments
-    /// * `resources` - Slice of resources to download
-    /// * `output_dir` - Directory where files will be saved. If None, uses the base download directory.
-    ///
-    /// Returns one [`Result`] per resource so callers can inspect partial failures.
-    pub async fn download_resources(
+    /// Returns one [`Result`] per distribution so callers can inspect partial
+    /// failures.
+    pub async fn download_distributions(
         &self,
-        resources: &[Resource],
+        distributions: &[Distribution],
         output_dir: Option<&Path>,
     ) -> Vec<Result<PathBuf>> {
-        if resources.is_empty() {
+        if distributions.is_empty() {
             return vec![];
         }
 
-        if resources.len() == 1 {
-            return vec![self.download_resource(&resources[0], output_dir).await];
+        if distributions.len() == 1 {
+            return vec![
+                self.download_distribution(&distributions[0], output_dir)
+                    .await,
+            ];
         }
 
-        // Multiple resources - use concurrent downloads with semaphore
         if let Some(reporter) = self.config.status_reporter.as_ref() {
             let event = DownloadBatch {
-                resource_count: resources.len(),
+                resource_count: distributions.len(),
                 dataset_name: None,
             };
             reporter.on_download_batch(&event);
@@ -334,10 +350,10 @@ impl DataGovClient {
         ));
 
         let status_reporter = self.reporter();
-        let mut futures = Vec::with_capacity(resources.len());
+        let mut futures = Vec::with_capacity(distributions.len());
 
-        for (resource_index, resource) in resources.iter().enumerate() {
-            let resource = resource.clone();
+        for (index, distribution) in distributions.iter().enumerate() {
+            let distribution = distribution.clone();
             let output_dir = output_dir.clone();
             let semaphore = semaphore.clone();
             let http_client = self.http_client.clone();
@@ -349,46 +365,46 @@ impl DataGovClient {
                     Err(e) => {
                         if let Some(reporter) = status_reporter.as_ref() {
                             let event = DownloadFailed {
-                                resource_name: resource.name.clone(),
+                                resource_name: distribution.title.clone(),
                                 dataset_name: None,
                                 output_path: None,
-                                error: format!("Failed to acquire download slot: {}", e),
+                                error: format!("Failed to acquire download slot: {e}"),
                             };
                             reporter.on_download_failed(&event);
                         }
                         return Err(DataGovError::download_error(format!(
-                            "Semaphore error: {}",
-                            e
+                            "Semaphore error: {e}"
                         )));
                     }
                 };
 
-                let url = match resource.url.as_deref() {
+                let url = match distribution.download_url.as_deref() {
                     Some(url) => url,
                     None => {
                         if let Some(reporter) = status_reporter.as_ref() {
                             let event = DownloadFailed {
-                                resource_name: resource.name.clone(),
+                                resource_name: distribution.title.clone(),
                                 dataset_name: None,
                                 output_path: None,
-                                error: "Resource has no URL".to_string(),
+                                error: "Distribution has no downloadURL".to_string(),
                             };
                             reporter.on_download_failed(&event);
                         }
-                        return Err(DataGovError::resource_not_found("Resource has no URL"));
+                        return Err(DataGovError::resource_not_found(
+                            "Distribution has no downloadURL",
+                        ));
                     }
                 };
 
-                // Include resource index to prevent filename conflicts
                 let filename =
-                    DataGovClient::get_resource_filename(&resource, None, Some(resource_index));
+                    DataGovClient::get_distribution_filename(&distribution, None, Some(index));
                 let output_path = output_dir.join(&filename);
 
                 DataGovClient::perform_download(
                     &http_client,
                     url,
                     &output_path,
-                    resource.name.clone(),
+                    distribution.title.clone(),
                     None,
                     status_reporter,
                 )
@@ -512,7 +528,7 @@ impl DataGovClient {
         Ok(())
     }
 
-    /// Check if the base download directory exists and is writable
+    /// Check that the base download directory exists and is writable.
     pub async fn validate_download_dir(&self) -> Result<()> {
         let base_dir = self.config.get_base_download_dir();
 
@@ -522,8 +538,7 @@ impl DataGovClient {
 
         if !base_dir.is_dir() {
             return Err(DataGovError::config_error(format!(
-                "Download path is not a directory: {:?}",
-                base_dir
+                "Download path is not a directory: {base_dir:?}"
             )));
         }
 
@@ -534,163 +549,166 @@ impl DataGovClient {
         Ok(())
     }
 
-    /// Get the current base download directory
+    /// Get the current base download directory.
     pub fn download_dir(&self) -> PathBuf {
         self.config.get_base_download_dir()
     }
 
-    /// Get the underlying CKAN client for advanced operations
-    pub fn ckan_client(&self) -> &CkanClient {
-        &self.ckan
+    /// Get the underlying Catalog API client for advanced operations.
+    pub fn catalog_client(&self) -> &CatalogClient {
+        &self.catalog
     }
 }
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_get_resource_filename_no_index() {
-        let resource = Resource {
-            name: Some("data".to_string()),
-            format: Some("CSV".to_string()),
-            url: Some("https://example.com/data.csv".to_string()),
-            ..Default::default()
-        };
-        let filename = DataGovClient::get_resource_filename(&resource, None, None);
-        assert_eq!(filename, "data.csv");
+    fn dist(title: Option<&str>, format: Option<&str>, url: Option<&str>) -> Distribution {
+        Distribution {
+            type_hint: None,
+            title: title.map(str::to_string),
+            description: None,
+            download_url: url.map(str::to_string),
+            access_url: None,
+            media_type: None,
+            format: format.map(str::to_string),
+            license: None,
+            described_by: None,
+            described_by_type: None,
+        }
     }
 
     #[test]
-    fn test_get_resource_filename_with_index() {
-        let resource = Resource {
-            name: Some("data".to_string()),
-            format: Some("CSV".to_string()),
-            url: Some("https://example.com/data.csv".to_string()),
-            ..Default::default()
-        };
-
-        let filename0 = DataGovClient::get_resource_filename(&resource, None, Some(0));
-        assert_eq!(filename0, "data-0.csv");
-
-        let filename1 = DataGovClient::get_resource_filename(&resource, None, Some(1));
-        assert_eq!(filename1, "data-1.csv");
-
-        let filename2 = DataGovClient::get_resource_filename(&resource, None, Some(2));
-        assert_eq!(filename2, "data-2.csv");
+    fn distribution_filename_no_index() {
+        let d = dist(
+            Some("data"),
+            Some("CSV"),
+            Some("https://example.com/data.csv"),
+        );
+        let name = DataGovClient::get_distribution_filename(&d, None, None);
+        assert_eq!(name, "data.csv");
     }
 
     #[test]
-    fn test_get_resource_filename_already_has_extension() {
-        let resource = Resource {
-            name: Some("report.csv".to_string()),
-            format: Some("CSV".to_string()),
-            url: Some("https://example.com/report.csv".to_string()),
-            ..Default::default()
-        };
-
-        let filename = DataGovClient::get_resource_filename(&resource, None, Some(3));
-        assert_eq!(filename, "report-3.csv");
+    fn distribution_filename_with_index() {
+        let d = dist(
+            Some("data"),
+            Some("CSV"),
+            Some("https://example.com/data.csv"),
+        );
+        assert_eq!(
+            DataGovClient::get_distribution_filename(&d, None, Some(0)),
+            "data-0.csv"
+        );
+        assert_eq!(
+            DataGovClient::get_distribution_filename(&d, None, Some(2)),
+            "data-2.csv"
+        );
     }
 
     #[test]
-    fn test_get_resource_filename_no_format() {
-        let resource = Resource {
-            name: Some("myfile".to_string()),
-            format: None,
-            url: Some("https://example.com/myfile".to_string()),
-            ..Default::default()
-        };
-
-        let filename = DataGovClient::get_resource_filename(&resource, None, Some(5));
-        assert_eq!(filename, "myfile-5");
+    fn distribution_filename_already_has_extension() {
+        let d = dist(
+            Some("report.csv"),
+            Some("CSV"),
+            Some("https://example.com/report.csv"),
+        );
+        assert_eq!(
+            DataGovClient::get_distribution_filename(&d, None, Some(3)),
+            "report-3.csv"
+        );
     }
 
     #[test]
-    fn test_get_resource_filename_multiple_extensions() {
-        let resource = Resource {
-            name: Some("archive.tar.gz".to_string()),
-            format: Some("TAR".to_string()),
-            url: Some("https://example.com/archive.tar.gz".to_string()),
-            ..Default::default()
-        };
-
-        // Name doesn't end with .tar (it ends with .gz), so format is appended -> archive.tar.gz.tar
-        // Then index is inserted before last dot -> archive.tar.gz-7.tar
-        let filename = DataGovClient::get_resource_filename(&resource, None, Some(7));
-        assert_eq!(filename, "archive.tar.gz-7.tar");
+    fn distribution_filename_falls_back_to_url_when_title_missing() {
+        let d = dist(None, None, Some("https://example.com/downloads/report.csv"));
+        assert_eq!(
+            DataGovClient::get_distribution_filename(&d, None, None),
+            "report.csv"
+        );
     }
 
     #[test]
-    fn test_get_resource_filename_falls_back_to_url_filename_when_name_missing() {
-        let resource = Resource {
-            name: None,
-            format: None,
-            url: Some("https://example.com/downloads/report.csv".to_string()),
-            ..Default::default()
-        };
-
-        let filename = DataGovClient::get_resource_filename(&resource, None, None);
-        assert_eq!(filename, "report.csv");
+    fn distribution_filename_url_without_extension_uses_format_fallback() {
+        let d = dist(None, Some("JSON"), Some("https://example.com/api/records"));
+        assert_eq!(
+            DataGovClient::get_distribution_filename(&d, None, None),
+            "data.json"
+        );
     }
 
     #[test]
-    fn test_get_resource_filename_url_without_extension_uses_format_fallback() {
-        // URL's last segment has no dot, so URL fallback path is skipped and
-        // we drop to the "data" + format branch.
-        let resource = Resource {
-            name: None,
-            format: Some("JSON".to_string()),
-            url: Some("https://example.com/api/records".to_string()),
-            ..Default::default()
-        };
-
-        let filename = DataGovClient::get_resource_filename(&resource, None, None);
-        assert_eq!(filename, "data.json");
+    fn distribution_filename_no_title_no_url_returns_data_dat() {
+        let d = dist(None, None, None);
+        assert_eq!(
+            DataGovClient::get_distribution_filename(&d, None, None),
+            "data.dat"
+        );
     }
 
     #[test]
-    fn test_get_resource_filename_no_name_no_url_returns_data_dat() {
-        let resource = Resource {
-            name: None,
-            format: None,
-            url: None,
-            ..Default::default()
-        };
-
-        let filename = DataGovClient::get_resource_filename(&resource, None, None);
-        assert_eq!(filename, "data.dat");
+    fn distribution_filename_uses_fallback_name() {
+        let d = dist(None, Some("CSV"), None);
+        assert_eq!(
+            DataGovClient::get_distribution_filename(&d, Some("climate-dataset"), None),
+            "climate-dataset.csv"
+        );
     }
 
     #[test]
-    fn test_get_resource_filename_uses_fallback_name_when_provided() {
-        let resource = Resource {
-            name: None,
-            format: Some("CSV".to_string()),
-            url: None,
-            ..Default::default()
-        };
-
-        let filename =
-            DataGovClient::get_resource_filename(&resource, Some("climate-dataset"), None);
-        assert_eq!(filename, "climate-dataset.csv");
+    fn distribution_filename_fallback_with_index_inserts_before_extension() {
+        let d = dist(None, None, None);
+        assert_eq!(
+            DataGovClient::get_distribution_filename(&d, None, Some(2)),
+            "data-2.dat"
+        );
     }
 
     #[test]
-    fn test_get_resource_filename_fallback_with_index_inserts_before_extension() {
-        let resource = Resource {
-            name: None,
-            format: None,
-            url: None,
-            ..Default::default()
+    fn downloadable_distributions_excludes_access_only_entries() {
+        let mut ds = Dataset {
+            type_hint: None,
+            title: None,
+            description: None,
+            identifier: None,
+            access_level: None,
+            modified: None,
+            issued: None,
+            publisher: None,
+            contact_point: None,
+            keyword: vec![],
+            theme: vec![],
+            distribution: vec![],
+            landing_page: None,
+            license: None,
+            rights: None,
+            spatial: None,
+            temporal: None,
+            accrual_periodicity: None,
+            language: vec![],
+            bureau_code: None,
+            program_code: None,
+            described_by: None,
+            described_by_type: None,
+            references: vec![],
+            data_quality: None,
+            system_of_records: None,
         };
+        ds.distribution.push(dist(
+            Some("csv"),
+            Some("CSV"),
+            Some("https://example.com/file.csv"),
+        ));
+        // API-only distribution — no downloadURL.
+        let mut api_only = dist(Some("api"), Some("JSON"), None);
+        api_only.access_url = Some("https://example.com/api".to_string());
+        ds.distribution.push(api_only);
 
-        let filename = DataGovClient::get_resource_filename(&resource, None, Some(2));
-        assert_eq!(filename, "data-2.dat");
+        let out = DataGovClient::get_downloadable_distributions(&ds);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].title.as_deref(), Some("csv"));
     }
-
-    // -----------------------------------------------------------------------
-    // validate_download_dir
-    // -----------------------------------------------------------------------
 
     fn client_with_download_dir(dir: std::path::PathBuf) -> DataGovClient {
         let config = crate::config::DataGovConfig::default()
@@ -703,50 +721,37 @@ mod tests {
     async fn validate_download_dir_accepts_existing_writable_directory() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let client = client_with_download_dir(tmp.path().to_path_buf());
-
         client
             .validate_download_dir()
             .await
-            .expect("existing writable dir should validate");
+            .expect("should succeed");
     }
 
     #[tokio::test]
     async fn validate_download_dir_creates_missing_directory() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let nested = tmp.path().join("a").join("b").join("c");
-        assert!(!nested.exists());
-
         let client = client_with_download_dir(nested.clone());
         client
             .validate_download_dir()
             .await
-            .expect("missing dir should be auto-created");
-
-        assert!(nested.is_dir(), "nested directory should now exist");
+            .expect("should succeed");
+        assert!(nested.is_dir());
     }
 
     #[tokio::test]
     async fn validate_download_dir_rejects_path_that_is_a_file() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let file_path = tmp.path().join("not-a-dir.txt");
-        tokio::fs::write(&file_path, b"hello")
-            .await
-            .expect("write setup file");
+        tokio::fs::write(&file_path, b"hello").await.expect("setup");
 
         let client = client_with_download_dir(file_path);
-        let err = client
-            .validate_download_dir()
-            .await
-            .expect_err("should reject non-directory path");
-
+        let err = client.validate_download_dir().await.unwrap_err();
         match err {
             DataGovError::ConfigError { message } => {
-                assert!(
-                    message.contains("not a directory"),
-                    "error message should name the failure mode, got: {message}"
-                );
+                assert!(message.contains("not a directory"), "got: {message}");
             }
-            other => panic!("expected ConfigError, got: {other:?}"),
+            other => panic!("expected ConfigError, got {other:?}"),
         }
     }
 
@@ -754,15 +759,10 @@ mod tests {
     async fn validate_download_dir_leaves_no_probe_file_behind() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let client = client_with_download_dir(tmp.path().to_path_buf());
-
         client
             .validate_download_dir()
             .await
             .expect("should succeed");
-
-        assert!(
-            !tmp.path().join(".write_test").exists(),
-            "probe file must be removed after validation"
-        );
+        assert!(!tmp.path().join(".write_test").exists());
     }
 }

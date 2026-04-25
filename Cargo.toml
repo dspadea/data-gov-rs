@@ -4,6 +4,7 @@ resolver = "3"
 
 members = [
 "data-gov-ckan",
+"data-gov-catalog",
 "data-gov",
 "data-gov-mcp-server"
 ]
@@ -11,3 +12,4 @@ members = [
 [patch.crates-io]
 data-gov = { path = "data-gov" }
 data-gov-ckan = { path = "data-gov-ckan" }
+data-gov-catalog = { path = "data-gov-catalog" }
