@@ -17,7 +17,7 @@ use wiremock::matchers::{method as wm_method, path as wm_path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 use crate::server::DataGovMcpServer;
-use crate::types::ServerError;
+use crate::types::{LATEST_PROTOCOL_VERSION, ServerError};
 
 /// Build a `DataGovMcpServer` whose internal client points at the given mock
 /// URL. Callers mount `Mock`s on the same server before exercising a dispatch
@@ -256,8 +256,100 @@ async fn dispatch_initialize_returns_raw_response() {
         "initialize is not a tool — must not be wrapped"
     );
     assert!(
-        result.get("serverInfo").is_some() || result.get("protocolVersion").is_some(),
-        "initialize result should carry server metadata, got: {result}"
+        result.get("serverInfo").is_some(),
+        "initialize result should carry serverInfo, got: {result}"
+    );
+    assert!(
+        result.get("protocolVersion").is_some(),
+        "initialize result must carry protocolVersion (MCP requires it), got: {result}"
+    );
+}
+
+/// The server must echo back a protocol version it supports when the client
+/// asks for one it knows.
+#[tokio::test]
+async fn initialize_echoes_a_supported_protocol_version() {
+    let server = test_server("http://127.0.0.1:1");
+    let result = server
+        .dispatch(
+            "initialize",
+            Some(json!({
+                "protocolVersion": "2025-06-18",
+                "capabilities": {},
+                "clientInfo": { "name": "test-client", "version": "0.0.0" }
+            })),
+        )
+        .await
+        .expect("initialize should succeed");
+
+    assert_eq!(
+        result.get("protocolVersion").and_then(|v| v.as_str()),
+        Some("2025-06-18"),
+        "a supported version must be echoed verbatim, got: {result}"
+    );
+}
+
+/// When the client asks for a version we do not know, the spec says to reply
+/// with another version we support -- the latest -- not to error or echo.
+#[tokio::test]
+async fn initialize_falls_back_to_latest_for_unknown_protocol_version() {
+    let server = test_server("http://127.0.0.1:1");
+    let result = server
+        .dispatch(
+            "initialize",
+            Some(json!({
+                "protocolVersion": "1999-01-01",
+                "clientInfo": { "name": "test-client", "version": "0.0.0" }
+            })),
+        )
+        .await
+        .expect("initialize should succeed");
+
+    assert_eq!(
+        result.get("protocolVersion").and_then(|v| v.as_str()),
+        Some(LATEST_PROTOCOL_VERSION),
+        "an unknown version must fall back to our latest, got: {result}"
+    );
+}
+
+/// A client that omits protocolVersion entirely still gets a usable answer.
+#[tokio::test]
+async fn initialize_without_a_requested_version_returns_latest() {
+    let server = test_server("http://127.0.0.1:1");
+    let result = server
+        .dispatch("initialize", Some(json!({})))
+        .await
+        .expect("initialize should succeed");
+
+    assert_eq!(
+        result.get("protocolVersion").and_then(|v| v.as_str()),
+        Some(LATEST_PROTOCOL_VERSION),
+        "omitted version must default to our latest, got: {result}"
+    );
+}
+
+/// MCP spells the tool capability `listChanged`; `{"list": true}` is not a
+/// thing in the schema.
+#[tokio::test]
+async fn initialize_advertises_tools_capability_in_the_spec_shape() {
+    let server = test_server("http://127.0.0.1:1");
+    let result = server
+        .dispatch("initialize", Some(json!({})))
+        .await
+        .expect("initialize should succeed");
+
+    let tools = result
+        .get("capabilities")
+        .and_then(|c| c.get("tools"))
+        .unwrap_or_else(|| panic!("capabilities.tools missing, got: {result}"));
+
+    assert!(
+        tools.get("listChanged").is_some(),
+        "capabilities.tools must use listChanged, got: {tools}"
+    );
+    assert!(
+        tools.get("list").is_none(),
+        "capabilities.tools.list is not in the MCP schema, got: {tools}"
     );
 }
 

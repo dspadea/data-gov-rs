@@ -229,9 +229,42 @@ pub(crate) struct AutocompleteParams {
     pub limit: Option<i32>,
 }
 
+/// MCP protocol versions this server can speak, oldest first.
+///
+/// Version identifiers are dates marking the last backwards-incompatible
+/// change, not a sequence — a client asking for one we do not list gets
+/// [`LATEST_PROTOCOL_VERSION`] instead.
+pub(crate) const SUPPORTED_PROTOCOL_VERSIONS: &[&str] =
+    &["2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25"];
+
+/// The newest protocol version this server supports.
+///
+/// Returned when the client requests a version we do not recognise, or omits
+/// the field entirely.
+pub(crate) const LATEST_PROTOCOL_VERSION: &str = "2025-11-25";
+
+/// Resolve the protocol version for a session.
+///
+/// Per the MCP lifecycle spec: if the server supports the requested version it
+/// MUST reply with that same version; otherwise it MUST reply with another
+/// version it supports, which SHOULD be the latest.
+pub(crate) fn negotiate_protocol_version(requested: Option<&str>) -> &'static str {
+    requested
+        .and_then(|want| {
+            SUPPORTED_PROTOCOL_VERSIONS
+                .iter()
+                .find(|supported| **supported == want)
+                .copied()
+        })
+        .unwrap_or(LATEST_PROTOCOL_VERSION)
+}
+
 /// Parameters for `initialize`.
 #[derive(Debug, Default, Deserialize)]
 pub(crate) struct InitializeParams {
+    /// Protocol version the client wants to speak. Absent for older clients.
+    #[serde(default, rename = "protocolVersion")]
+    pub protocol_version: Option<String>,
     #[serde(default, rename = "clientInfo")]
     pub client_info: Option<ClientInfo>,
 }
@@ -247,6 +280,10 @@ pub(crate) struct ClientInfo {
 /// Result of the `initialize` handshake.
 #[derive(Debug, Serialize)]
 pub(crate) struct InitializeResult {
+    /// Negotiated protocol version. Required by the MCP schema — a client that
+    /// validates the result will abort the handshake without it.
+    #[serde(rename = "protocolVersion")]
+    pub protocol_version: &'static str,
     #[serde(rename = "serverInfo")]
     pub server_info: ServerInfo,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -256,21 +293,25 @@ pub(crate) struct InitializeResult {
 }
 
 impl InitializeResult {
-    /// Build an initialize result, echoing back client info if provided.
-    pub fn new(client_info: Option<ClientInfo>) -> Self {
+    /// Build an initialize result, negotiating the protocol version and
+    /// echoing back client info if provided.
+    pub fn new(requested_version: Option<&str>, client_info: Option<ClientInfo>) -> Self {
         let client_info = client_info.map(|info| ClientInfoSummary {
             name: info.name,
             version: info.version,
         });
 
         Self {
+            protocol_version: negotiate_protocol_version(requested_version),
             server_info: ServerInfo {
                 name: "data-gov-mcp-server",
                 version: env!("CARGO_PKG_VERSION"),
             },
+            // `listChanged` is the schema's name for this. Our tool list is
+            // static, so it is false: we never emit notifications/tools/list_changed.
             capabilities: Some(json!({
                 "tools": {
-                    "list": true
+                    "listChanged": false
                 }
             })),
             client_info,
@@ -581,7 +622,7 @@ mod tests {
 
     #[test]
     fn initialize_result_without_client_info() {
-        let result = InitializeResult::new(None);
+        let result = InitializeResult::new(None, None);
         assert_eq!(result.server_info.name, "data-gov-mcp-server");
         assert!(result.client_info.is_none());
         assert!(result.capabilities.is_some());
@@ -593,9 +634,54 @@ mod tests {
             name: "test-client".to_string(),
             version: Some("1.0".to_string()),
         };
-        let result = InitializeResult::new(Some(info));
+        let result = InitializeResult::new(None, Some(info));
         let ci = result.client_info.expect("should have client_info");
         assert_eq!(ci.name, "test-client");
         assert_eq!(ci.version.as_deref(), Some("1.0"));
+    }
+
+    #[test]
+    fn negotiate_echoes_every_supported_version() {
+        for supported in SUPPORTED_PROTOCOL_VERSIONS {
+            assert_eq!(
+                negotiate_protocol_version(Some(supported)),
+                *supported,
+                "a version we advertise must be echoed verbatim"
+            );
+        }
+    }
+
+    #[test]
+    fn negotiate_falls_back_to_latest_for_unknown_or_absent() {
+        assert_eq!(
+            negotiate_protocol_version(Some("1999-01-01")),
+            LATEST_PROTOCOL_VERSION
+        );
+        assert_eq!(
+            negotiate_protocol_version(Some("")),
+            LATEST_PROTOCOL_VERSION
+        );
+        assert_eq!(negotiate_protocol_version(None), LATEST_PROTOCOL_VERSION);
+    }
+
+    #[test]
+    fn latest_protocol_version_is_the_newest_supported() {
+        assert_eq!(
+            SUPPORTED_PROTOCOL_VERSIONS.last().copied(),
+            Some(LATEST_PROTOCOL_VERSION),
+            "LATEST_PROTOCOL_VERSION must be the last entry in SUPPORTED_PROTOCOL_VERSIONS"
+        );
+    }
+
+    #[test]
+    fn initialize_result_serializes_protocol_version_and_spec_capabilities() {
+        let v = serde_json::to_value(InitializeResult::new(Some("2025-06-18"), None))
+            .expect("serializes");
+        assert_eq!(v["protocolVersion"], "2025-06-18");
+        assert_eq!(v["capabilities"]["tools"]["listChanged"], false);
+        assert!(
+            v["capabilities"]["tools"].get("list").is_none(),
+            "`list` is not an MCP capability key"
+        );
     }
 }
