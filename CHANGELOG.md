@@ -40,7 +40,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Documented the configuration and file-location policy in `CLAUDE.md`: config,
   cache, and state go in the XDG base directories via the `dirs` crate, never as
   dotfiles in `$HOME`; precedence is flag > environment > config file > default;
-  secrets are never accepted as command-line arguments.
+  secrets are never accepted as command-line arguments; secret files are `0600`
+  inside a `0700` directory, with the mode set at creation rather than
+  `chmod`-ed afterwards, and checked on read.
 
 - **CI now runs 181 tests instead of 37** (#23). The gate selected `--lib`,
   which skips both binary crates (`data-gov-mcp-server` has no `lib.rs`; the

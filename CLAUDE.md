@@ -336,10 +336,29 @@ through `dirs`.
 then config file, then built-in default. A setting that a flag cannot override
 is a bug.
 
-**Secrets** (API keys, tokens) are read from a file under `dirs::config_dir()`
-or from the environment. Never commit one, never log one, never accept one as a
-command-line argument — argv is visible to every process on the machine via
-`ps`. Create secret files with owner-only permissions.
+### Secrets
+
+API keys and tokens are read from a file under `dirs::config_dir()` or from the
+environment. Never commit one, never log one, and **never accept one as a
+command-line argument** — `argv` is visible to every process on the machine via
+`ps`.
+
+**Permissions are part of the contract, on the directory as well as the file:**
+
+| Path | Mode | Why |
+|-----------------------------|--------|-----------------------------------------------|
+| `<config>/data-gov/` | `0700` | `0755` lets anyone list the directory and see that a key exists, even when they cannot read it |
+| `<config>/data-gov/api-key` | `0600` | `rw-------`. The execute bit in `0700` is meaningless on a key file; `0600` is what ssh, gpg, and netrc use |
+
+When creating either, set the mode at creation rather than `chmod`-ing
+afterwards — a file created `0644` and tightened a moment later was
+world-readable in between. In Rust, use
+`std::os::unix::fs::OpenOptionsExt::mode()` on the `OpenOptions` (and
+`DirBuilderExt::mode()` for the directory), behind `#[cfg(unix)]`.
+
+When *reading* a secret, check the mode first and refuse or warn if it is group-
+or world-accessible, the way ssh does. A key with the wrong permissions has
+already leaked; failing loudly is the only useful response.
 
 ## Code organization
 
