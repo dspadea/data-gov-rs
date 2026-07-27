@@ -266,10 +266,36 @@ changes, CLI or MCP surface changes — **adds an entry under the current
 `## [X.Y.Z] - Unreleased` heading in the same PR that makes the change.** Purely
 internal refactors with no observable effect may be omitted.
 
-Group entries under `Breaking`, `Added`, `Fixed`, `Changed`, `Removed`,
-`Deprecated`, or `Infrastructure`. Reference the issue number where one exists.
-On release, replace `- Unreleased` with the release date and open a fresh
-`## [X.Y.Z] - Unreleased` heading above it.
+#### Section order is mandatory
+
+**`Breaking` comes first, `Changed` second, always.** These are the two
+categories that cost a reader real money if missed — one stops their build, the
+other silently alters what their working code does — so they must never be
+buried beneath a list of additions and fixes. Within a release, sections appear
+in exactly this order, omitting any that are empty:
+
+| Order | Section | What belongs here |
+|-------|-----------------|-------------------------------------------------------------|
+| 1 | `Breaking` | Anything requiring a consumer to change their code to compile: removed or renamed public items, changed signatures or field types, altered feature or wire formats. **Removing public API is `Breaking`, not `Removed`.** |
+| 2 | `Changed` | Behaviour changes that still compile: different defaults, different output, different ordering, a fix that alters an existing contract. The dangerous ones — call these out even when they look minor. |
+| 3 | `Security` | Advisories cleared and vulnerabilities fixed. Name the CVE/RUSTSEC/GHSA ID. |
+| 4 | `Added` | New APIs, features, flags, tools. |
+| 5 | `Fixed` | Bugs fixed without changing an intended contract. |
+| 6 | `Deprecated` | Still present, slated for removal. Say what replaces it. |
+| 7 | `Removed` | Non-API removals only: dependencies, internal machinery, dead files. |
+| 8 | `Infrastructure` | CI, build, tooling. No consumer impact. |
+
+Where a single release has several distinct breaking themes, use qualified
+headings (`### Breaking — Catalog API migration`) and keep them adjacent at the
+top rather than scattering them.
+
+Each `Breaking` and `Changed` entry states **what a consumer must do**, not only
+what changed. `download_resources` renamed to `download_distributions` is a fact;
+"rename your calls, and pass `&[Distribution]` instead of `&[Resource]`" is
+actionable.
+
+Reference the issue number where one exists. On release, replace `- Unreleased`
+with the release date and open a fresh `## [X.Y.Z] - Unreleased` heading above it.
 
 ### Dependency freshness and advisories
 

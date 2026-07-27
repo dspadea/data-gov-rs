@@ -65,7 +65,6 @@ The Catalog API migration and the reqwest 0.13 upgrade shipped together in
 0.4.0; both are recorded below.
 
 ### Breaking — Catalog API migration
-
 - **data.gov retired its CKAN Action API.** The workspace now targets the new
   [Catalog API](https://resources.data.gov/catalog-api/) (cursor-paginated,
   DCAT-US 3 payloads, no API keys).
@@ -99,26 +98,7 @@ The Catalog API migration and the reqwest 0.13 upgrade shipped together in
   `distributionIndexes`; the `formats` filter is now matched client-side
   against both `format` and `mediaType`.
 
-### Added — data-gov-catalog crate
-
-- **`data-gov-catalog`** — new crate wrapping the Catalog API with typed
-  models for DCAT-US 3 (`Dataset`, `Distribution`, `Publisher`,
-  `ContactPoint`), search envelopes (`SearchResponse`, `SearchHit`),
-  organizations, keywords, locations, and harvest records. Endpoint coverage:
-  `/search` (with `SearchParams` builder), `/api/organizations`,
-  `/api/keywords`, `/api/locations/search`, `/api/location/{id}`,
-  `/harvest_record/{id}`, `/harvest_record/{id}/raw`,
-  `/harvest_record/{id}/transformed`.
-
-### Deprecated
-
-- **`data-gov-ckan`** crate-level docs and README now note that data.gov no
-  longer uses CKAN. The crate remains published and functional for use against
-  other CKAN-compatible instances (European, state, municipal, university
-  portals).
-
 ### Breaking — reqwest 0.13 and client construction
-
 - **Removed `Default` impl for `DataGovClient`** — use `DataGovClient::new()?`
   instead. The previous impl could panic if the HTTP client failed to build.
 - **Upgraded reqwest from 0.12 to 0.13** across `data-gov-ckan` and `data-gov`.
@@ -130,8 +110,36 @@ The Catalog API migration and the reqwest 0.13 upgrade shipped together in
 - Default user-agent string now reflects the actual crate version
   (`data-gov-rs/0.4.0`) instead of the previously hardcoded `data-gov-rs/1.0`.
 
-### Added — tests, tooling, and utilities
+### Changed
+- **CKAN client refactored** — extracted `call_action<T>` generic helper,
+  reducing `client.rs` from ~1243 to ~771 lines and eliminating 10 copies of
+  HTTP boilerplate. Uses reqwest's `.query()` instead of manual URL encoding,
+  removing the `urlencoding` dependency.
+- **MCP server tool specs** — converted from a function returning `Vec<ToolSpec>`
+  to a `static TOOL_SPECS: LazyLock<Vec<ToolSpec>>` (allocated once).
+- **JSON-RPC version validation** — the MCP server now rejects requests where
+  `jsonrpc` is present but not `"2.0"`.
+- **CLI version** — now uses `env!("CARGO_PKG_VERSION")` instead of hardcoded
+  `"1.0"`.
+- **`download-dir` CLI flag** — removed magic string default detection;
+  the flag is now purely optional.
+- Path sanitization logic deduplicated into `data_gov::util`.
+- **MCP server modularized** — split monolithic `server.rs` (1548 lines) into
+  four focused modules: `server.rs` (run loop), `types.rs` (request/response
+  types and param structs), `tools.rs` (tool specs and lookup), `handlers.rs`
+  (method dispatch and handler logic).
 
+### Added — data-gov-catalog crate
+- **`data-gov-catalog`** — new crate wrapping the Catalog API with typed
+  models for DCAT-US 3 (`Dataset`, `Distribution`, `Publisher`,
+  `ContactPoint`), search envelopes (`SearchResponse`, `SearchHit`),
+  organizations, keywords, locations, and harvest records. Endpoint coverage:
+  `/search` (with `SearchParams` builder), `/api/organizations`,
+  `/api/keywords`, `/api/locations/search`, `/api/location/{id}`,
+  `/harvest_record/{id}`, `/harvest_record/{id}/raw`,
+  `/harvest_record/{id}/transformed`.
+
+### Added — tests, tooling, and utilities
 - **Comprehensive test suite** — 130+ tests across the workspace:
   - 21 wiremock-based unit tests for all CKAN client endpoints
     (`data-gov-ckan/tests/unit_tests.rs`)
@@ -151,7 +159,6 @@ The Catalog API migration and the reqwest 0.13 upgrade shipped together in
 - `Cargo.lock` is now committed for reproducible binary builds.
 
 ### Fixed
-
 - **Parallel download progress bars** — replaced independent `ProgressBar`
   instances with `indicatif::MultiProgress` so concurrent downloads render
   correctly instead of overwriting each other.
@@ -167,28 +174,13 @@ The Catalog API migration and the reqwest 0.13 upgrade shipped together in
   constructed once before the download loop; only `downloaded_bytes` is updated
   per chunk.
 
-### Changed
-
-- **CKAN client refactored** — extracted `call_action<T>` generic helper,
-  reducing `client.rs` from ~1243 to ~771 lines and eliminating 10 copies of
-  HTTP boilerplate. Uses reqwest's `.query()` instead of manual URL encoding,
-  removing the `urlencoding` dependency.
-- **MCP server tool specs** — converted from a function returning `Vec<ToolSpec>`
-  to a `static TOOL_SPECS: LazyLock<Vec<ToolSpec>>` (allocated once).
-- **JSON-RPC version validation** — the MCP server now rejects requests where
-  `jsonrpc` is present but not `"2.0"`.
-- **CLI version** — now uses `env!("CARGO_PKG_VERSION")` instead of hardcoded
-  `"1.0"`.
-- **`download-dir` CLI flag** — removed magic string default detection;
-  the flag is now purely optional.
-- Path sanitization logic deduplicated into `data_gov::util`.
-- **MCP server modularized** — split monolithic `server.rs` (1548 lines) into
-  four focused modules: `server.rs` (run loop), `types.rs` (request/response
-  types and param structs), `tools.rs` (tool specs and lookup), `handlers.rs`
-  (method dispatch and handler logic).
+### Deprecated
+- **`data-gov-ckan`** crate-level docs and README now note that data.gov no
+  longer uses CKAN. The crate remains published and functional for use against
+  other CKAN-compatible instances (European, state, municipal, university
+  portals).
 
 ### Removed
-
 - `urlencoding` dependency from `data-gov-ckan`.
 - `extern crate` declarations from `data-gov-ckan/src/lib.rs` (unnecessary
   since Rust 2018).
@@ -196,7 +188,6 @@ The Catalog API migration and the reqwest 0.13 upgrade shipped together in
   imports cleaned up.
 
 ### Infrastructure
-
 - Updated `actions/cache` from v3 to v4 in CI and release workflows.
 - Replaced deprecated `actions/create-release@v1` with
   `softprops/action-gh-release@v2` in release workflow.
