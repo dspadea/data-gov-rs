@@ -399,15 +399,31 @@ Before any release:
 
 ## CI pipeline
 
-GitHub Actions CI (`.github/workflows/ci.yml`) runs:
+GitHub Actions CI (`.github/workflows/ci.yml`) runs on pushes and pull requests
+targeting `main` **and any `release/**` branch**, so release-branch work is gated
+the same way `main` is.
 
-1. **Format check** (`cargo fmt`, stable only)
+**Test Suite** (matrix: stable, beta, MSRV 1.90)
+1. **Format check** (`cargo fmt --all -- --check`, stable only)
 2. **Clippy** with `-D warnings` (stable only)
-3. **Build** on stable, beta, and MSRV 1.90
-4. **Unit tests** (`--lib`)
-5. **Doc tests** (`--doc`)
-6. **Integration tests** (separate job, stable only)
-7. **Documentation build**
-8. **Security audit** (`cargo audit`)
+3. **Build** (`--all-features --workspace`)
+4. **Tests** (`cargo test --all-features --workspace`)
 
-All checks must pass before merging to `main`.
+Test selection matters here. `--workspace` covers unit tests, every `tests/`
+integration target, and doc tests. Selecting `--lib` instead silently skips both
+binary crates (`data-gov-mcp-server` has no `lib.rs`; the CLI is a `[[bin]]`) and
+every `tests/` target — 37 of 181 tests would run, while `clippy --all-targets`
+still compiles the rest so nothing looks wrong. Do not narrow this back.
+
+**Other jobs**
+5. **Examples** — compiles all workspace examples (they make real API calls, so
+   they are built but never run)
+6. **Documentation build** (`cargo doc --no-deps`)
+7. **Security audit** — `cargo audit` *plus* an OSV/GHSA lockfile scan. Both are
+   required; see the dependency-freshness section for why `cargo audit` alone is
+   insufficient.
+8. **Live API Tests** — opt-in via `workflow_dispatch`, runs the `#[ignore]`d
+   network tests. Deliberately not gating: a data.gov outage must not turn PRs
+   red.
+
+All gating checks must pass before merging.
