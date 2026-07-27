@@ -9,6 +9,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.5.0] - Unreleased
 
+### Changed
+
+- All dependencies refreshed to their latest semver-compatible releases.
+  `rustyline` 17 → 18 is deliberately **not** included; it is a major bump
+  under the whole REPL and is tracked separately.
+
+### Security
+
+- **Cleared three advisories** by refreshing the lockfile (#46):
+  - `quinn-proto` 0.11.14 → 0.11.16 — RUSTSEC-2026-0185, remote memory
+    exhaustion from unbounded out-of-order stream reassembly (7.5 High).
+  - `openssl` 0.10.75 → 0.10.81 — seven GHSA advisories, five High, covering
+    out-of-bounds writes in AES key wrap, `digest_final()` writing past the
+    caller buffer, and adjacent memory leaked to the peer via PSK/cookie
+    trampolines. These are absent from the RustSec database, so `cargo audit`
+    alone did not report them.
+  - `anyhow` 1.0.102 → 1.0.104 — RUSTSEC-2026-0190, unsoundness in
+    `Error::downcast_mut()`.
+
+### Removed
+
+- Six declared-but-unused dependencies (#76): `serde`, `serde_json`,
+  `tokio-util`, and `anyhow` from `data-gov`; `futures` and `data-gov-catalog`
+  from `data-gov-mcp-server`, which reaches catalog types through the
+  `data_gov::catalog` re-export. The lockfile drops from 308 to 279 crates.
+
 ### Infrastructure
 
 - **CI now runs 181 tests instead of 37** (#23). The gate selected `--lib`,
