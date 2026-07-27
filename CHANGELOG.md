@@ -11,6 +11,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Breaking
 
+- **Tool results no longer contain a `{"type":"json"}` content block** (#60).
+  MCP's `content` is a closed union of `text`, `image`, `audio`,
+  `resource_link` and `resource`; `json` is not a member, so every tool result
+  this server produced failed schema validation on a strict client. The
+  machine-readable payload moves to the sibling `structuredContent` field, and
+  the pretty-printed text block stays, as the spec recommends for clients that
+  do not read structured output. If you were reading
+  `content[1].json`, read `structuredContent` instead.
+
 - **MCP `initialize` now returns the required `protocolVersion`** and negotiates
   it (#44). The server advertises `2024-11-05`, `2025-03-26`, `2025-06-18`, and
   `2025-11-25`: a version it supports is echoed verbatim, anything else (or an

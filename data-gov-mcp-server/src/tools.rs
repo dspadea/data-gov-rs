@@ -33,32 +33,41 @@ pub(crate) struct ToolDescriptor {
 /// Wrapper for tool invocation results.
 #[derive(Debug, Serialize)]
 pub(crate) struct ToolResponse {
+    /// Unstructured content blocks. MCP defines this as a closed union, so
+    /// only the variants of [`ToolContent`] may appear here.
     pub content: Vec<ToolContent>,
+    /// Machine-readable result, carried beside `content` rather than inside it.
+    #[serde(skip_serializing_if = "Option::is_none", rename = "structuredContent")]
+    pub structured_content: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none", rename = "isError")]
     pub is_error: Option<bool>,
 }
 
 impl ToolResponse {
-    /// Build a response containing both pretty-printed text and raw JSON.
+    /// Build a response carrying the value as both a text block and structured
+    /// content.
+    ///
+    /// The spec puts machine-readable output in `structuredContent`, and says a
+    /// tool that does so SHOULD also return the serialized JSON as a text block
+    /// for clients that do not read the structured field — hence both.
     pub fn from_value(value: Value) -> Self {
         let text = serde_json::to_string_pretty(&value).unwrap_or_else(|_| value.to_string());
         Self {
-            content: vec![
-                ToolContent::Text { text },
-                ToolContent::Json { json: value },
-            ],
+            content: vec![ToolContent::Text { text }],
+            structured_content: Some(value),
             is_error: None,
         }
     }
 }
 
 /// Individual content item within a [`ToolResponse`].
+///
+/// MCP's `content` is a closed union of `text`, `image`, `audio`,
+/// `resource_link` and `resource`. Only `text` is produced today; adding a
+/// variant here means adding one the spec actually defines.
 #[derive(Debug, Serialize)]
 #[serde(tag = "type")]
 pub(crate) enum ToolContent {
-    /// Raw JSON payload.
-    #[serde(rename = "json")]
-    Json { json: Value },
     /// Human-readable text representation.
     #[serde(rename = "text")]
     Text { text: String },
@@ -289,24 +298,47 @@ mod tests {
         assert!(find_tool_spec_by_method("nonexistent.method").is_none());
     }
 
+    /// The spec says a tool returning structured content SHOULD also return the
+    /// serialized JSON in a text block, so both are expected -- but the
+    /// structured half belongs in `structuredContent`, not in `content`.
     #[test]
-    fn tool_response_from_value_has_text_and_json() {
+    fn tool_response_from_value_has_one_text_block_and_structured_content() {
         let val = json!({"count": 5});
         let resp = ToolResponse::from_value(val.clone());
-        assert_eq!(resp.content.len(), 2);
-        assert!(resp.is_error.is_none());
 
-        match &resp.content[0] {
-            ToolContent::Text { text } => {
-                assert!(text.contains("\"count\": 5"));
-            }
-            other => panic!("expected Text, got: {:?}", other),
+        assert_eq!(
+            resp.content.len(),
+            1,
+            "content must hold only the text block"
+        );
+        let ToolContent::Text { text } = &resp.content[0];
+        assert!(text.contains("\"count\": 5"));
+        assert_eq!(
+            resp.structured_content.as_ref(),
+            Some(&val),
+            "the raw value belongs in structuredContent"
+        );
+        assert!(resp.is_error.is_none());
+    }
+
+    /// `content` is a closed union of text, image, audio, resource_link and
+    /// resource. A `{"type":"json"}` block is not a member, and every result
+    /// carrying one fails schema validation on a strict client.
+    #[test]
+    fn tool_response_serializes_only_spec_valid_content_types() {
+        const VALID: [&str; 5] = ["text", "image", "audio", "resource_link", "resource"];
+
+        let v = serde_json::to_value(ToolResponse::from_value(json!({"count": 5})))
+            .expect("serializes");
+
+        let content = v["content"].as_array().expect("content is an array");
+        for block in content {
+            let ty = block["type"].as_str().expect("every block has a type");
+            assert!(
+                VALID.contains(&ty),
+                "`{ty}` is not an MCP content type; valid: {VALID:?}"
+            );
         }
-        match &resp.content[1] {
-            ToolContent::Json { json } => {
-                assert_eq!(*json, val);
-            }
-            other => panic!("expected Json, got: {:?}", other),
-        }
+        assert_eq!(v["structuredContent"], json!({"count": 5}));
     }
 }

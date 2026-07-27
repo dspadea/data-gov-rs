@@ -41,13 +41,24 @@ fn tool_response_json(value: &Value) -> &Value {
         .get("content")
         .and_then(Value::as_array)
         .expect("ToolResponse must have content array");
-    let json_item = content
-        .iter()
-        .find(|item| item.get("type").and_then(Value::as_str) == Some("json"))
-        .expect("ToolResponse must contain a json item");
-    json_item
-        .get("json")
-        .expect("json item must have inner 'json' field")
+    // `content` is a closed union in MCP; a structured payload rides alongside
+    // it in `structuredContent`, never as a content block.
+    for block in content {
+        let ty = block
+            .get("type")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        assert!(
+            matches!(
+                ty,
+                "text" | "image" | "audio" | "resource_link" | "resource"
+            ),
+            "`{ty}` is not an MCP content type"
+        );
+    }
+    value
+        .get("structuredContent")
+        .expect("tool result must carry structuredContent")
 }
 
 /// Minimal search response body matching the Catalog API shape.
