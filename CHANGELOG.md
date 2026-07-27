@@ -6,7 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 (0.x releases may include breaking changes on minor bumps).
 
-## [Unreleased]
+
+## [0.5.0] - Unreleased
+
+Release in progress. Entries are added here as work merges into `release/0.5.0`.
+
+## [0.4.0] - 2026-04-25
+
+The Catalog API migration and the reqwest 0.13 upgrade shipped together in
+0.4.0; both are recorded below.
 
 ### Breaking — Catalog API migration
 
@@ -43,7 +51,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `distributionIndexes`; the `formats` filter is now matched client-side
   against both `format` and `mediaType`.
 
-### Added
+### Added — data-gov-catalog crate
 
 - **`data-gov-catalog`** — new crate wrapping the Catalog API with typed
   models for DCAT-US 3 (`Dataset`, `Distribution`, `Publisher`,
@@ -61,9 +69,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   other CKAN-compatible instances (European, state, municipal, university
   portals).
 
-## [0.4.0] - 2026-03-07
-
-### Breaking
+### Breaking — reqwest 0.13 and client construction
 
 - **Removed `Default` impl for `DataGovClient`** — use `DataGovClient::new()?`
   instead. The previous impl could panic if the HTTP client failed to build.
@@ -76,7 +82,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Default user-agent string now reflects the actual crate version
   (`data-gov-rs/0.4.0`) instead of the previously hardcoded `data-gov-rs/1.0`.
 
-### Added
+### Added — tests, tooling, and utilities
 
 - **Comprehensive test suite** — 130+ tests across the workspace:
   - 21 wiremock-based unit tests for all CKAN client endpoints
@@ -147,6 +153,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Replaced deprecated `actions/create-release@v1` with
   `softprops/action-gh-release@v2` in release workflow.
 
-## [0.3.1] - 2025-12-15
+## [0.3.1] - 2025-10-25
 
 Previous release. See git history for details.

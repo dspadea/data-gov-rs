@@ -36,7 +36,7 @@ Use the published crate from crates.io:
 
 ```toml
 [dependencies]
-data-gov-ckan = "0.4"
+data-gov-ckan = "0.5"
 tokio = { version = "1", features = ["full"] }
 ```
 

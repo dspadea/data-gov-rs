@@ -134,7 +134,7 @@ async fn main() -> data_gov::Result<()> {
 
 ```toml
 [dependencies]
-data-gov-catalog = "0.4"
+data-gov-catalog = "0.5"
 tokio = { version = "1", features = ["full"] }
 ```
 
@@ -172,7 +172,7 @@ For portals that still expose the CKAN Action API:
 
 ```toml
 [dependencies]
-data-gov-ckan = "0.4"
+data-gov-ckan = "0.5"
 ```
 
 ```rust

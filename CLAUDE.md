@@ -244,6 +244,50 @@ minor bumps may include breaking changes, but still be intentional about it.
 - Add a `CHANGELOG.md` entry under the new version.
 - Tag the release after merging to `main`.
 
+### Release branches
+
+A release is assembled on a **version integration branch**, not merged piecemeal
+to `main`:
+
+1. Cut `release/X.Y.Z` from `main`.
+2. Do each work item on its own branch off the release branch.
+3. Merge finished items into the release branch — never directly into `main`.
+4. Validate the release as a whole.
+5. Tag and publish, then merge the release branch to `main`.
+
+`main` therefore always reflects a released state, and a partially-landed release
+never sits on the default branch.
+
+### Changelog
+
+`CHANGELOG.md` follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
+Every change that a consumer could notice — API changes, bug fixes, behavioural
+changes, CLI or MCP surface changes — **adds an entry under the current
+`## [X.Y.Z] - Unreleased` heading in the same PR that makes the change.** Purely
+internal refactors with no observable effect may be omitted.
+
+Group entries under `Breaking`, `Added`, `Fixed`, `Changed`, `Removed`,
+`Deprecated`, or `Infrastructure`. Reference the issue number where one exists.
+On release, replace `- Unreleased` with the release date and open a fresh
+`## [X.Y.Z] - Unreleased` heading above it.
+
+### Dependency freshness and advisories
+
+Every release must ship with dependencies current and free of significant
+vulnerabilities. Before validating a release, run **both** halves:
+
+```bash
+cargo update                       # Semver-compatible moves
+cargo outdated --root-deps-only    # Major-version drift needing a decision
+cargo audit                        # RustSec advisories
+```
+
+plus an **OSV/GHSA scan of the lockfile**. `cargo audit` alone is not sufficient:
+in the 2026-07 review it reported two advisories while OSV surfaced seven further
+`openssl` CVEs (five High) that are GHSA-only and absent from the RustSec
+database. Re-run at release time, not just at the start of the work — advisories
+land after the fact, so a clean run expires.
+
 ## Code organization
 
 ### Modularization principles

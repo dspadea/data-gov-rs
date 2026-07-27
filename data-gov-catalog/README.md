@@ -23,7 +23,7 @@ cursor-paginated, no API key required.
 
 ```toml
 [dependencies]
-data-gov-catalog = "0.4"
+data-gov-catalog = "0.5"
 tokio = { version = "1", features = ["full"] }
 ```
 
@@ -178,7 +178,7 @@ To use rustls:
 
 ```toml
 [dependencies]
-data-gov-catalog = { version = "0.4", default-features = false, features = ["rustls-tls"] }
+data-gov-catalog = { version = "0.5", default-features = false, features = ["rustls-tls"] }
 ```
 
 ## Development

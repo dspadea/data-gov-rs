@@ -294,7 +294,7 @@ checksum = "773648b94d0e5d620f64f280777445740e61fe701025087ec8b57f45c791888b"
 
 [[package]]
 name = "data-gov"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -318,7 +318,7 @@ dependencies = [
 
 [[package]]
 name = "data-gov-catalog"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "reqwest",
  "serde",
@@ -329,7 +329,7 @@ dependencies = [
 
 [[package]]
 name = "data-gov-ckan"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "async-trait",
  "futures",
@@ -346,7 +346,7 @@ dependencies = [
 
 [[package]]
 name = "data-gov-mcp-server"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "data-gov",
  "data-gov-catalog",
