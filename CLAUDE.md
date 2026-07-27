@@ -314,6 +314,33 @@ in the 2026-07 review it reported two advisories while OSV surfaced seven furthe
 database. Re-run at release time, not just at the start of the work — advisories
 land after the fact, so a clean run expires.
 
+## Configuration and file locations
+
+**Configuration lives in the XDG base directories, never in `$HOME` directly.**
+Use the `dirs` crate (already a dependency) rather than hand-building paths, so
+the behaviour is correct on every platform:
+
+| Purpose | Call | Linux | Path used |
+|---------------|-----------------------|--------------------------|--------------------------|
+| Configuration | `dirs::config_dir()` | `$XDG_CONFIG_HOME`, else `~/.config` | `<config>/data-gov/` |
+| Cached data | `dirs::cache_dir()` | `$XDG_CACHE_HOME`, else `~/.cache` | `<cache>/data-gov/` |
+| State/history | `dirs::data_dir()` | `$XDG_DATA_HOME`, else `~/.local/share` | `<data>/data-gov/` |
+| Downloads | `dirs::download_dir()` | `$XDG_DOWNLOAD_DIR` | user's own choice |
+
+Never write a dotfile to `$HOME` (`~/.data-gov`, `~/.data-gov-api-key`), and
+never hardcode `~/.config` — that string is wrong on macOS and Windows, and
+ignores `XDG_CONFIG_HOME` on Linux. Honour the environment variable by going
+through `dirs`.
+
+**Precedence**, highest first: command-line flag, then environment variable,
+then config file, then built-in default. A setting that a flag cannot override
+is a bug.
+
+**Secrets** (API keys, tokens) are read from a file under `dirs::config_dir()`
+or from the environment. Never commit one, never log one, never accept one as a
+command-line argument — argv is visible to every process on the machine via
+`ps`. Create secret files with owner-only permissions.
+
 ## Code organization
 
 ### Modularization principles
