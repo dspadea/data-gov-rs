@@ -1,1 +1,47 @@
-{"keywords":[{"count":257091,"keyword":"county or equivalent entity"},{"count":152031,"keyword":"state fips code"},{"count":151478,"keyword":"county fips code"},{"count":125697,"keyword":"united states"},{"count":122573,"keyword":"state gnis code"},{"count":122020,"keyword":"county gnis code"},{"count":115385,"keyword":"u.s."},{"count":103152,"keyword":"permanent edge id"},{"count":101039,"keyword":"hydrography"},{"count":86617,"keyword":"5-digit zip code"}],"min_count":1,"size":10,"total":10}
+{
+  "keywords": [
+    {
+      "count": 263720,
+      "keyword": "county or equivalent entity"
+    },
+    {
+      "count": 155255,
+      "keyword": "state fips code"
+    },
+    {
+      "count": 154705,
+      "keyword": "county fips code"
+    },
+    {
+      "count": 131445,
+      "keyword": "united states"
+    },
+    {
+      "count": 125667,
+      "keyword": "state gnis code"
+    },
+    {
+      "count": 125117,
+      "keyword": "county gnis code"
+    },
+    {
+      "count": 119236,
+      "keyword": "u.s."
+    },
+    {
+      "count": 106510,
+      "keyword": "permanent edge id"
+    },
+    {
+      "count": 104340,
+      "keyword": "hydrography"
+    },
+    {
+      "count": 89905,
+      "keyword": "5-digit zip code"
+    }
+  ],
+  "min_count": 5,
+  "size": 10,
+  "total": 10
+}

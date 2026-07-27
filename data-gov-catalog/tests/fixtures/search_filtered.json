@@ -1,1 +1,305 @@
-{"after":"WzY0Ljk2MDgyLDIsIjNhMzQzMDFlLTMwNjMtNDJhNS04MzQ4LWFjOGIwMTE4ZGY5MyJd","results":[{"_score":64.96082,"_sort":[64.96082,2,"3a34301e-3063-42a5-8348-ac8b0118df93"],"dcat":{"@type":"dcat:Dataset","accessLevel":"public","accrualPeriodicity":"irregular","bureauCode":["026:00"],"contactPoint":{"@type":"vcard:Contact","fn":"Steven Kempler","hasEmail":"mailto:Steven.J.Kempler@nasa.gov"},"description":"Earth Science data access made simple. NASA's role in climate variability study is centered around providing the global scale observational data sets on oceans and ice, their forcings, and the interactions with the entire Earth system.","identifier":"NASA-0000081","issued":"2018-06-25","keyword":["aerosols","atmospheric-height","atmospheric-radiation","atmospheric-temperature","climate","clouds","geodata","ges-disc","ice","mirador","rain","snow","surface-radiation","trace-gases","wind"],"modified":"2025-07-17","programCode":["026:001"],"publisher":{"@type":"org:Organization","name":"National Aeronautics and Space Administration"},"theme":["Earth Science"],"title":"Mirador - Climate Variability and Change"},"description":"Earth Science data access made simple. NASA's role in climate variability study is centered around providing the global scale observational data sets on oceans and ice, their forcings, and the interactions with the entire Earth system.","distribution_titles":[],"harvest_record":"https://catalog-beta.data.gov/harvest_record/2e3bc818-e0f4-4d4e-9dd8-dee62480c515","harvest_record_raw":"https://catalog-beta.data.gov/harvest_record/2e3bc818-e0f4-4d4e-9dd8-dee62480c515/raw","has_spatial":false,"identifier":"NASA-0000081","keyword":["aerosols","atmospheric-height","atmospheric-radiation","atmospheric-temperature","climate","clouds","geodata","ges-disc","ice","mirador","rain","snow","surface-radiation","trace-gases","wind"],"last_harvested_date":"2025-08-03T15:49:47.819080","organization":{"aliases":[""],"description":null,"id":"f4ca4614-8901-409b-8553-2e994ad10023","logo":"https://raw.githubusercontent.com/GSA/logo/refs/heads/master/nasa.png","name":"National Aeronautics and Space Administration","organization_type":"Federal Government","slug":"nasa"},"popularity":2,"publisher":"National Aeronautics and Space Administration","slug":"mirador-climate-variability-and-change","spatial_centroid":null,"spatial_shape":null,"theme":["Earth Science"],"title":"Mirador - Climate Variability and Change"}],"sort":"relevance"}
+{
+  "after": "WzEuMCwyODksImJhZTRhMTgyLWZlZmQtNDY5Ny1iOWFiLTdjZTE3YTI3Zjk1YyJd",
+  "results": [
+    {
+      "_score": 1.0,
+      "_sort": [
+        1.0,
+        3147,
+        "9a465a03-4523-4581-a879-e2b2fdd02579"
+      ],
+      "dcat": {
+        "@type": "dcat:Dataset",
+        "accessLevel": "public",
+        "accrualPeriodicity": "irregular",
+        "bureauCode": [
+          "026:00"
+        ],
+        "contactPoint": {
+          "@type": "vcard:Contact",
+          "fn": "Michael Watskins",
+          "hasEmail": "mailto:michael.m.watkins@jpl.nasa.gov"
+        },
+        "description": "The JPL Small-Body Database Browser provides data for all known asteroids and many comets. Newly discovered objects and their orbits are added on a daily basis. Discovery circumstances are updated on a roughly monthly interval. Physical parameters, other than magnitude parameters, are updated on a less frequent basis.",
+        "distribution": [
+          {
+            "@type": "dcat:Distribution",
+            "downloadURL": "http://ssd.jpl.nasa.gov/sbdb.cgi",
+            "format": "application/html",
+            "mediaType": "application/html"
+          }
+        ],
+        "identifier": "NASA-904",
+        "issued": "1998-03-23",
+        "keyword": [
+          "asteroid",
+          "comet",
+          "discovery",
+          "jpl",
+          "nea",
+          "near-earth-object",
+          "neo",
+          "orbit",
+          "small-body",
+          "solar-system"
+        ],
+        "landingPage": "http://ssd.jpl.nasa.gov/sbdb.cgi",
+        "modified": "2025-03-31",
+        "programCode": [
+          "026:014"
+        ],
+        "publisher": {
+          "@type": "org:Organization",
+          "name": "National Aeronautics and Space Administration"
+        },
+        "theme": [
+          "Space Science"
+        ],
+        "title": "JPL Small Body Database Browser"
+      },
+      "description": "The JPL Small-Body Database Browser provides data for all known asteroids and many comets. Newly discovered objects and their orbits are added on a daily basis. Discovery circumstances are updated on a roughly monthly interval. Physical parameters, other than magnitude parameters, are updated on a less frequent basis.",
+      "distribution_titles": [],
+      "harvest_record": "https://catalog.data.gov/harvest_record/e35b85c6-1dc6-4d46-bf5b-d7a9f11c9dc4",
+      "harvest_record_raw": "https://catalog.data.gov/harvest_record/e35b85c6-1dc6-4d46-bf5b-d7a9f11c9dc4/raw",
+      "has_spatial": false,
+      "identifier": "NASA-904",
+      "keyword": [
+        "asteroid",
+        "comet",
+        "discovery",
+        "jpl",
+        "nea",
+        "near-earth-object",
+        "neo",
+        "orbit",
+        "small-body",
+        "solar-system"
+      ],
+      "last_harvested_date": "2025-09-08T03:09:27.068991",
+      "organization": {
+        "aliases": [
+          ""
+        ],
+        "description": null,
+        "id": "f4ca4614-8901-409b-8553-2e994ad10023",
+        "logo": "https://raw.githubusercontent.com/GSA/logo/refs/heads/master/nasa.png",
+        "name": "National Aeronautics and Space Administration",
+        "organization_type": "Federal Government",
+        "slug": "nasa"
+      },
+      "popularity": 3147,
+      "publisher": "National Aeronautics and Space Administration",
+      "slug": "jpl-small-body-database-browser",
+      "spatial_centroid": null,
+      "spatial_shape": null,
+      "theme": [
+        "Space Science"
+      ],
+      "title": "JPL Small Body Database Browser"
+    },
+    {
+      "_score": 1.0,
+      "_sort": [
+        1.0,
+        436,
+        "4567cc14-5b66-464b-9992-221c4cd73e6b"
+      ],
+      "dcat": {
+        "@type": "dcat:Dataset",
+        "accessLevel": "public",
+        "bureauCode": [
+          "026:00"
+        ],
+        "contactPoint": {
+          "@type": "vcard:Contact",
+          "fn": "NASA Public Data",
+          "hasEmail": "mailto:no-reply@data.nasa.gov"
+        },
+        "description": "This comprehensive data set from The Meteoritical Society contains information on all of the known meteorite landings. The Fusion Table is collected by Javier de la Torre and we've also provided an XLS file that consists of 34,513 meteorites and includes the following fields:\r\nplace\r\ntype_of_meteorite\r\nmass_g\r\nfell_found\r\nyear\r\ndatabase\r\ncoordinate_1\r\ncoordinates_2\r\ncartodb_id\r\ncreated_at\r\nupdated_at\r\nyear_date\r\nlongitude\r\nlatitude\r\ngeojson\r\n\r\n**5/14/13\r\nPlease find an updated data set from The Meteoritical Society that includes more recent meteorites. Under NameType, 'valid' is for most meteorites and 'relict' are for objects that were once meteorites but are now highly altered by weathering on Earth.",
+        "distribution": [
+          {
+            "@type": "dcat:Distribution",
+            "describedBy": "https://data.nasa.gov/docs/legacy/meteorite_landings/MD_columns.json",
+            "describedByType": "application/json",
+            "downloadURL": "https://data.nasa.gov/docs/legacy/meteorite_landings/Meteorite_Landings.json",
+            "format": "JSON",
+            "mediaType": "application/json"
+          },
+          {
+            "@type": "dcat:Distribution",
+            "describedBy": "https://data.nasa.gov/docs/legacy/meteorite_landings/MD_columns.rdf",
+            "describedByType": "application/rdf+xml",
+            "downloadURL": "https://data.nasa.gov/docs/legacy/meteorite_landings/Meteorite_Landings.rdf",
+            "format": "RDF",
+            "mediaType": "application/rdf+xml"
+          },
+          {
+            "@type": "dcat:Distribution",
+            "describedBy": "https://data.nasa.gov/docs/legacy/meteorite_landings/MD_columns.xml",
+            "describedByType": "application/xml",
+            "downloadURL": "https://data.nasa.gov/docs/legacy/meteorite_landings/Meteorite_Landings.xml",
+            "format": "XML",
+            "mediaType": "application/xml"
+          },
+          {
+            "@type": "dcat:Distribution",
+            "downloadURL": "https://data.nasa.gov/docs/legacy/meteorite_landings/Meteorite_Landings.csv",
+            "format": "CSV",
+            "mediaType": "text/csv"
+          }
+        ],
+        "identifier": "https://data.nasa.gov/api/views/gh4g-9sfh",
+        "issued": "2015-07-20",
+        "keyword": [
+          "airburstvisual",
+          "data-visualization",
+          "intermediate",
+          "model",
+          "outerspace",
+          "platform",
+          "spaceapps"
+        ],
+        "landingPage": "https://data.nasa.gov/dataset/meteorite-landings",
+        "modified": "2025-05-29",
+        "programCode": [
+          "026:009"
+        ],
+        "publisher": {
+          "@type": "org:Organization",
+          "name": "data.nasa.gov"
+        },
+        "theme": [
+          "Space Science"
+        ],
+        "title": "Meteorite Landings"
+      },
+      "description": "This comprehensive data set from The Meteoritical Society contains information on all of the known meteorite landings. The Fusion Table is collected by Javier de la Torre and we've also provided an XLS file that consists of 34,513 meteorites and includes the following fields:\r\nplace\r\ntype_of_meteorite\r\nmass_g\r\nfell_found\r\nyear\r\ndatabase\r\ncoordinate_1\r\ncoordinates_2\r\ncartodb_id\r\ncreated_at\r\nupdated_at\r\nyear_date\r\nlongitude\r\nlatitude\r\ngeojson\r\n\r\n**5/14/13\r\nPlease find an updated data set from The Meteoritical Society that includes more recent meteorites. Under NameType, 'valid' is for most meteorites and 'relict' are for objects that were once meteorites but are now highly altered by weathering on Earth.",
+      "distribution_titles": [],
+      "harvest_record": "https://catalog.data.gov/harvest_record/0601f811-9880-4925-9a3b-513ce0c0e245",
+      "harvest_record_raw": "https://catalog.data.gov/harvest_record/0601f811-9880-4925-9a3b-513ce0c0e245/raw",
+      "has_spatial": false,
+      "identifier": "https://data.nasa.gov/api/views/gh4g-9sfh",
+      "keyword": [
+        "airburstvisual",
+        "data-visualization",
+        "intermediate",
+        "model",
+        "outerspace",
+        "platform",
+        "spaceapps"
+      ],
+      "last_harvested_date": "2025-08-04T08:24:32.015930",
+      "organization": {
+        "aliases": [
+          ""
+        ],
+        "description": null,
+        "id": "f4ca4614-8901-409b-8553-2e994ad10023",
+        "logo": "https://raw.githubusercontent.com/GSA/logo/refs/heads/master/nasa.png",
+        "name": "National Aeronautics and Space Administration",
+        "organization_type": "Federal Government",
+        "slug": "nasa"
+      },
+      "popularity": 436,
+      "publisher": "data.nasa.gov",
+      "slug": "meteorite-landings",
+      "spatial_centroid": null,
+      "spatial_shape": null,
+      "theme": [
+        "Space Science"
+      ],
+      "title": "Meteorite Landings"
+    },
+    {
+      "_score": 1.0,
+      "_sort": [
+        1.0,
+        289,
+        "bae4a182-fefd-4697-b9ab-7ce17a27f95c"
+      ],
+      "dcat": {
+        "@type": "dcat:Dataset",
+        "accessLevel": "public",
+        "accrualPeriodicity": "irregular",
+        "bureauCode": [
+          "026:00"
+        ],
+        "contactPoint": {
+          "@type": "vcard:Contact",
+          "fn": "Dalia B. Kirschbaum",
+          "hasEmail": "mailto:dalia.b.kirschbaum@nasa.gov"
+        },
+        "description": "The Global Landslide Catalog (GLC) was developed with the goal of identifying rainfall-triggered landslide events around the world, regardless of size, impacts or location. The GLC considers all types of mass movements triggered by rainfall, which have been reported in the media, disaster databases, scientific reports, or other sources. The GLC has been compiled since 2007 at NASA Goddard Space Flight Center. This is a unique data set with the ID tag \u201cGLC\u201d in the landslide editor. This dataset on data.nasa.gov was a one-time export from the Global Landslide Catalog maintained separately. It is current as of March 7, 2016. The original catalog is available here: http://www.arcgis.com/home/webmap/viewer.html?url=https%3A%2F%2Fmaps.nccs.nasa.gov%2Fserver%2Frest%2Fservices%2Fglobal_landslide_catalog%2Fglc_viewer_service%2FFeatureServer&source=sd. To export GLC data, you must agree to the \u201cTerms and Conditions\u201d. We request that anyone using the GLC cite the two sources of this database: Kirschbaum, D. B., Adler, R., Hong, Y., Hill, S., & Lerner-Lam, A. (2010). A global landslide catalog for hazard applications: method, results, and limitations. Natural Hazards, 52(3), 561\u2013575. doi:10.1007/s11069-009-9401-4. [1] Kirschbaum, D.B., T. Stanley, Y. Zhou (In press, 2015). Spatial and Temporal Analysis of a Global Landslide Catalog. Geomorphology. doi:10.1016/j.geomorph.2015.03.016. [2]",
+        "distribution": [
+          {
+            "@type": "dcat:Distribution",
+            "description": "Landslide data as a CSV file",
+            "downloadURL": "https://data.nasa.gov/docs/legacy/Global_Landslide_Catalog_Export/Global_Landslide_Catalog_Export_rows.csv",
+            "format": "CSV",
+            "mediaType": "text/csv",
+            "title": "rows.csv"
+          }
+        ],
+        "identifier": "Global-Landslide-Catalog-Export",
+        "issued": "2018-04-02",
+        "keyword": [
+          "citizen-science",
+          "earth",
+          "hazards",
+          "landslide",
+          "mudslide"
+        ],
+        "landingPage": "https://landslides.nasa.gov",
+        "modified": "2025-05-29",
+        "programCode": [
+          "026:001"
+        ],
+        "publisher": {
+          "@type": "org:Organization",
+          "name": "National Aeronautics and Space Administration"
+        },
+        "theme": [
+          "Earth Science"
+        ],
+        "title": "Global Landslide Catalog Export"
+      },
+      "description": "The Global Landslide Catalog (GLC) was developed with the goal of identifying rainfall-triggered landslide events around the world, regardless of size, impacts or location. The GLC considers all types of mass movements triggered by rainfall, which have been reported in the media, disaster databases, scientific reports, or other sources. The GLC has been compiled since 2007 at NASA Goddard Space Flight Center. This is a unique data set with the ID tag \u201cGLC\u201d in the landslide editor. This dataset on data.nasa.gov was a one-time export from the Global Landslide Catalog maintained separately. It is current as of March 7, 2016. The original catalog is available here: http://www.arcgis.com/home/webmap/viewer.html?url=https%3A%2F%2Fmaps.nccs.nasa.gov%2Fserver%2Frest%2Fservices%2Fglobal_landslide_catalog%2Fglc_viewer_service%2FFeatureServer&source=sd. To export GLC data, you must agree to the \u201cTerms and Conditions\u201d. We request that anyone using the GLC cite the two sources of this database: Kirschbaum, D. B., Adler, R., Hong, Y., Hill, S., & Lerner-Lam, A. (2010). A global landslide catalog for hazard applications: method, results, and limitations. Natural Hazards, 52(3), 561\u2013575. doi:10.1007/s11069-009-9401-4. [1] Kirschbaum, D.B., T. Stanley, Y. Zhou (In press, 2015). Spatial and Temporal Analysis of a Global Landslide Catalog. Geomorphology. doi:10.1016/j.geomorph.2015.03.016. [2]",
+      "distribution_titles": [
+        "rows.csv"
+      ],
+      "harvest_record": "https://catalog.data.gov/harvest_record/d23ce599-d904-4dcc-86b6-20a2efe1c816",
+      "harvest_record_raw": "https://catalog.data.gov/harvest_record/d23ce599-d904-4dcc-86b6-20a2efe1c816/raw",
+      "has_spatial": false,
+      "identifier": "Global-Landslide-Catalog-Export",
+      "keyword": [
+        "citizen-science",
+        "earth",
+        "hazards",
+        "landslide",
+        "mudslide"
+      ],
+      "last_harvested_date": "2025-08-04T08:21:04.163294",
+      "organization": {
+        "aliases": [
+          ""
+        ],
+        "description": null,
+        "id": "f4ca4614-8901-409b-8553-2e994ad10023",
+        "logo": "https://raw.githubusercontent.com/GSA/logo/refs/heads/master/nasa.png",
+        "name": "National Aeronautics and Space Administration",
+        "organization_type": "Federal Government",
+        "slug": "nasa"
+      },
+      "popularity": 289,
+      "publisher": "National Aeronautics and Space Administration",
+      "slug": "global-landslide-catalog-export",
+      "spatial_centroid": null,
+      "spatial_shape": null,
+      "theme": [
+        "Earth Science"
+      ],
+      "title": "Global Landslide Catalog Export"
+    }
+  ],
+  "sort": "relevance"
+}
