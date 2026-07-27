@@ -128,8 +128,13 @@ jobs:
     # cargo audit only consults the RustSec database. Seven openssl advisories
     # (five High) were GHSA-only and invisible to it; OSV.dev aggregates both,
     # so this step is not redundant with the one above.
+    #
+    # The action lives in a subdirectory: the repository root action.yml carries
+    # only branding metadata and has no `runs:` block, so referencing the repo
+    # root fails at job setup. Pin the exact patch version — upstream notes the
+    # scanner action's behaviour may change within a minor release.
     - name: Scan lockfile against OSV (catches GHSA-only advisories)
-      uses: google/osv-scanner-action@v2.3.8
+      uses: google/osv-scanner-action/osv-scanner-action@v2.3.8
       with:
         scan-args: |-
           --lockfile=./Cargo.lock
