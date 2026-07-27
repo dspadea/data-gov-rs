@@ -2,9 +2,10 @@ name: CI
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main, 'release/**' ]
   pull_request:
-    branches: [ main ]
+    branches: [ main, 'release/**' ]
+  workflow_dispatch:
 
 env:
   CARGO_TERM_COLOR: always
@@ -21,13 +22,13 @@ jobs:
           - 1.90.0  # MSRV
     steps:
     - uses: actions/checkout@v4
-    
+
     - name: Install Rust
       uses: dtolnay/rust-toolchain@master
       with:
         toolchain: ${{ matrix.rust }}
         components: rustfmt, clippy
-    
+
     - name: Cache cargo
       uses: actions/cache@v4
       with:
@@ -39,86 +40,33 @@ jobs:
         restore-keys: |
           ${{ runner.os }}-cargo-${{ matrix.rust }}-
           ${{ runner.os }}-cargo-
-    
+
     - name: Check formatting
       run: cargo fmt --all -- --check
       if: matrix.rust == 'stable'
-    
+
     - name: Run clippy
       run: cargo clippy --all-targets --all-features -- -D warnings
       if: matrix.rust == 'stable'
-    
+
     - name: Build
-      run: cargo build --verbose --all-features
-    
-    - name: Run unit tests
-      run: cargo test --verbose --lib --all-features
-    
-    - name: Run doc tests
-      run: cargo test --verbose --doc --all-features
+      run: cargo build --verbose --all-features --workspace
 
-  integration-test:
-    name: Integration Tests
-    runs-on: ubuntu-latest
-    steps:
-    - uses: actions/checkout@v4
-    
-    - name: Install Rust
-      uses: dtolnay/rust-toolchain@stable
-    
-    - name: Cache cargo
-      uses: actions/cache@v4
-      with:
-        path: |
-          ~/.cargo/registry
-          ~/.cargo/git
-          target
-        key: ${{ runner.os }}-cargo-integration-${{ hashFiles('**/Cargo.lock') }}
-    
-    - name: Run integration tests
-      run: |
-        cd data-gov-ckan
-        cargo test --test integration_tests --verbose
-      env:
-        # Add any API keys or config needed for integration tests
-        RUST_LOG: debug
-        # CKAN_API_KEY: ${{ secrets.CKAN_API_KEY }}  # If you have API keys
-
-  docs:
-    name: Documentation
-    runs-on: ubuntu-latest
-    steps:
-    - uses: actions/checkout@v4
-    
-    - name: Install Rust
-      uses: dtolnay/rust-toolchain@stable
-    
-    - name: Cache cargo
-      uses: actions/cache@v4
-      with:
-        path: |
-          ~/.cargo/registry
-          ~/.cargo/git
-          target
-        key: ${{ runner.os }}-cargo-docs-${{ hashFiles('**/Cargo.lock') }}
-    
-    - name: Build documentation
-      run: cargo doc --verbose --all-features --no-deps --document-private-items
-    
-    - name: Check documentation coverage
-      run: |
-        cargo install cargo-doc-coverage || true
-        cargo doc-coverage --output-format json | jq '.coverage_percentage'
+    # --workspace --all-targets covers unit tests, every tests/ integration
+    # target, and doc tests. Selecting --lib here would silently skip both
+    # binary crates and every tests/ target: 37 of 181 tests would run.
+    - name: Run tests
+      run: cargo test --verbose --all-features --workspace
 
   examples:
     name: Examples
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
-    
+
     - name: Install Rust
       uses: dtolnay/rust-toolchain@stable
-    
+
     - name: Cache cargo
       uses: actions/cache@v4
       with:
@@ -127,24 +75,41 @@ jobs:
           ~/.cargo/git
           target
         key: ${{ runner.os }}-cargo-examples-${{ hashFiles('**/Cargo.lock') }}
-    
+
+    # Examples make real API calls, so they are compiled but not run.
     - name: Build examples
-      run: |
-        cd data-gov-ckan
-        cargo build --examples --verbose
-    
-    # Note: We don't run examples in CI since they make real API calls
-    # But we ensure they compile properly
+      run: cargo build --examples --workspace --all-features --verbose
+
+  docs:
+    name: Documentation
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Cache cargo
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          target
+        key: ${{ runner.os }}-cargo-docs-${{ hashFiles('**/Cargo.lock') }}
+
+    - name: Build documentation
+      run: cargo doc --verbose --all-features --no-deps --document-private-items
 
   security:
     name: Security Audit
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
-    
+
     - name: Install Rust
       uses: dtolnay/rust-toolchain@stable
-    
+
     - name: Cache cargo
       uses: actions/cache@v4
       with:
@@ -153,9 +118,44 @@ jobs:
           ~/.cargo/git
           target
         key: ${{ runner.os }}-cargo-audit-${{ hashFiles('**/Cargo.lock') }}
-    
+
     - name: Install cargo-audit
-      run: cargo install cargo-audit
-    
-    - name: Run security audit
+      run: cargo install cargo-audit --locked
+
+    - name: Run cargo audit (RustSec advisory database)
       run: cargo audit
+
+    # cargo audit only consults the RustSec database. Seven openssl advisories
+    # (five High) were GHSA-only and invisible to it; OSV.dev aggregates both,
+    # so this step is not redundant with the one above.
+    - name: Scan lockfile against OSV (catches GHSA-only advisories)
+      uses: google/osv-scanner-action@v2.3.8
+      with:
+        scan-args: |-
+          --lockfile=./Cargo.lock
+
+  live-api:
+    name: Live API Tests
+    # Hits the real data.gov Catalog API, so it is opt-in rather than gating:
+    # a data.gov outage must not turn PRs red. Run it from the Actions tab.
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Cache cargo
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          target
+        key: ${{ runner.os }}-cargo-live-${{ hashFiles('**/Cargo.lock') }}
+
+    - name: Run ignored (network) tests
+      run: cargo test --verbose --all-features --workspace -- --ignored
+      env:
+        RUST_LOG: debug

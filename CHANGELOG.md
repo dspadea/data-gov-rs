@@ -9,7 +9,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.5.0] - Unreleased
 
-Release in progress. Entries are added here as work merges into `release/0.5.0`.
+### Infrastructure
+
+- **CI now runs 181 tests instead of 37** (#23). The gate selected `--lib`,
+  which skips both binary crates (`data-gov-mcp-server` has no `lib.rs`; the
+  CLI is a `[[bin]]`) and every `tests/` integration target — so all 54
+  MCP-server tests, all 42 CLI tests, all 7 download tests, and all 14 catalog
+  wiremock tests never ran. `clippy --all-targets` compiled them, which is why
+  the gap was invisible.
+- **CI now runs on `release/**` branches** (#23). Triggers were limited to
+  `main`, so pull requests targeting a release branch received no checks at all.
+- **Replaced the permanently-green integration job** (#23). It ran
+  `cargo test --test integration_tests` in `data-gov-ckan`, where all 17 tests
+  are `#[ignore]`d — reporting success having executed nothing. Network tests
+  now live in an opt-in `workflow_dispatch` job that runs `-- --ignored`, so a
+  data.gov outage cannot turn pull requests red.
+- **Examples are compiled workspace-wide** (#25). The job built only
+  `data-gov-ckan`'s examples, leaving `data-gov/examples/demo.rs` uncompiled.
+- **Removed the no-op documentation-coverage step** (#25). It took its exit
+  status from `jq`, which succeeds on empty input, and compared the reported
+  percentage against no threshold — it could not fail. Enforcement moves to a
+  `missing_docs` lint once the outstanding gaps are documented (#59).
+- **Added an OSV/GHSA lockfile scan** alongside `cargo audit` (#46). The seven
+  `openssl` advisories were GHSA-only and invisible to `cargo audit`.
 
 ## [0.4.0] - 2026-04-25
 
