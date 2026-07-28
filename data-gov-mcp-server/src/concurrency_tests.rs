@@ -676,12 +676,19 @@ fn line_of(message: &Value) -> Vec<u8> {
 /// 1 GiB line peaked at 1046 MiB of resident memory, and a 256 MiB line that
 /// was a *valid* request peaked at 4.09x its own size, because the raw buffer,
 /// the parsed `Value`, the cloned id, and the serialised response all coexist.
+///
+/// The line is twice the cap rather than one byte over it, and that is load
+/// bearing. An implementation that stops reading at the cap instead of
+/// consuming to the newline leaves the remainder to be read as the next
+/// message - and at one byte over, that remainder is a byte or two, which
+/// trims to nothing and hides the defect. At twice the cap the leak is a
+/// megabyte of rubbish and shows up as a third response.
 #[tokio::test]
-async fn a_line_over_the_cap_is_refused_and_the_session_survives() {
+async fn a_line_over_the_cap_is_refused_and_its_tail_is_not_read_as_a_message() {
     let mock = MockServer::start().await;
     let server = Arc::new(test_server(&mock.uri()));
 
-    let mut input = padded_ping(1, ACCEPTED_LINE_BYTES + 1);
+    let mut input = padded_ping(1, ACCEPTED_LINE_BYTES * 2);
     input.extend_from_slice(&line_of(
         &json!({"jsonrpc": "2.0", "id": 2, "method": "ping"}),
     ));
@@ -691,7 +698,8 @@ async fn a_line_over_the_cap_is_refused_and_the_session_survives() {
     assert_eq!(
         responses.len(),
         2,
-        "one refusal and one answer: {responses:?}"
+        "exactly one refusal and one answer; a third response is the refused \
+         line's tail being read as a message of its own: {responses:?}"
     );
     assert_eq!(
         responses[0].get("id"),
@@ -713,10 +721,27 @@ async fn a_line_over_the_cap_is_refused_and_the_session_survives() {
     assert_eq!(
         responses[1].get("id"),
         Some(&json!(2)),
-        "the session survives, and the tail of the refused line is discarded \
-         rather than read as the next message: {}",
+        "and the session survives the refusal: {}",
         responses[1]
     );
+}
+
+/// The boundary from above. One byte past the cap is already too much.
+#[tokio::test]
+async fn a_line_one_byte_over_the_cap_is_refused() {
+    let mock = MockServer::start().await;
+    let server = Arc::new(test_server(&mock.uri()));
+
+    let responses = drive(&server, &padded_ping(1, ACCEPTED_LINE_BYTES + 1)).await;
+
+    assert_eq!(responses.len(), 1, "got: {responses:?}");
+    assert_eq!(
+        responses[0].get("id"),
+        Some(&json!(null)),
+        "one byte past the cap is refused, not served: {}",
+        responses[0]
+    );
+    assert_eq!(error_code(&responses[0]), INVALID_REQUEST);
 }
 
 /// The boundary itself. A cap that rejected the largest accepted size, or
