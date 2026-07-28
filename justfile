@@ -44,29 +44,22 @@ check-ascii:
     done
     exit $status
 
-# Fail if the tracked tree contains a real developer's absolute home path
-# (#74): /home/<name>, /Users/<name>, or C:\Users\<name>. A committed path
-# like that works on nobody's machine but the one it was captured from.
-#
-# The lookbehind excludes a path segment inside a URL - "arcgis.com/home/..."
-# is not a home directory - and the three-character floor on the name
-# excludes short synthetic placeholders such as the "me" in a Windows
-# path-traversal test fixture, without hardcoding that value by name.
-# Bracket-class syntax right after the literal prefix keeps this recipe from
-# matching its own pattern definition.
+# Fail if a tracked file names somebody's home directory. The matcher checks
+# itself first, so a change that breaks it fails loudly instead of passing
+# everything.
 check-home-paths:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    pattern='(?<![A-Za-z0-9])(/home/|/Users/|C:\\+Users\\+)[A-Za-z0-9._-]{3,}'
-    if git grep -nIP "$pattern" -- .; then
-      echo "^ absolute home path(s) above. Use \$HOME, a workspace-relative path, or a placeholder like /home/<user>." >&2
-      exit 1
-    fi
-    exit 0
+    python3 scripts/check-home-paths.py --self-test
+    python3 scripts/check-home-paths.py
 
-# Fail if a workspace crate declares a dependency nothing imports (#76).
-# Installs cargo-machete on demand so a fresh clone with just `just` and Rust
-# still runs `just check` end to end.
+# Fail if a crate declares a dependency nothing imports.
+#
+# cargo-machete reads source files only; it does not parse the code fences in
+# rustdoc `# Examples` sections. A dependency whose sole use is a doc test is
+# therefore reported as unused. Do not delete it - declare it ignored in that
+# crate's own manifest, with a comment saying which doc test needs it:
+#
+#     [package.metadata.cargo-machete]
+#     ignored = ["once_cell"]   # used only by the doc test on Foo::bar
 check-deps:
     #!/usr/bin/env bash
     set -euo pipefail
