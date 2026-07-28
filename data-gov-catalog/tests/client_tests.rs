@@ -708,9 +708,38 @@ async fn harvest_record_transformed_parses_dataset() {
     let ds = client
         .harvest_record_transformed("c1d2faad-b413-41a8-934d-119f7c50d8ab")
         .await
-        .expect("transformed record parses");
+        .expect("transformed record parses")
+        .expect("a 200 response carries a transform, not an absent one");
     assert!(ds.title.is_some());
     assert!(!ds.distribution.is_empty());
+}
+
+/// #83: `/harvest_record/{id}/transformed` 404s when the base record's
+/// `source_transform` is null, which is the common case -- roughly 87% of a
+/// 752-record sample across 18 organizations. That is a legitimate answer,
+/// not a failure, so it must come back `Ok(None)`, the same "no such thing"
+/// shape `dataset_by_slug` uses via `get_json_optional`. An earlier version
+/// of this method routed every non-2xx through `get_json`, which turned that
+/// 404 into an `ApiError` -- indistinguishable from data.gov being down.
+#[tokio::test]
+async fn harvest_record_transformed_returns_none_when_no_transform_exists() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path(
+            "/harvest_record/c1d2faad-b413-41a8-934d-119f7c50d8ab/transformed",
+        ))
+        .respond_with(ResponseTemplate::new(404).set_body_json(json!({"error": "Not Found"})))
+        .mount(&server)
+        .await;
+
+    let outcome = client_for(&server)
+        .harvest_record_transformed("c1d2faad-b413-41a8-934d-119f7c50d8ab")
+        .await;
+
+    assert!(
+        matches!(outcome, Ok(None)),
+        "a harvest record with no populated transform is Ok(None), not an error: got {outcome:?}"
+    );
 }
 
 #[tokio::test]

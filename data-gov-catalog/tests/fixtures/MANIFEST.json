@@ -30,6 +30,18 @@
       "source": "https://catalog.data.gov",
       "captured": "2026-07-28"
     },
+    "harvest_record_transformed.json": {
+      "endpoint": "/harvest_record/2360ab48-690e-4604-8487-6a28a228da9a/transformed",
+      "status": 200,
+      "source": "https://catalog.data.gov",
+      "captured": "2026-07-28"
+    },
+    "harvest_record_transformed_not_found.json": {
+      "endpoint": "/harvest_record/c4d2afc2-0d60-4a75-9a68-46c6a3dec87f/transformed",
+      "status": 404,
+      "source": "https://catalog.data.gov",
+      "captured": "2026-07-28"
+    },
     "keywords.json": {
       "endpoint": "/api/keywords?size=10&min_count=5",
       "status": 200,
@@ -77,13 +89,6 @@
       "status": 200,
       "source": "https://catalog.data.gov",
       "captured": "2026-07-28"
-    }
-  },
-  "unverified": {
-    "harvest_record_transformed.json": {
-      "endpoint": "/harvest_record/{id}/transformed",
-      "reason": "The endpoint returns 404 for every sampled harvest record (#83). This fixture is the last capture from when it still responded; it cannot be refreshed until #83 is resolved.",
-      "captured": "2026-07-27"
     }
   },
   "note": "Provenance for every file in this directory. Written by scripts/capture-fixtures.sh; asserted by fixture_parity_tests.rs. A fixture with no entry here has unverified provenance and fails the test."

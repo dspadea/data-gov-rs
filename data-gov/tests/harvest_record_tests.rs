@@ -17,10 +17,8 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 const HARVEST_RECORD_ID: &str = "c1d2faad-b413-41a8-934d-119f7c50d8ab";
 
 /// `data-gov-catalog`'s own captured-and-manifest-tracked fixture (see that
-/// crate's `tests/fixtures/MANIFEST.json`). It is recorded there as
-/// `unverified`: the live endpoint 404s for every sampled record today
-/// (#83), so this is the last capture from when it still answered. Reused
-/// rather than hand-written, per CLAUDE.md's "prefer real captured data".
+/// crate's `tests/fixtures/MANIFEST.json`). Reused rather than hand-written,
+/// per CLAUDE.md's "prefer real captured data".
 fn harvest_record_transformed_fixture_path() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../data-gov-catalog/tests/fixtures/harvest_record_transformed.json")
@@ -38,12 +36,20 @@ async fn get_dataset_by_harvest_record_deserializes_the_transformed_dataset() {
     let server = MockServer::start().await;
     let body = std::fs::read_to_string(harvest_record_transformed_fixture_path())
         .expect("harvest_record_transformed.json fixture must exist");
+    // The fixture is not pinned to a specific long-lived record (unlike the
+    // slug-addressed fixtures), so its content changes on every recapture.
+    // Read the title out of the raw body rather than hardcoding a value that
+    // would go stale the next time scripts/capture-fixtures.sh runs.
+    let raw: serde_json::Value = serde_json::from_str(&body).expect("fixture must be valid JSON");
+    let expected_title = raw["title"]
+        .as_str()
+        .expect("fixture has no title; recapture before trusting this test");
 
     Mock::given(method("GET"))
         .and(path(format!(
             "/harvest_record/{HARVEST_RECORD_ID}/transformed"
         )))
-        .respond_with(ResponseTemplate::new(200).set_body_raw(body, "application/json"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(body.clone(), "application/json"))
         .mount(&server)
         .await;
 
@@ -55,17 +61,21 @@ async fn get_dataset_by_harvest_record_deserializes_the_transformed_dataset() {
 
     assert_eq!(
         dataset.title.as_deref(),
-        Some(
-            "TIGER/Line Shapefile, 2022, Nation, U.S., 2020 Census 5-Digit ZIP Code Tabulation Area (ZCTA5)"
-        ),
+        Some(expected_title),
         "the wrapper must hand back the real field, not drop it in translation"
     );
 }
 
-/// #83: the live endpoint currently 404s for every sampled record, so this
-/// is the common case a real caller hits today, not an edge case.
+/// #83: `/harvest_record/{id}/transformed` 404s when the base record's
+/// `source_transform` is null, which is the common case, not an edge case --
+/// roughly 87% of a 752-record sample across 18 organizations. The catalog
+/// layer turns that into `Ok(None)` (see
+/// `CatalogClient::harvest_record_transformed`); this wrapper keeps its
+/// `Result<Dataset>` signature by mapping the missing transform onto
+/// `ResourceNotFound`, the same shape `get_dataset` uses for its own
+/// not-found case.
 #[tokio::test]
-async fn get_dataset_by_harvest_record_propagates_a_not_found_as_an_error() {
+async fn get_dataset_by_harvest_record_maps_a_missing_transform_to_resource_not_found() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path(format!(
@@ -79,11 +89,11 @@ async fn get_dataset_by_harvest_record_propagates_a_not_found_as_an_error() {
     let err = client
         .get_dataset_by_harvest_record(HARVEST_RECORD_ID)
         .await
-        .expect_err("a 404 must not be reported as a successful empty dataset");
+        .expect_err("a missing transform must not be reported as a successful empty dataset");
 
     assert!(
-        matches!(err, DataGovError::CatalogError(_)),
-        "a harvest-record lookup has no not-found case of its own to collapse into, \
-         unlike dataset_by_slug -- it must surface the catalog error as-is, got {err:?}"
+        matches!(err, DataGovError::ResourceNotFound { .. }),
+        "a 404 (no populated transform) must surface the same not-found shape \
+         get_dataset uses for a missing slug, not the raw catalog error: got {err:?}"
     );
 }

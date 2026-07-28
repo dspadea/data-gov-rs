@@ -135,7 +135,7 @@ if let Some(hit) = hit {
 | `location_geometry(id)`       | `GET /api/location/{id}`              | `serde_json::Value` (GeoJSON) |
 | `harvest_record(id)`          | `GET /harvest_record/{id}`            | `HarvestRecord`               |
 | `harvest_record_raw(id)`      | `GET /harvest_record/{id}/raw`        | `serde_json::Value`           |
-| `harvest_record_transformed(id)` | `GET /harvest_record/{id}/transformed` | `Dataset` (DCAT-US 3)     |
+| `harvest_record_transformed(id)` | `GET /harvest_record/{id}/transformed` | `Option<Dataset>` (DCAT-US 3) |
 
 Errors are surfaced through [`CatalogError`]:
 

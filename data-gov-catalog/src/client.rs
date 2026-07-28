@@ -673,12 +673,27 @@ impl CatalogClient {
     }
 
     /// Retrieve the DCAT-US 3 transform of a harvest record.
+    ///
+    /// Returns `Ok(None)` when the harvest record's `source_transform` is
+    /// null -- the endpoint 404s in that case, and it is the common answer,
+    /// not a failure: across a 752-record sample spanning 18 organizations,
+    /// two (census, noaa) had a transform on every record sampled and the
+    /// other 16 had none on any (#83). Which organizations populate a
+    /// transform looks like a property of the harvest source, not something
+    /// callers can predict from the record alone.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CatalogError::ApiError`] for any non-2xx status other than
+    /// 404, [`CatalogError::RequestError`] for network or TLS failure, and
+    /// [`CatalogError::ParseError`] if a 200 body is not a valid
+    /// [`Dataset`](models::Dataset).
     pub async fn harvest_record_transformed(
         &self,
         id: &str,
-    ) -> Result<models::Dataset, CatalogError> {
+    ) -> Result<Option<models::Dataset>, CatalogError> {
         let path = format!("/harvest_record/{}/transformed", encode_path_segment(id)?);
-        self.get_json(&path, &[(); 0]).await
+        self.get_json_optional(&path).await
     }
 }
 
