@@ -4,15 +4,63 @@ use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::{Value, json};
 use thiserror::Error;
 
-/// Incoming JSON-RPC request.
+/// Incoming JSON-RPC request, without its `id`.
+///
+/// The id is read from the raw message by [`classify_request_id`] instead,
+/// because `Option<Value>` cannot tell an absent `id` from an explicit
+/// `"id": null` - and those two mean opposite things. The first is a
+/// notification the server must not answer; the second is a malformed request
+/// a client is waiting on.
+///
+/// `jsonrpc` stays optional so that an absent member reaches
+/// [`crate::server::DataGovMcpServer`] as a rejection with a message naming
+/// what is missing, rather than as serde's "missing field" text.
 #[derive(Debug, Deserialize)]
 pub(crate) struct Request {
     #[serde(default)]
     pub jsonrpc: Option<String>,
-    pub id: Option<Value>,
     pub method: String,
     #[serde(default)]
     pub params: Option<Value>,
+}
+
+/// How a message's `id` member reads against the JSON-RPC and MCP rules.
+#[derive(Debug)]
+pub(crate) enum RequestIdKind {
+    /// A JSON object with no `id` member. JSON-RPC 2.0: "A Notification is a
+    /// Request object without an "id" member", and the receiver "MUST NOT send
+    /// a response" - but only when the rest of the message really is a Request
+    /// object, which the caller still has to establish.
+    Absent,
+    /// A string or an integer, the only two shapes MCP allows.
+    Valid(Value),
+    /// An `id` member that is present but is not a usable request id.
+    Invalid,
+    /// Not a JSON object at all: an array, a number, a string, a boolean, or
+    /// null. Such a message cannot be a Request object, so it cannot be a
+    /// Notification either, and it is answered rather than ignored. JSON-RPC's
+    /// own worked examples answer `[]` and `[1]` this way, and MCP 2025-06-18
+    /// removed batching, so an array is exactly what a client still sending
+    /// batches needs to be told about.
+    NotAnObject,
+}
+
+/// Classify the `id` member of a received message.
+///
+/// MCP narrows JSON-RPC here: "Requests MUST include a string or integer ID"
+/// and "Unlike base JSON-RPC, the ID MUST NOT be `null`." A fractional number
+/// is not an integer, so it is rejected with the rest.
+pub(crate) fn classify_request_id(message: &Value) -> RequestIdKind {
+    let Some(object) = message.as_object() else {
+        return RequestIdKind::NotAnObject;
+    };
+    match object.get("id") {
+        None => RequestIdKind::Absent,
+        Some(id) if id.is_string() || id.is_i64() || id.is_u64() => {
+            RequestIdKind::Valid(id.clone())
+        }
+        Some(_) => RequestIdKind::Invalid,
+    }
 }
 
 /// Outgoing JSON-RPC response.
@@ -95,6 +143,26 @@ impl From<ServerError> for ResponseError {
                 message: err.to_string(),
                 data: None,
             },
+            ServerError::Parse(message) => Self {
+                code: -32700,
+                message,
+                data: None,
+            },
+            ServerError::ToolFailed(message) => Self {
+                code: -32040,
+                message,
+                data: None,
+            },
+            ServerError::ToolFailedWith { message, payload } => Self {
+                code: -32040,
+                message,
+                data: Some(*payload),
+            },
+            ServerError::Timeout(message) => Self {
+                code: -32030,
+                message,
+                data: None,
+            },
         }
     }
 }
@@ -123,6 +191,63 @@ pub enum ServerError {
     /// Serialization error (distinct from parse errors).
     #[error("serialization error: {0}")]
     Serialization(serde_json::Error),
+    /// The received bytes could not be parsed. Distinct from [`Self::Json`]
+    /// because the failure can precede JSON parsing entirely - a line that is
+    /// not valid UTF-8 never reaches serde.
+    #[error("{0}")]
+    Parse(String),
+    /// The tool ran and could not finish for a reason in the data rather than
+    /// in the request: no distribution matched, the dataset carries no DCAT
+    /// metadata, and the like.
+    ///
+    /// Reaches the client as a tool result with `isError: true`. The JSON-RPC
+    /// code below only applies if such a fault ever escapes a tool path.
+    #[error("{0}")]
+    ToolFailed(String),
+    /// The tool ran, produced a machine-readable result, and that result
+    /// reports failure - a download where every file failed, for instance.
+    ///
+    /// Carrying the payload is the point: the caller needs to know which parts
+    /// failed and why, not only that something did. It reaches the client as a
+    /// tool result with `isError: true` whose `structuredContent` is `payload`.
+    #[error("{message}")]
+    ToolFailedWith {
+        /// Human-readable summary, placed in the result's `content`.
+        message: String,
+        /// Machine-readable detail, placed in `structuredContent`.
+        payload: Box<Value>,
+    },
+    /// The request outran the server's per-request timeout.
+    #[error("{0}")]
+    Timeout(String),
+}
+
+impl ServerError {
+    /// Whether this fault belongs in a tool result rather than in a JSON-RPC
+    /// error object.
+    ///
+    /// MCP splits the two: a protocol fault (unknown tool, arguments that fail
+    /// the schema, a server bug) is a JSON-RPC error the model cannot act on,
+    /// while a tool that ran and failed reports `isError: true` with the
+    /// message in `content` so the model can read it and correct itself.
+    ///
+    /// The match is exhaustive on purpose: a new variant has to be classified
+    /// rather than defaulting to either side.
+    pub(crate) fn is_tool_execution_failure(&self) -> bool {
+        match self {
+            Self::DataGov(_)
+            | Self::Io(_)
+            | Self::ToolFailed(_)
+            | Self::ToolFailedWith { .. }
+            | Self::Timeout(_) => true,
+            Self::InvalidRequest(_)
+            | Self::InvalidMethod(_)
+            | Self::InvalidParams(_)
+            | Self::Json(_)
+            | Self::Parse(_)
+            | Self::Serialization(_) => false,
+        }
+    }
 }
 
 /// Convenience alias used throughout the server.
@@ -180,8 +305,17 @@ pub(crate) fn validate_limit(
 // MCP parameter and result structs
 // ---------------------------------------------------------------------------
 
+/// The five structs below back the tools whose advertised `inputSchema`
+/// declares `additionalProperties: false`, so each carries
+/// `deny_unknown_fields`. A schema is a promise, and dropping an undeclared key
+/// would run the tool on arguments the client never sent and report success.
+///
+/// The protocol-level structs (`InitializeParams`, `CallToolParams`,
+/// `ListToolsParams`, `ClientInfo`) deliberately stay permissive: MCP reserves
+/// `_meta` on any params object, and their schemas are not ours to close.
 /// Parameters for `data_gov.search`.
 #[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct SearchParams {
     #[serde(default)]
     pub query: String,
@@ -216,6 +350,7 @@ pub(crate) struct DatasetSummary {
 
 /// Parameters for `data_gov.dataset`.
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct DatasetParams {
     /// data.gov dataset slug (e.g., `electric-vehicle-population-data`).
     pub slug: String,
@@ -223,6 +358,7 @@ pub(crate) struct DatasetParams {
 
 /// Parameters for `data_gov.autocompleteDatasets`.
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct AutocompleteParams {
     pub partial: String,
     #[serde(default)]
@@ -336,6 +472,7 @@ pub(crate) struct ClientInfoSummary {
 
 /// Parameters for `data_gov.downloadResources`.
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct DownloadResourcesParams {
     #[serde(rename = "datasetId")]
     pub dataset_id: String,
@@ -351,6 +488,7 @@ pub(crate) struct DownloadResourcesParams {
 
 /// Parameters for `data_gov.listOrganizations`.
 #[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct ListOrganizationsParams {
     #[serde(default)]
     pub limit: Option<i32>,
@@ -374,19 +512,8 @@ pub(crate) struct CallToolParams {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::{CURRENT_MCP_REVISION, PUBLISHED_MCP_REVISIONS};
     use serde_json::json;
-
-    /// Revisions the MCP specification has actually published, oldest first.
-    ///
-    /// Deliberately literal. Deriving this from [`SUPPORTED_PROTOCOL_VERSIONS`]
-    /// would make every assertion below agree with whatever that constant happens
-    /// to say, so a revision quietly dropped — or invented — would stay green.
-    const PUBLISHED_MCP_REVISIONS: [&str; 4] =
-        ["2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25"];
-
-    /// The revision marked *current* at modelcontextprotocol.io/specification/versioning.
-    /// Bumping this is a deliberate act of adopting a new spec, not a side effect.
-    const CURRENT_MCP_REVISION: &str = "2025-11-25";
 
     #[test]
     fn parse_required_params_succeeds_with_valid_json() {
@@ -544,8 +671,8 @@ mod tests {
     fn request_deserializes_full_json_rpc() {
         let json_str = r#"{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}"#;
         let req: Request = serde_json::from_str(json_str).expect("should parse");
+        assert_eq!(req.jsonrpc.as_deref(), Some("2.0"));
         assert_eq!(req.method, "tools/list");
-        assert_eq!(req.id, Some(json!(1)));
         assert!(req.params.is_some());
     }
 
@@ -554,7 +681,7 @@ mod tests {
         let json_str = r#"{"method":"initialize"}"#;
         let req: Request = serde_json::from_str(json_str).expect("should parse");
         assert_eq!(req.method, "initialize");
-        assert!(req.id.is_none());
+        assert!(req.jsonrpc.is_none());
         assert!(req.params.is_none());
     }
 
@@ -563,6 +690,70 @@ mod tests {
         let json_str = r#"{"jsonrpc":"2.0","id":1}"#;
         let result = serde_json::from_str::<Request>(json_str);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn request_rejects_a_non_string_jsonrpc_member() {
+        for version in [json!(2.0), json!(2), json!(true), json!(["2.0"])] {
+            let message = json!({"jsonrpc": version, "id": 1, "method": "tools/list"});
+            assert!(
+                serde_json::from_value::<Request>(message).is_err(),
+                "jsonrpc {version} is not the string \"2.0\""
+            );
+        }
+    }
+
+    /// An absent `id` is a notification; every other reading is not.
+    #[test]
+    fn an_absent_id_is_the_only_notification() {
+        assert!(matches!(
+            classify_request_id(&json!({"jsonrpc": "2.0", "method": "tools/list"})),
+            RequestIdKind::Absent
+        ));
+        assert!(
+            !matches!(
+                classify_request_id(&json!({"jsonrpc": "2.0", "id": null, "method": "x"})),
+                RequestIdKind::Absent
+            ),
+            "an explicit null id is a request, not a notification"
+        );
+    }
+
+    /// "Requests MUST include a string or integer ID."
+    #[test]
+    fn a_string_or_integer_id_is_valid_and_survives_verbatim() {
+        for id in [
+            json!("req-1"),
+            json!(""),
+            json!(0),
+            json!(-7),
+            json!(u64::MAX),
+        ] {
+            let message = json!({"jsonrpc": "2.0", "id": id, "method": "tools/list"});
+            match classify_request_id(&message) {
+                RequestIdKind::Valid(seen) => assert_eq!(seen, id, "the id must survive verbatim"),
+                other => panic!("{id} is a valid request id, got {other:?}"),
+            }
+        }
+    }
+
+    /// "Unlike base JSON-RPC, the ID MUST NOT be `null`", and MCP's `RequestId`
+    /// admits no type beyond string and integer.
+    #[test]
+    fn a_null_or_non_scalar_id_is_invalid() {
+        for id in [
+            json!(null),
+            json!({"a": 1}),
+            json!([1]),
+            json!(true),
+            json!(1.5),
+        ] {
+            let message = json!({"jsonrpc": "2.0", "id": id, "method": "tools/list"});
+            assert!(
+                matches!(classify_request_id(&message), RequestIdKind::Invalid),
+                "{id} is not a string or an integer, so it is not a RequestId"
+            );
+        }
     }
 
     #[test]

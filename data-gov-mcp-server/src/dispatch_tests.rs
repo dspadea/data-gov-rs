@@ -11,35 +11,27 @@
 //!
 //! Plus error-variant contracts for unknown methods and missing params.
 
-use data_gov::{DataGovClient, DataGovConfig, OperatingMode};
 use serde_json::{Value, json};
 use wiremock::matchers::{method as wm_method, path as wm_path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
-use crate::server::DataGovMcpServer;
+use crate::test_support::{
+    CURRENT_MCP_REVISION, PUBLISHED_MCP_REVISIONS, search_body, test_server,
+};
 use crate::types::{SUPPORTED_PROTOCOL_VERSIONS, ServerError};
 
-/// Revisions the MCP specification has actually published, oldest first.
-/// Literal on purpose: deriving it from `SUPPORTED_PROTOCOL_VERSIONS` would
-/// make these assertions agree with whatever that constant says.
-const PUBLISHED_MCP_REVISIONS: [&str; 4] = ["2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25"];
-
-/// The revision marked *current* at modelcontextprotocol.io/specification/versioning.
-const CURRENT_MCP_REVISION: &str = "2025-11-25";
-
-/// Build a `DataGovMcpServer` whose internal client points at the given mock
-/// URL. Callers mount `Mock`s on the same server before exercising a dispatch
-/// path.
-fn test_server(mock_uri: &str) -> DataGovMcpServer {
-    let config = DataGovConfig::default()
-        .with_base_url(mock_uri)
-        .with_mode(OperatingMode::CommandLine)
-        .with_user_agent("test/1.0");
-    let data_gov = DataGovClient::with_config(config).expect("build data_gov");
-
-    DataGovMcpServer {
-        data_gov,
-        portal_base_url: mock_uri.to_string(),
+/// Arguments that satisfy each tool's advertised `inputSchema`.
+///
+/// A tool added without an entry here panics rather than being skipped, so the
+/// registry-driven tests keep covering the whole set.
+fn valid_arguments_for(tool: &str) -> Value {
+    match tool {
+        "data_gov_search" => json!({"query": "climate", "limit": 1}),
+        "data_gov_dataset" => json!({"slug": "probe-dataset"}),
+        "data_gov_autocomplete_datasets" => json!({"partial": "clim", "limit": 2}),
+        "data_gov_list_organizations" => json!({"limit": 2}),
+        "data_gov_download_resources" => json!({"datasetId": "probe-dataset"}),
+        other => panic!("no fixture arguments for `{other}`; add them with the tool"),
     }
 }
 
@@ -67,36 +59,6 @@ fn tool_response_json(value: &Value) -> &Value {
     value
         .get("structuredContent")
         .expect("tool result must carry structuredContent")
-}
-
-/// Minimal search response body matching the Catalog API shape.
-fn search_body(slug: &str, title: &str) -> Value {
-    json!({
-        "results": [{
-            "identifier": format!("id:{slug}"),
-            "slug": slug,
-            "title": title,
-            "description": "mock",
-            "publisher": "mock",
-            "organization": {
-                "id": "00000000-0000-0000-0000-000000000000",
-                "name": "Mock Org",
-                "slug": "mock-org",
-                "organization_type": "Federal Government"
-            },
-            "keyword": [],
-            "theme": [],
-            "has_spatial": false,
-            "dcat": {
-                "@type": "dcat:Dataset",
-                "title": title,
-                "description": "mock",
-                "identifier": format!("id:{slug}"),
-                "distribution": []
-            }
-        }],
-        "sort": "relevance"
-    })
 }
 
 #[tokio::test]
@@ -544,14 +506,7 @@ async fn dispatch_download_resources_rejects_parent_traversal_in_output_dir() {
 #[tokio::test]
 async fn every_tool_returns_object_shaped_structured_content() {
     fn arguments_for(tool: &str) -> Value {
-        match tool {
-            "data_gov_search" => json!({"query": "climate", "limit": 1}),
-            "data_gov_dataset" => json!({"slug": "probe-dataset"}),
-            "data_gov_autocomplete_datasets" => json!({"partial": "clim", "limit": 2}),
-            "data_gov_list_organizations" => json!({"limit": 2}),
-            "data_gov_download_resources" => json!({"datasetId": "probe-dataset"}),
-            other => panic!("no fixture arguments for `{other}`; add them with the tool"),
-        }
+        valid_arguments_for(tool)
     }
 
     let mock = MockServer::start().await;
@@ -587,8 +542,13 @@ async fn every_tool_returns_object_shaped_structured_content() {
 
         // A tool may legitimately fail against this mock (the download tool
         // reaches for distributions the fixture has none of). What must never
-        // happen is a *successful* result in a non-conformant shape.
+        // happen is a *successful* result in a non-conformant shape. A failure
+        // arrives either as a JSON-RPC error or as a result flagged
+        // `isError: true`, and neither carries machine-readable output.
         let Ok(value) = outcome else { continue };
+        if tool_error_flag(&value) {
+            continue;
+        }
 
         for block in value["content"].as_array().expect("content array") {
             let ty = block["type"].as_str().expect("every block has a type");
@@ -625,4 +585,521 @@ async fn every_tool_returns_object_shaped_structured_content() {
             }
         );
     }
+}
+
+// ---------------------------------------------------------------------------
+// Tool execution failures against protocol errors (#70.1)
+// ---------------------------------------------------------------------------
+
+/// A dataset body with a single CSV distribution and nothing else.
+fn csv_only_dataset(slug: &str) -> Value {
+    json!({
+        "results": [{
+            "slug": slug,
+            "title": "CSV Only",
+            "dcat": {
+                "@type": "dcat:Dataset",
+                "title": "CSV Only",
+                "distribution": [{
+                    "@type": "dcat:Distribution",
+                    "downloadURL": "http://127.0.0.1:1/file.csv",
+                    "mediaType": "text/csv"
+                }]
+            }
+        }],
+        "sort": "relevance"
+    })
+}
+
+/// The `isError: true` flag on a tool result, or a panic naming the value.
+fn tool_error_flag(value: &Value) -> bool {
+    value
+        .get("isError")
+        .and_then(Value::as_bool)
+        .unwrap_or_else(|| panic!("a tool result must carry isError: {value}"))
+}
+
+/// The concatenated text of a tool result's content blocks.
+fn tool_text(value: &Value) -> String {
+    value["content"]
+        .as_array()
+        .expect("content array")
+        .iter()
+        .filter_map(|block| block.get("text").and_then(Value::as_str))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// MCP, server/tools, Error Handling: "Tool Execution Errors: Reported in tool
+/// results with `isError: true`: API failures, ... business logic errors."
+///
+/// The reason it matters here is stated in AGENTS.md: an agent acts on a tool
+/// result without checking it. A JSON-RPC error object may never reach the
+/// model at all - "Clients SHOULD provide tool execution errors to language
+/// models... MAY provide protocol errors."
+#[tokio::test]
+async fn an_upstream_failure_is_a_tool_result_with_is_error_true() {
+    let mock = MockServer::start().await;
+    Mock::given(wm_method("GET"))
+        .and(wm_path("/search"))
+        .respond_with(ResponseTemplate::new(500).set_body_string("upstream is down"))
+        .mount(&mock)
+        .await;
+
+    let server = test_server(&mock.uri());
+
+    let value = server
+        .dispatch(
+            "tools/call",
+            Some(json!({"name": "data_gov_search", "arguments": {"query": "climate"}})),
+        )
+        .await
+        .expect("an upstream failure is a tool result, not a JSON-RPC error");
+
+    assert!(
+        tool_error_flag(&value),
+        "the tool ran and failed, so isError must be true: {value}"
+    );
+    assert!(
+        !tool_text(&value).trim().is_empty(),
+        "the failure has to be readable in `content`, not just flagged: {value}"
+    );
+}
+
+/// The same rule for a transport that never answers at all.
+#[tokio::test]
+async fn an_unreachable_upstream_is_a_tool_result_with_is_error_true() {
+    // Port 1 is reserved and refuses; no mock server is involved.
+    let server = test_server("http://127.0.0.1:1");
+
+    let value = server
+        .dispatch(
+            "tools/call",
+            Some(json!({"name": "data_gov_search", "arguments": {"query": "climate"}})),
+        )
+        .await
+        .expect("a connection failure is a tool result, not a JSON-RPC error");
+
+    assert!(tool_error_flag(&value), "{value}");
+}
+
+/// The tools/call example in the spec carries `"isError": false` on success.
+/// Emitting it means a client never has to infer the flag from its absence.
+#[tokio::test]
+async fn a_successful_tool_result_reports_is_error_false() {
+    let mock = MockServer::start().await;
+    Mock::given(wm_method("GET"))
+        .and(wm_path("/search"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(search_body("ok-1", "OK")))
+        .mount(&mock)
+        .await;
+
+    let server = test_server(&mock.uri());
+
+    let value = server
+        .dispatch(
+            "tools/call",
+            Some(json!({"name": "data_gov_search", "arguments": {"query": "climate"}})),
+        )
+        .await
+        .expect("the call succeeds");
+
+    assert!(
+        !tool_error_flag(&value),
+        "a successful call must say so: {value}"
+    );
+}
+
+/// "no matching downloadable distributions" describes the dataset, not the
+/// request. Reporting it as -32602 tells the model to fix parameters that were
+/// never wrong.
+#[tokio::test]
+async fn no_matching_distributions_is_a_tool_error_not_a_parameter_error() {
+    let mock = MockServer::start().await;
+    Mock::given(wm_method("GET"))
+        .and(wm_path("/api/dataset/csv-only"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(csv_only_dataset("csv-only")))
+        .mount(&mock)
+        .await;
+
+    let server = test_server(&mock.uri());
+
+    let value = server
+        .dispatch(
+            "tools/call",
+            Some(json!({
+                "name": "data_gov_download_resources",
+                "arguments": {"datasetId": "csv-only", "formats": ["XLSX"]}
+            })),
+        )
+        .await
+        .expect("a content-dependent outcome is a tool result, not a JSON-RPC error");
+
+    assert!(tool_error_flag(&value), "{value}");
+    assert!(
+        tool_text(&value).contains("XLSX"),
+        "the model needs to be told which format was unavailable: {value}"
+    );
+}
+
+/// A dataset the catalog serves without DCAT metadata is also a fact about the
+/// data, not a parameter error.
+#[tokio::test]
+async fn a_dataset_without_dcat_metadata_is_a_tool_error_not_a_parameter_error() {
+    let mock = MockServer::start().await;
+    Mock::given(wm_method("GET"))
+        .and(wm_path("/api/dataset/bare"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "results": [{"slug": "bare", "title": "Bare"}],
+            "sort": "relevance"
+        })))
+        .mount(&mock)
+        .await;
+
+    let server = test_server(&mock.uri());
+
+    let value = server
+        .dispatch(
+            "tools/call",
+            Some(json!({
+                "name": "data_gov_download_resources",
+                "arguments": {"datasetId": "bare"}
+            })),
+        )
+        .await
+        .expect("a dataset with no DCAT metadata is a tool result, not a JSON-RPC error");
+
+    assert!(tool_error_flag(&value), "{value}");
+    assert!(
+        tool_text(&value).contains("DCAT"),
+        "the message must say what is missing: {value}"
+    );
+}
+
+/// The other side of the line, so the fix cannot become "never fail loudly":
+/// a protocol fault the model cannot correct stays a JSON-RPC error.
+#[tokio::test]
+async fn arguments_that_do_not_match_the_schema_stay_a_json_rpc_error() {
+    let server = test_server("http://127.0.0.1:1");
+
+    for arguments in [json!({"slug": 42}), json!({"slug": null}), json!([])] {
+        let err = server
+            .dispatch(
+                "tools/call",
+                Some(json!({"name": "data_gov_dataset", "arguments": arguments})),
+            )
+            .await
+            .expect_err("arguments that fail the schema are a protocol error");
+        assert!(
+            matches!(err, ServerError::InvalidParams(_)),
+            "expected InvalidParams for {arguments}, got {err:?}"
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// additionalProperties: false (#70.2)
+// ---------------------------------------------------------------------------
+
+/// Every tool schema declares `additionalProperties: false`, and a schema is a
+/// promise. Dropping an undeclared key means the tool runs on arguments the
+/// client did not send and reports success - the "partial result reported as a
+/// whole one" failure AGENTS.md rules out.
+///
+/// Driven off `TOOL_SPECS`, with the undeclared key derived from a declared
+/// one, which is the shape a real misspelling takes.
+#[tokio::test]
+async fn every_tool_rejects_an_argument_its_schema_does_not_declare() {
+    let server = test_server("http://127.0.0.1:1");
+
+    for spec in crate::tools::TOOL_SPECS.iter() {
+        assert_eq!(
+            spec.input_schema.get("additionalProperties"),
+            Some(&json!(false)),
+            "{}: this test only speaks for schemas that close the object",
+            spec.tool_name
+        );
+
+        let properties = spec.input_schema["properties"]
+            .as_object()
+            .unwrap_or_else(|| panic!("{}: schema has no properties", spec.tool_name));
+        let declared = properties
+            .keys()
+            .next()
+            .unwrap_or_else(|| panic!("{}: schema declares no property", spec.tool_name));
+        let undeclared = format!("{declared}_typo");
+
+        let mut arguments = valid_arguments_for(spec.tool_name);
+        arguments[&undeclared] = json!("value the schema never mentioned");
+
+        let err = server
+            .dispatch(
+                "tools/call",
+                Some(json!({"name": spec.tool_name, "arguments": arguments})),
+            )
+            .await
+            .expect_err(&format!(
+                "{}: `{undeclared}` is not in the schema and must be refused",
+                spec.tool_name
+            ));
+
+        match err {
+            ServerError::InvalidParams(message) => assert!(
+                message.contains(&undeclared),
+                "{}: the message must name the offending key, got: {message}",
+                spec.tool_name
+            ),
+            other => panic!("{}: expected InvalidParams, got {other:?}", spec.tool_name),
+        }
+    }
+}
+
+/// The case from the issue: a snake_case rendering of `outputDir` was dropped,
+/// the files went to the default directory, and the call reported success.
+#[tokio::test]
+async fn a_misspelled_output_dir_is_refused_rather_than_silently_defaulted() {
+    let server = test_server("http://127.0.0.1:1");
+
+    let err = server
+        .dispatch(
+            "tools/call",
+            Some(json!({
+                "name": "data_gov_download_resources",
+                "arguments": {"datasetId": "x", "output_dir": "/data"}
+            })),
+        )
+        .await
+        .expect_err("`output_dir` is not `outputDir` and must not be dropped");
+
+    assert!(matches!(err, ServerError::InvalidParams(_)), "got {err:?}");
+}
+
+/// The other case from the issue: a misspelled filter yielded unfiltered
+/// results that the model would then present as filtered.
+#[tokio::test]
+async fn a_misspelled_organization_filter_is_refused_rather_than_ignored() {
+    let server = test_server("http://127.0.0.1:1");
+
+    let err = server
+        .dispatch(
+            "tools/call",
+            Some(json!({
+                "name": "data_gov_search",
+                "arguments": {"query": "climate", "organizationContain": "NASA"}
+            })),
+        )
+        .await
+        .expect_err("a dropped filter would return unfiltered results as filtered");
+
+    assert!(matches!(err, ServerError::InvalidParams(_)), "got {err:?}");
+}
+
+// ---------------------------------------------------------------------------
+// unavailableFormats (#70.4)
+// ---------------------------------------------------------------------------
+
+/// The reproduction from the issue: `{"formats":["  ","XLSX"]}` on a CSV-only
+/// dataset. The filtering was already right; the diagnostic named the wrong
+/// string, because the raw and normalized vectors stopped index-aligning the
+/// moment a blank was dropped.
+#[tokio::test]
+async fn a_blank_format_filter_does_not_shift_the_unavailable_format_report() {
+    let mock = MockServer::start().await;
+    Mock::given(wm_method("GET"))
+        .and(wm_path("/api/dataset/csv-only"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(csv_only_dataset("csv-only")))
+        .mount(&mock)
+        .await;
+
+    let server = test_server(&mock.uri());
+
+    let value = server
+        .dispatch(
+            "tools/call",
+            Some(json!({
+                "name": "data_gov_download_resources",
+                "arguments": {"datasetId": "csv-only", "formats": ["  ", "XLSX"]}
+            })),
+        )
+        .await
+        .expect("nothing matched, which is an outcome rather than a fault");
+
+    let text = tool_text(&value);
+    assert!(
+        text.contains("XLSX"),
+        "XLSX is the format that was actually unavailable: {value}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// A download that downloaded nothing
+// ---------------------------------------------------------------------------
+
+/// A scratch directory under the system temp dir, removed first so a previous
+/// run cannot influence this one. The caller removes it when finished.
+fn scratch_dir(name: &str) -> std::path::PathBuf {
+    let dir = std::env::temp_dir().join(format!(
+        "data-gov-mcp-{name}-{}-{:?}",
+        std::process::id(),
+        std::thread::current().id()
+    ));
+    let _ = std::fs::remove_dir_all(&dir);
+    dir
+}
+
+/// A tool that downloaded none of the files it was asked for did not succeed.
+///
+/// The counts are in `structuredContent`, but this change is the one that made
+/// `isError` always present, and AGENTS.md's premise is that an agent acts on
+/// a result without checking it. `isError: false` on a call where every file
+/// failed is the "silence reads as success" failure with a flag attached.
+///
+/// The machine-readable summary has to survive the flag: the agent needs to
+/// know which files failed and why, not just that something did.
+#[tokio::test]
+async fn a_download_where_every_file_failed_reports_is_error_true() {
+    let mock = MockServer::start().await;
+    Mock::given(wm_method("GET"))
+        .and(wm_path("/api/dataset/all-fail"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "results": [{
+                "slug": "all-fail",
+                "title": "All Fail",
+                "dcat": {
+                    "@type": "dcat:Dataset",
+                    "title": "All Fail",
+                    "distribution": [{
+                        "@type": "dcat:Distribution",
+                        "title": "gone",
+                        "downloadURL": format!("{}/missing.csv", mock.uri()),
+                        "mediaType": "text/csv"
+                    }]
+                }
+            }],
+            "sort": "relevance"
+        })))
+        .mount(&mock)
+        .await;
+    Mock::given(wm_method("GET"))
+        .and(wm_path("/missing.csv"))
+        .respond_with(ResponseTemplate::new(404))
+        .mount(&mock)
+        .await;
+
+    let server = test_server(&mock.uri());
+    let output_dir = scratch_dir("all-fail");
+
+    let value = server
+        .dispatch(
+            "tools/call",
+            Some(json!({
+                "name": "data_gov_download_resources",
+                "arguments": {
+                    "datasetId": "all-fail",
+                    "outputDir": output_dir.to_string_lossy(),
+                    "datasetSubdirectory": false
+                }
+            })),
+        )
+        .await
+        .expect("a failed download is a tool result, not a JSON-RPC error");
+
+    let _ = std::fs::remove_dir_all(&output_dir);
+
+    assert!(
+        tool_error_flag(&value),
+        "every file failed, so the call did not succeed: {value}"
+    );
+
+    let summary = value
+        .get("structuredContent")
+        .unwrap_or_else(|| panic!("the per-file detail must survive the flag: {value}"));
+    assert_eq!(summary["successfulCount"], json!(0), "{summary}");
+    assert_eq!(summary["failedCount"], json!(1), "{summary}");
+    assert_eq!(summary["hasErrors"], json!(true), "{summary}");
+    assert_eq!(
+        summary["downloads"][0]["status"], "error",
+        "the agent needs to see which file failed: {summary}"
+    );
+}
+
+/// The deliberate other half: a call where some files arrived is not reported
+/// as a failure. The summary names exactly which ones did not - `hasErrors`,
+/// `failedCount`, and a per-file `status` - so nothing is hidden, and flagging
+/// the whole call as an error would misreport the files that did arrive.
+#[tokio::test]
+async fn a_download_where_some_files_arrived_reports_is_error_false() {
+    let mock = MockServer::start().await;
+    Mock::given(wm_method("GET"))
+        .and(wm_path("/api/dataset/half-fail"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "results": [{
+                "slug": "half-fail",
+                "title": "Half Fail",
+                "dcat": {
+                    "@type": "dcat:Dataset",
+                    "title": "Half Fail",
+                    "distribution": [
+                        {
+                            "@type": "dcat:Distribution",
+                            "title": "present",
+                            "downloadURL": format!("{}/present.csv", mock.uri()),
+                            "mediaType": "text/csv"
+                        },
+                        {
+                            "@type": "dcat:Distribution",
+                            "title": "gone",
+                            "downloadURL": format!("{}/missing.csv", mock.uri()),
+                            "mediaType": "text/csv"
+                        }
+                    ]
+                }
+            }],
+            "sort": "relevance"
+        })))
+        .mount(&mock)
+        .await;
+    Mock::given(wm_method("GET"))
+        .and(wm_path("/present.csv"))
+        .respond_with(ResponseTemplate::new(200).set_body_string("a,b\n1,2\n"))
+        .mount(&mock)
+        .await;
+    Mock::given(wm_method("GET"))
+        .and(wm_path("/missing.csv"))
+        .respond_with(ResponseTemplate::new(404))
+        .mount(&mock)
+        .await;
+
+    let server = test_server(&mock.uri());
+    let output_dir = scratch_dir("half-fail");
+
+    let value = server
+        .dispatch(
+            "tools/call",
+            Some(json!({
+                "name": "data_gov_download_resources",
+                "arguments": {
+                    "datasetId": "half-fail",
+                    "outputDir": output_dir.to_string_lossy(),
+                    "datasetSubdirectory": false
+                }
+            })),
+        )
+        .await
+        .expect("a partial download is a result");
+
+    let _ = std::fs::remove_dir_all(&output_dir);
+
+    assert!(
+        !tool_error_flag(&value),
+        "one file arrived, so this is a partial success, not a failure: {value}"
+    );
+    let summary = &value["structuredContent"];
+    assert_eq!(summary["successfulCount"], json!(1), "{summary}");
+    assert_eq!(summary["failedCount"], json!(1), "{summary}");
+    assert_eq!(
+        summary["hasErrors"],
+        json!(true),
+        "the partial failure must still be visible in the payload: {summary}"
+    );
 }
