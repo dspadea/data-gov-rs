@@ -152,9 +152,17 @@ pub struct ConfigLocation {
 /// `dirs::config_dir()` ignores `XDG_CONFIG_HOME` on both, because neither
 /// platform's own conventions know about it. This function honours it
 /// everywhere, so one exported variable relocates the configuration on any
-/// machine - which is what makes a test, a container, and a CI job able to
-/// isolate themselves without a platform check. When it is unset, the platform
-/// default applies unchanged.
+/// machine - which is what makes a container and a CI job able to isolate
+/// themselves without a platform check.
+///
+/// **The platform fallback applies only to an environment read from the
+/// process.** An environment built with
+/// [`ConfigEnvironment::from_pairs`] is the whole environment, so when it
+/// names no `XDG_CONFIG_HOME` the answer is "nowhere", reported through
+/// [`ConfigWarning::NoConfigDir`] - never the real machine's directory. The
+/// platform lookup reads `$HOME` and, failing that, the passwd database, so a
+/// caller that believed it had injected everything would otherwise find itself
+/// reading whatever `config.toml` the machine happens to hold.
 ///
 /// A relative `XDG_CONFIG_HOME` is ignored, as the XDG base directory
 /// specification requires, and reported through
@@ -162,15 +170,17 @@ pub struct ConfigLocation {
 pub fn config_dir(env: &ConfigEnvironment) -> ConfigLocation {
     let mut warnings = Vec::new();
 
-    let base = match env.get(ConfigEnvironment::XDG_CONFIG_HOME) {
+    // Read as bytes: a configuration directory is a path, and a path may hold
+    // bytes that are not valid Unicode.
+    let base = match env.get_os(ConfigEnvironment::XDG_CONFIG_HOME) {
         Some(value) if Path::new(value).is_absolute() => Some(PathBuf::from(value)),
         Some(value) => {
             warnings.push(ConfigWarning::RelativeXdgConfigHome {
-                value: value.to_owned(),
+                value: PathBuf::from(value),
             });
-            dirs::config_dir()
+            platform_config_dir(env)
         }
-        None => dirs::config_dir(),
+        None => platform_config_dir(env),
     };
 
     match base {
@@ -186,6 +196,16 @@ pub fn config_dir(env: &ConfigEnvironment) -> ConfigLocation {
             }
         }
     }
+}
+
+/// The platform's configuration directory, but only for an environment that
+/// came from the process.
+///
+/// See [`config_dir`] for why a supplied environment does not get one.
+fn platform_config_dir(env: &ConfigEnvironment) -> Option<PathBuf> {
+    env.may_use_platform_config_dir()
+        .then(dirs::config_dir)
+        .flatten()
 }
 
 /// The path of `config.toml`, whether or not a file is there.
@@ -286,9 +306,51 @@ user_agent = \"agent/1.0\"
         let env = ConfigEnvironment::from_pairs([("XDG_CONFIG_HOME", "")]);
         let location = locate_config_file(&env);
         assert!(
-            location.warnings.is_empty(),
+            !location
+                .warnings
+                .iter()
+                .any(|warning| matches!(warning, ConfigWarning::RelativeXdgConfigHome { .. })),
             "an unset variable is not a relative path, got {:?}",
             location.warnings
+        );
+    }
+
+    /// A supplied environment is the whole environment. Falling back to the
+    /// platform directory here would read the real machine's `config.toml`
+    /// for a caller that believed it had injected everything.
+    #[test]
+    fn a_supplied_environment_gets_no_platform_fallback() {
+        for env in [
+            ConfigEnvironment::from_pairs([("XDG_CONFIG_HOME", "")]),
+            ConfigEnvironment::from_pairs([("XDG_CONFIG_HOME", "relative/path")]),
+            ConfigEnvironment::default(),
+        ] {
+            let location = locate_config_file(&env);
+            assert_eq!(
+                location.path, None,
+                "an injected environment naming no absolute XDG_CONFIG_HOME has nowhere to look"
+            );
+            assert!(
+                location
+                    .warnings
+                    .iter()
+                    .any(|warning| matches!(warning, ConfigWarning::NoConfigDir)),
+                "having nowhere to look must be reported, got {:?}",
+                location.warnings
+            );
+        }
+    }
+
+    /// The process environment does get the platform fallback: that is the
+    /// path the CLI runs on, and it must find a real `config.toml`.
+    #[test]
+    fn a_process_environment_still_reaches_the_platform_directory() {
+        // `dirs::config_dir()` answers on every platform this crate targets,
+        // so an absent answer here would mean the fallback was skipped.
+        let location = locate_config_file(&ConfigEnvironment::from_process());
+        assert!(
+            location.path.is_some(),
+            "the CLI must be able to find its own configuration file, got {location:?}"
         );
     }
 }

@@ -320,6 +320,20 @@ Every setting resolves through one chain, highest first:
 An empty environment variable (`DATA_GOV_DOWNLOAD_DIR=`) reads as unset, not as
 an empty value.
 
+A few details worth knowing:
+
+- `base_url` and `user_agent` are trimmed of surrounding whitespace — a trailing
+  newline from `DATA_GOV_BASE_URL=$(cat file)` would otherwise reach the wire and
+  fail with an opaque `invalid international domain name`. `download_dir` is not
+  trimmed, because a directory name may legitimately end in a space; the padding
+  is reported instead.
+- If `base_url` carries credentials for an authenticated mirror
+  (`https://user:token@host`), they are masked wherever the value is displayed or
+  named in an error. The client still receives the real URL.
+- On Unix a `download_dir` that is not valid UTF-8 works — it is read as bytes.
+  A non-UTF-8 `base_url` or `user_agent` cannot work, so it is reported and the
+  layer below applies.
+
 Library consumers can drive the same chain, and see which layer supplied each
 value:
 

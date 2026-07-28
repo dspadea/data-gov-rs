@@ -13,8 +13,9 @@
 //! against another test's `set_var`.
 
 use std::collections::BTreeMap;
+use std::ffi::{OsStr, OsString};
 use std::fmt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
 use crate::config::{DataGovConfig, OperatingMode, default_download_dir_for};
@@ -23,15 +24,35 @@ use crate::error::{DataGovError, Result};
 use super::file::{ConfigFile, ParsedConfigFile, locate_config_file};
 use super::settings::{ConfigWarning, ResolvedSetting, SettingKey, SettingSource};
 
+/// Whether an environment was read from the process or supplied by a caller.
+///
+/// This decides one thing: whether locating the configuration file may fall
+/// back to the platform directory. A supplied environment is the whole
+/// environment, so it may not.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+enum EnvironmentOrigin {
+    /// Read from the running process.
+    Process,
+    /// Given by a caller. Nothing outside it may be consulted.
+    #[default]
+    Supplied,
+}
+
 /// The environment variables the resolver is allowed to read.
 ///
 /// Nothing here reads the process environment unless
 /// [`from_process`](Self::from_process) was called, and even that reads only
 /// [`READ_VARIABLES`](Self::READ_VARIABLES) - so an unrelated variable can
 /// never influence a resolution, and no secret is captured in passing.
+///
+/// Values are kept as [`OsString`], because on Unix an environment variable is
+/// a byte string and so is a path. A value that is not valid Unicode is legal
+/// and reaches [`get_os`](Self::get_os) intact; [`get`](Self::get) is for the
+/// settings that genuinely need text.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ConfigEnvironment {
-    vars: BTreeMap<String, String>,
+    vars: BTreeMap<String, OsString>,
+    origin: EnvironmentOrigin,
 }
 
 impl ConfigEnvironment {
@@ -51,43 +72,69 @@ impl ConfigEnvironment {
 
     /// Snapshot the process environment, reading only
     /// [`READ_VARIABLES`](Self::READ_VARIABLES).
+    ///
+    /// Values are taken with `var_os`, so a variable holding bytes that are
+    /// not valid Unicode arrives intact rather than reading as unset.
     pub fn from_process() -> Self {
         let vars = Self::READ_VARIABLES
             .iter()
-            .filter_map(|name| {
-                std::env::var(name)
-                    .ok()
-                    .map(|value| ((*name).to_owned(), value))
-            })
+            .filter_map(|name| std::env::var_os(name).map(|value| ((*name).to_owned(), value)))
             .collect();
-        Self { vars }
+        Self {
+            vars,
+            origin: EnvironmentOrigin::Process,
+        }
     }
 
     /// An environment holding exactly these variables, and nothing else.
+    ///
+    /// This is the whole environment as far as the resolver is concerned. In
+    /// particular, locating the configuration file will not fall back to the
+    /// platform directory: set `XDG_CONFIG_HOME` here to point it somewhere,
+    /// or start from [`from_process`](Self::from_process).
     pub fn from_pairs<I, K, V>(pairs: I) -> Self
     where
         I: IntoIterator<Item = (K, V)>,
         K: Into<String>,
-        V: Into<String>,
+        V: Into<OsString>,
     {
         let vars = pairs
             .into_iter()
             .map(|(name, value)| (name.into(), value.into()))
             .collect();
-        Self { vars }
+        Self {
+            vars,
+            origin: EnvironmentOrigin::Supplied,
+        }
     }
 
-    /// The value of `name`, when it is set to something other than the empty
-    /// string.
+    /// The raw value of `name`, when it is set to something other than the
+    /// empty string.
     ///
     /// An empty variable reads as unset. `DATA_GOV_DOWNLOAD_DIR=` in a shell
     /// profile means "I am not setting this", not "download into the empty
     /// path".
-    pub fn get(&self, name: &str) -> Option<&str> {
+    pub fn get_os(&self, name: &str) -> Option<&OsStr> {
         self.vars
             .get(name)
-            .map(String::as_str)
+            .map(OsString::as_os_str)
             .filter(|value| !value.is_empty())
+    }
+
+    /// The value of `name` as text.
+    ///
+    /// `None` covers both "not set" and "set to bytes that are not valid
+    /// Unicode". Where the difference matters - and it does, because dropping
+    /// an explicit override in silence is a wrong answer - use
+    /// [`get_os`](Self::get_os) and decide for yourself.
+    pub fn get(&self, name: &str) -> Option<&str> {
+        self.get_os(name).and_then(OsStr::to_str)
+    }
+
+    /// Whether the platform configuration directory may be consulted when this
+    /// environment names none.
+    pub(super) fn may_use_platform_config_dir(&self) -> bool {
+        self.origin == EnvironmentOrigin::Process
     }
 }
 
@@ -295,10 +342,12 @@ impl ConfigResolver {
         }
 
         let download_dir = self.resolve_download_dir(file, &mut warnings)?;
-        let base_url = self.resolve_base_url(file, &defaults)?;
-        let max_concurrent_downloads = self.resolve_max_concurrent_downloads(file, &defaults)?;
-        let download_timeout_secs = self.resolve_download_timeout_secs(file, &defaults)?;
-        let user_agent = self.resolve_user_agent(file, &defaults)?;
+        let base_url = self.resolve_base_url(file, &defaults, &mut warnings)?;
+        let max_concurrent_downloads =
+            self.resolve_max_concurrent_downloads(file, &defaults, &mut warnings)?;
+        let download_timeout_secs =
+            self.resolve_download_timeout_secs(file, &defaults, &mut warnings)?;
+        let user_agent = self.resolve_user_agent(file, &defaults, &mut warnings)?;
 
         // `defaults` is the built-in layer, so it is also the right base to
         // build on: reusing it means one `CatalogConfiguration` - and one
@@ -317,7 +366,13 @@ impl ConfigResolver {
                 download_dir.0.display(),
                 download_dir.1,
             ),
-            setting(SettingKey::BaseUrl, base_url.0, base_url.1),
+            // Masked: a base URL may carry credentials for an authenticated
+            // mirror, and this value is what `config show` prints.
+            setting(
+                SettingKey::BaseUrl,
+                redact_url_credentials(&base_url.0),
+                base_url.1,
+            ),
             setting(
                 SettingKey::MaxConcurrentDownloads,
                 max_concurrent_downloads.0,
@@ -338,9 +393,22 @@ impl ConfigResolver {
         })
     }
 
-    /// The value `key` has in the environment layer, unparsed.
-    fn env_text(&self, key: SettingKey) -> Option<&str> {
-        self.environment.get(key.env_var())
+    /// The value `key` has in the environment layer, as text.
+    ///
+    /// A value set to bytes that are not valid Unicode cannot serve any of the
+    /// textual settings, so it is reported and treated as unset rather than
+    /// dropped in silence.
+    fn env_text(&self, key: SettingKey, warnings: &mut Vec<ConfigWarning>) -> Option<&str> {
+        let raw = self.environment.get_os(key.env_var())?;
+        match raw.to_str() {
+            Some(text) => Some(text),
+            None => {
+                warnings.push(ConfigWarning::NonUnicodeEnvironmentValue {
+                    variable: key.env_var().to_owned(),
+                });
+                None
+            }
+        }
     }
 
     /// The value `key` has in the environment layer, parsed.
@@ -349,12 +417,12 @@ impl ConfigResolver {
     ///
     /// [`DataGovError::ConfigError`] naming the variable and quoting the value
     /// when it does not parse.
-    fn env_parsed<T>(&self, key: SettingKey) -> Result<Option<T>>
+    fn env_parsed<T>(&self, key: SettingKey, warnings: &mut Vec<ConfigWarning>) -> Result<Option<T>>
     where
         T: FromStr,
         T::Err: fmt::Display,
     {
-        match self.env_text(key) {
+        match self.env_text(key, warnings) {
             None => Ok(None),
             Some(raw) => raw.parse::<T>().map(Some).map_err(|err| {
                 DataGovError::config_error(format!(
@@ -376,7 +444,9 @@ impl ConfigResolver {
         warnings: &mut Vec<ConfigWarning>,
     ) -> Result<(PathBuf, SettingSource)> {
         let key = SettingKey::DownloadDir;
-        let from_env = self.env_text(key).map(PathBuf::from);
+        // Read as bytes, not as text: a path may hold any bytes on Unix, and
+        // reading through `to_str` would report a legal directory as unset.
+        let from_env = self.environment.get_os(key.env_var()).map(PathBuf::from);
         let picked = layered(
             self.flags.download_dir.clone(),
             from_env,
@@ -387,6 +457,13 @@ impl ConfigResolver {
             Some((dir, source)) => {
                 if dir.as_os_str().is_empty() {
                     return Err(empty_value(key, source));
+                }
+                // A directory whose name ends in a space is a legal path, so
+                // the value is used exactly as given rather than trimmed the
+                // way `base_url` and `user_agent` are. It is nearly always an
+                // accident, so it is reported.
+                if has_surrounding_whitespace(&dir) {
+                    warnings.push(ConfigWarning::SurroundingWhitespace { key, source });
                 }
                 Ok((dir, source))
             }
@@ -404,11 +481,12 @@ impl ConfigResolver {
         &self,
         file: Option<&ConfigFile>,
         defaults: &DataGovConfig,
+        warnings: &mut Vec<ConfigWarning>,
     ) -> Result<(String, SettingSource)> {
         let key = SettingKey::BaseUrl;
         let picked = layered(
             self.flags.base_url.clone(),
-            self.env_text(key).map(str::to_owned),
+            self.env_text(key, warnings).map(str::to_owned),
             file.and_then(|file| file.base_url.clone()),
         );
 
@@ -419,8 +497,33 @@ impl ConfigResolver {
             ));
         };
 
-        if base_url.trim().is_empty() {
+        // Trim before validating, and keep the trimmed form. `url::Url::parse`
+        // accepts surrounding whitespace and strips it, per WHATWG, so
+        // validating the raw string and storing it would let "  https://x  "
+        // pass and then be concatenated into every request URL - the catalog
+        // client trims only trailing slashes - producing an
+        // "invalid international domain name" that names nothing. Trailing
+        // slashes are left alone: the catalog client already removes one when
+        // it builds a URL, so rewriting them would only make what a front end
+        // displays differ from what the user wrote.
+        let base_url = base_url.trim().to_owned();
+        if base_url.is_empty() {
             return Err(empty_value(key, source));
+        }
+
+        // Every message below quotes the value, and a base URL may legitimately
+        // carry credentials for an authenticated mirror. Errors reach stderr
+        // and logs, so they get the masked form.
+        let shown = redact_url_credentials(&base_url);
+
+        // WHATWG parsing also strips tabs and line breaks from *inside* a URL,
+        // so a value containing one parses to a host the string does not hold.
+        // Trimming the ends is not enough on its own.
+        if base_url.chars().any(char::is_whitespace) {
+            return Err(DataGovError::config_error(format!(
+                "{key} from {}: a URL cannot contain whitespace, got \"{shown}\"",
+                source.origin(key)
+            )));
         }
 
         // A base URL that is not absolute http(s) produces a connect failure
@@ -428,13 +531,13 @@ impl ConfigResolver {
         // that caused it.
         let parsed = url::Url::parse(&base_url).map_err(|err| {
             DataGovError::config_error(format!(
-                "{key} from {}: \"{base_url}\" is not a URL ({err})",
+                "{key} from {}: \"{shown}\" is not a URL ({err})",
                 source.origin(key)
             ))
         })?;
         if !matches!(parsed.scheme(), "http" | "https") {
             return Err(DataGovError::config_error(format!(
-                "{key} from {}: expected an http or https URL, got \"{base_url}\"",
+                "{key} from {}: expected an http or https URL, got \"{shown}\"",
                 source.origin(key)
             )));
         }
@@ -446,11 +549,12 @@ impl ConfigResolver {
         &self,
         file: Option<&ConfigFile>,
         defaults: &DataGovConfig,
+        warnings: &mut Vec<ConfigWarning>,
     ) -> Result<(usize, SettingSource)> {
         let key = SettingKey::MaxConcurrentDownloads;
         let picked = layered(
             self.flags.max_concurrent_downloads,
-            self.env_parsed::<usize>(key)?,
+            self.env_parsed::<usize>(key, warnings)?,
             file.and_then(|file| file.max_concurrent_downloads),
         );
 
@@ -471,11 +575,12 @@ impl ConfigResolver {
         &self,
         file: Option<&ConfigFile>,
         defaults: &DataGovConfig,
+        warnings: &mut Vec<ConfigWarning>,
     ) -> Result<(u64, SettingSource)> {
         let key = SettingKey::DownloadTimeoutSecs;
         let picked = layered(
             self.flags.download_timeout_secs,
-            self.env_parsed::<u64>(key)?,
+            self.env_parsed::<u64>(key, warnings)?,
             file.and_then(|file| file.download_timeout_secs),
         );
 
@@ -495,11 +600,12 @@ impl ConfigResolver {
         &self,
         file: Option<&ConfigFile>,
         defaults: &DataGovConfig,
+        warnings: &mut Vec<ConfigWarning>,
     ) -> Result<(String, SettingSource)> {
         let key = SettingKey::UserAgent;
         let picked = layered(
             self.flags.user_agent.clone(),
-            self.env_text(key).map(str::to_owned),
+            self.env_text(key, warnings).map(str::to_owned),
             file.and_then(|file| file.user_agent.clone()),
         );
 
@@ -507,9 +613,24 @@ impl ConfigResolver {
             return Ok((defaults.user_agent().to_owned(), SettingSource::Default));
         };
 
-        if user_agent.trim().is_empty() {
+        // Surrounding whitespace has no meaning in a header value, and a
+        // trailing newline is what `DATA_GOV_USER_AGENT=$(cat file)` produces.
+        let user_agent = user_agent.trim().to_owned();
+        if user_agent.is_empty() {
             return Err(empty_value(key, source));
         }
+
+        // A control character left inside the value is not padding: it splits
+        // the header. `reqwest` refuses it, but only as an opaque builder
+        // error at the first request, which points at nothing.
+        if user_agent.chars().any(char::is_control) {
+            return Err(DataGovError::config_error(format!(
+                "{key} from {}: a User-Agent cannot contain a line break or other control \
+                 character",
+                source.origin(key)
+            )));
+        }
+
         Ok((user_agent, source))
     }
 }
@@ -586,6 +707,58 @@ fn setting<T: fmt::Display>(key: SettingKey, value: T, source: SettingSource) ->
     }
 }
 
+/// Mask any credentials a URL carries, for a message or a display.
+///
+/// A base URL may point at an authenticated mirror, and both
+/// [`ResolvedSetting::value`] and every error here are printed - `config show`
+/// prints the first, stderr and any log the second. CLAUDE.md forbids a secret
+/// reaching either.
+///
+/// The username survives when a password follows it, the way `git` and `curl`
+/// render a credentialed remote, because it identifies the account without
+/// granting anything. A bare userinfo component with no password is masked
+/// whole: that shape is how a token is passed.
+///
+/// This works on the string rather than on a parsed `Url`, so a value that
+/// failed to parse - the case that produces the error message - is masked too.
+fn redact_url_credentials(value: &str) -> String {
+    let Some(scheme_end) = value.find("://") else {
+        return value.to_owned();
+    };
+    let authority_start = scheme_end + "://".len();
+    let authority_end = value[authority_start..]
+        .find(['/', '?', '#'])
+        .map_or(value.len(), |offset| authority_start + offset);
+    let authority = &value[authority_start..authority_end];
+
+    let Some(at) = authority.rfind('@') else {
+        return value.to_owned();
+    };
+    let masked = match authority[..at].split_once(':') {
+        Some((user, _)) if !user.is_empty() => format!("{user}:***"),
+        _ => "***".to_owned(),
+    };
+
+    format!(
+        "{}{masked}{}{}",
+        &value[..authority_start],
+        &authority[at..],
+        &value[authority_end..]
+    )
+}
+
+/// Whether a path begins or ends with whitespace.
+///
+/// Checked on the raw bytes rather than on a lossy `to_string_lossy`, so a
+/// path that is not valid UTF-8 is judged on what it actually holds.
+fn has_surrounding_whitespace(path: &Path) -> bool {
+    let bytes = path.as_os_str().as_encoded_bytes();
+    match (bytes.first(), bytes.last()) {
+        (Some(first), Some(last)) => first.is_ascii_whitespace() || last.is_ascii_whitespace(),
+        _ => false,
+    }
+}
+
 fn empty_value(key: SettingKey, source: SettingSource) -> DataGovError {
     DataGovError::config_error(format!(
         "{key} from {}: expected a value, got an empty one",
@@ -624,6 +797,58 @@ mod tests {
             ConfigEnvironment::READ_VARIABLES.len(),
             SettingKey::ALL.len() + 1,
             "the snapshot must read nothing beyond the settings and XDG_CONFIG_HOME"
+        );
+    }
+
+    #[test]
+    fn redaction_masks_a_password_and_keeps_the_user_and_the_host() {
+        assert_eq!(
+            redact_url_credentials("https://svc-user:s3cr3t@mirror.example.com/api"),
+            "https://svc-user:***@mirror.example.com/api"
+        );
+    }
+
+    #[test]
+    fn redaction_masks_a_bare_userinfo_component_whole() {
+        // No password means the userinfo component is itself the credential.
+        assert_eq!(
+            redact_url_credentials("https://gho_thisisatoken@mirror.example.com"),
+            "https://***@mirror.example.com"
+        );
+    }
+
+    #[test]
+    fn redaction_leaves_a_url_without_credentials_alone() {
+        for url in [
+            "https://catalog.data.gov",
+            "http://127.0.0.1:8080/search?q=x",
+            "https://gateway.example.com/technology/datagov/v4",
+            "not-a-url-at-all",
+        ] {
+            assert_eq!(redact_url_credentials(url), url, "{url} was rewritten");
+        }
+    }
+
+    /// An `@` after the authority belongs to the path or the query, not to a
+    /// credential, and must not be mistaken for one.
+    #[test]
+    fn redaction_ignores_an_at_sign_outside_the_authority() {
+        for url in [
+            "https://catalog.data.gov/search?q=user@example.com",
+            "https://catalog.data.gov/api/dataset/a@b",
+            "https://catalog.data.gov#contact@example.com",
+        ] {
+            assert_eq!(redact_url_credentials(url), url, "{url} was rewritten");
+        }
+    }
+
+    /// The password may itself contain an `@`, so the split is on the last one
+    /// inside the authority, not the first.
+    #[test]
+    fn redaction_splits_on_the_last_at_sign_in_the_authority() {
+        assert_eq!(
+            redact_url_credentials("https://user:p@ss@mirror.example.com/x"),
+            "https://user:***@mirror.example.com/x"
         );
     }
 

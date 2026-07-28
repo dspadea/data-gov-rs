@@ -501,6 +501,25 @@ fn a_flag_overrides_every_setting() {
     }
 }
 
+/// `config get <key>` and `config set <key>` (#87) receive the key as a
+/// string typed by a user. Turning it back into a setting belongs here, next
+/// to the keys themselves, not hand-rolled in the subcommand.
+#[test]
+fn a_config_key_string_maps_back_to_its_setting() {
+    for key in SettingKey::ALL {
+        assert_eq!(
+            key.config_key().parse::<SettingKey>(),
+            Ok(key),
+            "{key} must round-trip through its own config.toml key"
+        );
+    }
+    assert!(
+        "download-dir".parse::<SettingKey>().is_err(),
+        "a near miss must be refused, not guessed at"
+    );
+    assert!("".parse::<SettingKey>().is_err());
+}
+
 /// Every setting reports a value and a source, so `config show` (#87) can
 /// print a complete table without a hole in it.
 #[test]
@@ -686,6 +705,127 @@ fn xdg_config_home_locates_the_config_file() {
     );
 }
 
+/// An environment somebody supplied is the whole environment. Falling back to
+/// the platform location would let a test, a container, or an embedder read
+/// the real machine's `config.toml` while believing it had injected
+/// everything - and this module's own doc comment promises it does not.
+#[test]
+fn an_injected_environment_never_reaches_the_platform_config_directory() {
+    let location = locate_config_file(&ConfigEnvironment::from_pairs([(
+        "DATA_GOV_USER_AGENT",
+        "irrelevant/1.0",
+    )]));
+
+    assert_eq!(
+        location.path, None,
+        "an injected environment with no XDG_CONFIG_HOME has nowhere to look"
+    );
+    assert!(
+        location
+            .warnings
+            .iter()
+            .any(|warning| matches!(warning, ConfigWarning::NoConfigDir)),
+        "having nowhere to look must be reported, got {:?}",
+        location.warnings
+    );
+}
+
+#[test]
+fn a_resolver_told_nothing_reads_no_configuration_file() {
+    let resolved = ConfigResolver::new()
+        .load_config_file()
+        .expect("nothing to read is not a failure")
+        .resolve()
+        .expect("resolution must succeed");
+
+    for key in SettingKey::ALL {
+        assert_eq!(
+            resolved.source_of(key),
+            SettingSource::Default,
+            "{key} must not have been supplied by a file on the machine running the tests"
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Credentials in a base URL
+// ---------------------------------------------------------------------------
+
+/// A base URL may legitimately carry credentials for an authenticated internal
+/// mirror. They must never appear in what a front end displays (`config show`,
+/// #87) or in an error message - CLAUDE.md forbids logging a secret at any
+/// level, and both of those are printed.
+#[test]
+fn credentials_in_a_base_url_are_masked_in_the_reported_value() {
+    let resolved = ConfigResolver::new()
+        .with_environment(environment(&[(
+            "DATA_GOV_BASE_URL",
+            "https://svc-user:s3cr3t@mirror.example.com",
+        )]))
+        .resolve()
+        .expect("a credentialed mirror URL is legitimate");
+
+    let reported = &resolved.setting(SettingKey::BaseUrl).value;
+    assert!(
+        !reported.contains("s3cr3t"),
+        "the password must not reach anything that gets printed, got: {reported}"
+    );
+    assert!(
+        reported.contains("mirror.example.com"),
+        "the host must still be legible, got: {reported}"
+    );
+
+    assert_eq!(
+        resolved.config().catalog_config.base_path,
+        "https://svc-user:s3cr3t@mirror.example.com",
+        "the client still needs the real URL; only what is displayed is masked"
+    );
+}
+
+#[test]
+fn credentials_in_a_rejected_base_url_are_masked_in_the_error() {
+    let err = ConfigResolver::new()
+        .with_environment(environment(&[(
+            "DATA_GOV_BASE_URL",
+            "ftp://svc-user:s3cr3t@mirror.example.com",
+        )]))
+        .resolve()
+        .expect_err("ftp is not a scheme this client speaks");
+
+    let message = err.to_string();
+    assert!(
+        !message.contains("s3cr3t"),
+        "an error message reaches stderr and logs; it must not carry the password, got: {message}"
+    );
+    assert!(
+        message.contains("base_url"),
+        "the error must still name the setting, got: {message}"
+    );
+}
+
+/// A bare userinfo component with no password is how a token is usually
+/// passed, so it is masked as a whole rather than kept as a username.
+#[test]
+fn a_bare_userinfo_token_in_a_base_url_is_masked_whole() {
+    let resolved = ConfigResolver::new()
+        .with_environment(environment(&[(
+            "DATA_GOV_BASE_URL",
+            "https://gho_thisisatoken@mirror.example.com",
+        )]))
+        .resolve()
+        .expect("resolution must succeed");
+
+    let reported = &resolved.setting(SettingKey::BaseUrl).value;
+    assert!(
+        !reported.contains("gho_thisisatoken"),
+        "a bare userinfo component is a credential, got: {reported}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Where the file is found
+// ---------------------------------------------------------------------------
+
 /// The XDG base directory specification says a relative `XDG_CONFIG_HOME` is
 /// invalid and must be ignored. `dirs` does the same on Linux.
 #[test]
@@ -695,7 +835,7 @@ fn a_relative_xdg_config_home_is_ignored_and_warns() {
     assert!(
         location.warnings.iter().any(|warning| matches!(
             warning,
-            ConfigWarning::RelativeXdgConfigHome { value } if value == "not/an/absolute/path"
+            ConfigWarning::RelativeXdgConfigHome { value } if value.as_os_str() == "not/an/absolute/path"
         )),
         "a relative XDG_CONFIG_HOME must be reported, got {:?}",
         location.warnings
@@ -707,6 +847,264 @@ fn a_relative_xdg_config_home_is_ignored_and_warns() {
             .is_none_or(|path| !path.starts_with("not")),
         "the relative value must not be used as a base, got {:?}",
         location.path
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Surrounding whitespace
+//
+// An environment variable picks one up from `VAR=$(cat file)` or a stray space
+// in a shell profile, and a `config.toml` line picks one up from a text
+// editor. Every string setting can carry it, so each one states what it does
+// with it.
+// ---------------------------------------------------------------------------
+
+/// The value the resolver reports must be the value it installed.
+///
+/// A validator that checks a cleaned-up copy and then stores the original
+/// passes every source-only assertion while sending something else on the
+/// wire, and `config show` would report the setting as fine.
+fn installed_value(config: &DataGovConfig, key: SettingKey) -> String {
+    match key {
+        SettingKey::DownloadDir => config.get_base_download_dir().display().to_string(),
+        SettingKey::BaseUrl => config.catalog_config.base_path.clone(),
+        SettingKey::MaxConcurrentDownloads => config.max_concurrent_downloads.to_string(),
+        SettingKey::DownloadTimeoutSecs => config.download_timeout_secs.to_string(),
+        SettingKey::UserAgent => config.user_agent().to_owned(),
+        other => panic!("{other} has no installed-value mapping in this test"),
+    }
+}
+
+#[test]
+fn every_reported_value_is_the_value_actually_installed() {
+    let resolved = ConfigResolver::new()
+        .with_environment(environment(&[
+            ("DATA_GOV_DOWNLOAD_DIR", "  /padded/dir  "),
+            ("DATA_GOV_BASE_URL", "  https://padded.example.com  "),
+            ("DATA_GOV_MAX_CONCURRENT_DOWNLOADS", "4"),
+            ("DATA_GOV_DOWNLOAD_TIMEOUT_SECS", "44"),
+            ("DATA_GOV_USER_AGENT", "  padded/1.0  "),
+        ]))
+        .with_mode(OperatingMode::CommandLine)
+        .resolve()
+        .expect("resolution must succeed");
+
+    for key in SettingKey::ALL {
+        assert_eq!(
+            resolved.setting(key).value,
+            installed_value(resolved.config(), key),
+            "{key} reports one value and installs another"
+        );
+    }
+}
+
+/// Whitespace has no meaning in a URL, and the catalog client builds a request
+/// URL by concatenating onto `base_path` after trimming only trailing slashes.
+/// A padded value therefore reaches `reqwest` intact and fails with
+/// `invalid international domain name`, which names nothing.
+#[test]
+fn a_base_url_with_surrounding_whitespace_is_used_without_it() {
+    let resolved = ConfigResolver::new()
+        .with_environment(environment(&[(
+            "DATA_GOV_BASE_URL",
+            "  https://padded.example.com\n",
+        )]))
+        .resolve()
+        .expect("surrounding whitespace must not fail the resolution");
+
+    assert_eq!(
+        resolved.config().catalog_config.base_path,
+        "https://padded.example.com"
+    );
+    assert_eq!(
+        resolved.setting(SettingKey::BaseUrl).value,
+        "https://padded.example.com"
+    );
+}
+
+/// A trailing slash is left alone: the catalog client already trims one when
+/// it builds a URL, so rewriting the value would only make `config show`
+/// disagree with what the user wrote, for no change on the wire.
+#[test]
+fn a_base_url_keeps_the_path_the_user_wrote() {
+    let resolved = ConfigResolver::new()
+        .with_config_file(config_file(
+            "base_url = \"https://gateway.example.com/technology/datagov/v4\"\n",
+        ))
+        .resolve()
+        .expect("resolution must succeed");
+
+    assert_eq!(
+        resolved.config().catalog_config.base_path,
+        "https://gateway.example.com/technology/datagov/v4",
+        "a path-prefixed base URL must survive resolution unchanged"
+    );
+}
+
+/// Whitespace has no meaning in a `User-Agent` either, and a padded one goes
+/// out on every catalog request and every download.
+#[test]
+fn a_user_agent_with_surrounding_whitespace_is_used_without_it() {
+    let resolved = ConfigResolver::new()
+        .with_environment(environment(&[("DATA_GOV_USER_AGENT", "padded/1.0\n")]))
+        .resolve()
+        .expect("surrounding whitespace must not fail the resolution");
+
+    assert_eq!(resolved.config().user_agent(), "padded/1.0");
+}
+
+/// A newline inside the value is not padding: it splits a header. `reqwest`
+/// refuses it, but only as an opaque `builder error` at the first request,
+/// which points at nothing.
+#[test]
+fn a_user_agent_containing_a_control_character_is_refused() {
+    let err = ConfigResolver::new()
+        .with_config_file(config_file(
+            "user_agent = \"agent/1.0\\nX-Injected: yes\"\n",
+        ))
+        .resolve()
+        .expect_err("a header value cannot carry a line break");
+
+    let message = err.to_string();
+    assert!(
+        message.contains("user_agent"),
+        "the error must name the setting, got: {message}"
+    );
+    assert!(
+        message.contains("config.toml"),
+        "the error must name where the value came from, got: {message}"
+    );
+}
+
+/// `download_dir` is the one string setting where surrounding whitespace can
+/// be deliberate: a directory named with a trailing space is a legal path. The
+/// value is used as given, and reported, because it is almost always an
+/// accident and silence is the failure this whole chain exists to remove.
+#[test]
+fn a_download_dir_with_surrounding_whitespace_is_kept_and_reported() {
+    let padded = "/tmp/a directory named with a trailing space ";
+
+    let resolved = ConfigResolver::new()
+        .with_environment(environment(&[("DATA_GOV_DOWNLOAD_DIR", padded)]))
+        .with_mode(OperatingMode::CommandLine)
+        .resolve()
+        .expect("resolution must succeed");
+
+    assert_eq!(
+        resolved.config().get_base_download_dir(),
+        PathBuf::from(padded),
+        "a path is used exactly as given; a trailing space may be part of the name"
+    );
+    assert!(
+        resolved.warnings().iter().any(|warning| matches!(
+            warning,
+            ConfigWarning::SurroundingWhitespace { key, .. } if *key == SettingKey::DownloadDir
+        )),
+        "the whitespace must be reported, got {:?}",
+        resolved.warnings()
+    );
+}
+
+#[test]
+fn a_download_dir_without_surrounding_whitespace_reports_nothing() {
+    let resolved = ConfigResolver::new()
+        .with_environment(environment(&[("DATA_GOV_DOWNLOAD_DIR", "/tmp/plain")]))
+        .with_mode(OperatingMode::CommandLine)
+        .resolve()
+        .expect("resolution must succeed");
+
+    assert!(
+        resolved.warnings().is_empty(),
+        "an ordinary path must not warn, got {:?}",
+        resolved.warnings()
+    );
+}
+
+/// WHATWG URL parsing removes tabs and line breaks from *inside* a URL as
+/// well as around it, so `Url::parse` succeeds and reports a host the raw
+/// string does not contain. Trimming the ends is not enough on its own.
+#[test]
+fn a_base_url_with_an_internal_line_break_is_refused() {
+    let err = ConfigResolver::new()
+        .with_environment(environment(&[(
+            "DATA_GOV_BASE_URL",
+            "https://exa\nmple.com",
+        )]))
+        .resolve()
+        .expect_err("a URL the parser silently rewrites must not be accepted");
+
+    let message = err.to_string();
+    assert!(
+        message.contains("base_url"),
+        "the error must name the setting, got: {message}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Values the environment can hold that are not text
+//
+// On Unix an environment variable is a byte string, and so is a path. A value
+// that is not valid Unicode is legal, and dropping it silently turns an
+// explicit override into a default with nothing to explain the difference.
+// ---------------------------------------------------------------------------
+
+/// A byte sequence that is a legal environment value and a legal path, and is
+/// not valid UTF-8.
+#[cfg(unix)]
+fn non_unicode_value() -> std::ffi::OsString {
+    use std::os::unix::ffi::OsStringExt;
+    std::ffi::OsString::from_vec(vec![b'/', b't', b'm', b'p', b'/', 0xff, 0xfe])
+}
+
+#[cfg(unix)]
+#[test]
+fn a_non_unicode_download_dir_from_the_environment_is_used_as_given() {
+    let raw = non_unicode_value();
+
+    let resolved = ConfigResolver::new()
+        .with_environment(ConfigEnvironment::from_pairs([(
+            "DATA_GOV_DOWNLOAD_DIR",
+            raw.clone(),
+        )]))
+        .with_mode(OperatingMode::CommandLine)
+        .resolve()
+        .expect("a path that is not valid Unicode is still a path");
+
+    assert_eq!(
+        resolved.config().get_base_download_dir(),
+        PathBuf::from(&raw),
+        "a download directory must survive as bytes, not be dropped for not being UTF-8"
+    );
+    assert_eq!(
+        resolved.source_of(SettingKey::DownloadDir),
+        SettingSource::Environment
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_non_unicode_textual_environment_value_is_reported_rather_than_dropped() {
+    let resolved = ConfigResolver::new()
+        .with_environment(ConfigEnvironment::from_pairs([(
+            "DATA_GOV_USER_AGENT",
+            non_unicode_value(),
+        )]))
+        .resolve()
+        .expect("an unusable variable must not fail the whole resolution");
+
+    assert_eq!(
+        resolved.source_of(SettingKey::UserAgent),
+        SettingSource::Default,
+        "a User-Agent cannot be non-Unicode, so the layer below supplies it"
+    );
+    assert!(
+        resolved.warnings().iter().any(|warning| matches!(
+            warning,
+            ConfigWarning::NonUnicodeEnvironmentValue { variable }
+                if variable == "DATA_GOV_USER_AGENT"
+        )),
+        "dropping the variable must be reported, got {:?}",
+        resolved.warnings()
     );
 }
 

@@ -5,6 +5,8 @@
 //! mysterious. `config show` prints them, and a test asserts on them.
 
 use std::fmt;
+use std::path::PathBuf;
+use std::str::FromStr;
 
 /// A setting that takes part in the precedence chain.
 ///
@@ -78,6 +80,45 @@ impl fmt::Display for SettingKey {
         f.write_str(self.config_key())
     }
 }
+
+impl FromStr for SettingKey {
+    type Err = UnknownSettingKey;
+
+    /// Turn a `config.toml` key back into a setting.
+    ///
+    /// A near miss is refused rather than guessed at: `config set download-dir`
+    /// should say so, not quietly write a key nothing reads.
+    fn from_str(key: &str) -> Result<Self, Self::Err> {
+        SettingKey::ALL
+            .into_iter()
+            .find(|setting| setting.config_key() == key)
+            .ok_or_else(|| UnknownSettingKey {
+                key: key.to_owned(),
+            })
+    }
+}
+
+/// The error from parsing a string that names no setting.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnknownSettingKey {
+    /// The string that named nothing.
+    pub key: String,
+}
+
+impl fmt::Display for UnknownSettingKey {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "unknown setting \"{}\". Known settings: ", self.key)?;
+        for (position, setting) in SettingKey::ALL.iter().enumerate() {
+            if position > 0 {
+                f.write_str(", ")?;
+            }
+            f.write_str(setting.config_key())?;
+        }
+        Ok(())
+    }
+}
+
+impl std::error::Error for UnknownSettingKey {}
 
 /// Which layer of the precedence chain supplied a value.
 ///
@@ -178,11 +219,43 @@ pub enum ConfigWarning {
     /// ignored, so the platform default was used instead.
     RelativeXdgConfigHome {
         /// The value that was ignored.
-        value: String,
+        value: PathBuf,
     },
-    /// No configuration directory could be determined on this platform, so no
-    /// configuration file was looked for.
+    /// No configuration directory could be determined, so no configuration
+    /// file was looked for.
+    ///
+    /// Either the platform names none, or the environment was supplied rather
+    /// than read from the process and carries no `XDG_CONFIG_HOME` - in which
+    /// case falling back to the real machine's directory would defeat the
+    /// isolation the caller asked for.
     NoConfigDir,
+    /// An environment variable is set to bytes that are not valid Unicode, so
+    /// it could not be used and the layer below supplied the value.
+    ///
+    /// On Unix an environment variable is a byte string. A path can hold any
+    /// bytes and is read as bytes, but a URL and a `User-Agent` cannot, so a
+    /// non-Unicode value for one of those is unusable. Dropping it in silence
+    /// would turn an explicit override into a default with nothing to explain
+    /// the difference.
+    NonUnicodeEnvironmentValue {
+        /// The variable that could not be read as text.
+        variable: String,
+    },
+    /// A setting's value has leading or trailing whitespace, and the value was
+    /// used exactly as given.
+    ///
+    /// Only [`SettingKey::DownloadDir`] reaches this: a directory whose name
+    /// ends in a space is a legal path, so the whitespace cannot be assumed to
+    /// be an accident and thrown away. It usually is one -
+    /// `DATA_GOV_DOWNLOAD_DIR=$(cat file)` carries the trailing newline - so
+    /// it is reported rather than honoured in silence. Every other string
+    /// setting has no use for surrounding whitespace and is trimmed instead.
+    SurroundingWhitespace {
+        /// The setting whose value is padded.
+        key: SettingKey,
+        /// The layer the padded value came from.
+        source: SettingSource,
+    },
 }
 
 impl fmt::Display for ConfigWarning {
@@ -198,11 +271,21 @@ impl fmt::Display for ConfigWarning {
             ),
             ConfigWarning::RelativeXdgConfigHome { value } => write!(
                 f,
-                "XDG_CONFIG_HOME is not an absolute path (\"{value}\"), ignored"
+                "XDG_CONFIG_HOME is not an absolute path ({}), ignored",
+                value.display()
             ),
             ConfigWarning::NoConfigDir => f.write_str(
-                "no configuration directory could be determined on this platform; \
-                 no configuration file was read",
+                "no configuration directory could be determined; no configuration file was read",
+            ),
+            ConfigWarning::NonUnicodeEnvironmentValue { variable } => write!(
+                f,
+                "{variable} is not valid Unicode and cannot be used here; \
+                 the value below it applies instead"
+            ),
+            ConfigWarning::SurroundingWhitespace { key, source } => write!(
+                f,
+                "{key} from {} begins or ends with whitespace, and is used exactly as given",
+                source.origin(*key)
             ),
         }
     }
