@@ -30,3 +30,6 @@ serde_json = "^1.0"
 default = ["native-tls"]
 native-tls = ["reqwest/native-tls"]
 rustls-tls = ["reqwest/rustls"]
+
+[lints]
+workspace = true

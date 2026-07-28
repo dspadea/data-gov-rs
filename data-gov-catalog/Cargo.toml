@@ -23,3 +23,6 @@ wiremock = "0.6"
 default = ["native-tls"]
 native-tls = ["reqwest/native-tls"]
 rustls-tls = ["reqwest/rustls"]
+
+[lints]
+workspace = true

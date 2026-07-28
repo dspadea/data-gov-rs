@@ -29,6 +29,11 @@ jobs:
         toolchain: ${{ matrix.rust }}
         components: rustfmt, clippy
 
+    # CI runs the same recipes a developer runs, so `just check` locally and a
+    # green pipeline cannot drift apart.
+    - name: Install just
+      uses: extractions/setup-just@v4
+
     - name: Cache cargo
       uses: actions/cache@v4
       with:
@@ -42,21 +47,28 @@ jobs:
           ${{ runner.os }}-cargo-
 
     - name: Check formatting
-      run: cargo fmt --all -- --check
+      run: just fmt-check
       if: matrix.rust == 'stable'
 
     - name: Run clippy
-      run: cargo clippy --all-targets --all-features -- -D warnings
+      run: just lint
       if: matrix.rust == 'stable'
 
     - name: Build
-      run: cargo build --verbose --all-features --workspace
+      run: just build
 
-    # --workspace --all-targets covers unit tests, every tests/ integration
-    # target, and doc tests. Selecting --lib here would silently skip both
-    # binary crates and every tests/ target: 37 of 181 tests would run.
+    # --workspace covers unit tests, every tests/ integration target, and doc
+    # tests. Selecting --lib here would silently skip both binary crates and
+    # every tests/ target: 37 of 181 tests would run.
     - name: Run tests
-      run: cargo test --verbose --all-features --workspace
+      run: just test
+
+    # --all-features enables native-tls and rustls at once, a combination no
+    # consumer selects, and so never compiles the rustls-only build that
+    # consumers do select. Without this step a missing import or a cfg typo
+    # behind rustls-tls reaches a release unnoticed.
+    - name: Build the rustls-only configuration
+      run: just check-rustls
 
   examples:
     name: Examples
@@ -66,6 +78,9 @@ jobs:
 
     - name: Install Rust
       uses: dtolnay/rust-toolchain@stable
+
+    - name: Install just
+      uses: extractions/setup-just@v4
 
     - name: Cache cargo
       uses: actions/cache@v4
@@ -78,7 +93,7 @@ jobs:
 
     # Examples make real API calls, so they are compiled but not run.
     - name: Build examples
-      run: cargo build --examples --workspace --all-features --verbose
+      run: just examples
 
   docs:
     name: Documentation
@@ -88,6 +103,9 @@ jobs:
 
     - name: Install Rust
       uses: dtolnay/rust-toolchain@stable
+
+    - name: Install just
+      uses: extractions/setup-just@v4
 
     - name: Cache cargo
       uses: actions/cache@v4
@@ -99,7 +117,7 @@ jobs:
         key: ${{ runner.os }}-cargo-docs-${{ hashFiles('**/Cargo.lock') }}
 
     - name: Build documentation
-      run: cargo doc --verbose --all-features --no-deps --document-private-items
+      run: just docs
 
   security:
     name: Security Audit
@@ -151,6 +169,9 @@ jobs:
     - name: Install Rust
       uses: dtolnay/rust-toolchain@stable
 
+    - name: Install just
+      uses: extractions/setup-just@v4
+
     - name: Cache cargo
       uses: actions/cache@v4
       with:
@@ -161,6 +182,6 @@ jobs:
         key: ${{ runner.os }}-cargo-live-${{ hashFiles('**/Cargo.lock') }}
 
     - name: Run ignored (network) tests
-      run: cargo test --verbose --all-features --workspace -- --ignored
+      run: just test-live
       env:
         RUST_LOG: debug

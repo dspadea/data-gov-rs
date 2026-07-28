@@ -9,6 +9,12 @@ members = [
 "data-gov-mcp-server"
 ]
 
+[workspace.lints.rust]
+warnings = "deny"
+
+[workspace.lints.clippy]
+all = "deny"
+
 [patch.crates-io]
 data-gov = { path = "data-gov" }
 data-gov-ckan = { path = "data-gov-ckan" }
