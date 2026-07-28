@@ -9,6 +9,7 @@
 //! (<https://modelcontextprotocol.io/specification/2025-11-25/basic>).
 
 use serde_json::{Value, json};
+use std::sync::Arc;
 use wiremock::matchers::{method as wm_method, path as wm_path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -19,7 +20,7 @@ use crate::test_support::{
 
 /// Start a mock catalog that answers the two endpoints a no-argument tool call
 /// reaches, and a server pointed at it.
-async fn server_with_catalog() -> (MockServer, crate::server::DataGovMcpServer) {
+async fn server_with_catalog() -> (MockServer, Arc<crate::server::DataGovMcpServer>) {
     let mock = MockServer::start().await;
     Mock::given(wm_method("GET"))
         .and(wm_path("/search"))
@@ -36,7 +37,7 @@ async fn server_with_catalog() -> (MockServer, crate::server::DataGovMcpServer) 
         })))
         .mount(&mock)
         .await;
-    let server = test_server(&mock.uri());
+    let server = Arc::new(test_server(&mock.uri()));
     (mock, server)
 }
 

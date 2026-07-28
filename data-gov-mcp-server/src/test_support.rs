@@ -6,9 +6,21 @@
 
 use data_gov::{DataGovClient, DataGovConfig, OperatingMode};
 use serde_json::{Value, json};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use std::sync::Arc;
+use std::time::Duration;
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader, DuplexStream, Lines};
+use tokio::sync::Notify;
+use tokio::task::JoinHandle;
 
-use crate::server::DataGovMcpServer;
+use crate::server::{DataGovMcpServer, TestGate};
+use crate::types::ServerError;
+
+/// How long a session waits for a response before calling the loop hung.
+///
+/// This bound never decides whether a test passes - each assertion is on the
+/// content and the order of what arrives. It exists so a run loop that has
+/// stopped answering fails by name instead of hanging the suite.
+const RESPONSE_WAIT: Duration = Duration::from_secs(10);
 
 /// JSON-RPC 2.0 error codes, section 5.1 of the published specification at
 /// <https://www.jsonrpc.org/specification>.
@@ -37,6 +49,100 @@ pub(crate) fn test_server(mock_uri: &str) -> DataGovMcpServer {
     DataGovMcpServer {
         data_gov,
         portal_base_url: mock_uri.to_string(),
+        test_gate: None,
+    }
+}
+
+/// A server that holds `method` until the returned handle is released.
+///
+/// The handle is a [`Notify`] with a stored permit, so releasing before the
+/// dispatch reaches the gate works as well as releasing after it.
+pub(crate) fn test_server_with_gate(
+    mock_uri: &str,
+    method: &'static str,
+) -> (Arc<DataGovMcpServer>, Arc<Notify>) {
+    let release = Arc::new(Notify::new());
+    let mut server = test_server(mock_uri);
+    server.test_gate = Some(TestGate {
+        method,
+        release: Arc::clone(&release),
+    });
+    (Arc::new(server), release)
+}
+
+/// A live session against the run loop.
+///
+/// Unlike [`drive`], which feeds everything and then reads everything, a
+/// session interleaves: send a line, read a response, send another. That is
+/// what makes a concurrency claim testable without a clock.
+pub(crate) struct Session {
+    requests: Option<DuplexStream>,
+    responses: Lines<BufReader<DuplexStream>>,
+    loop_task: JoinHandle<Result<(), ServerError>>,
+}
+
+impl Session {
+    /// Start the run loop over a pair of in-memory pipes.
+    pub(crate) fn start(server: Arc<DataGovMcpServer>) -> Self {
+        let (client_writer, server_reader) = tokio::io::duplex(1 << 16);
+        let (server_writer, client_reader) = tokio::io::duplex(1 << 16);
+
+        let loop_task =
+            tokio::spawn(async move { server.serve(server_reader, server_writer).await });
+
+        Self {
+            requests: Some(client_writer),
+            responses: BufReader::new(client_reader).lines(),
+            loop_task,
+        }
+    }
+
+    /// Write one message, followed by the newline that frames it.
+    pub(crate) async fn send(&mut self, message: &Value) {
+        let requests = self
+            .requests
+            .as_mut()
+            .expect("the session is still accepting requests");
+        let line = format!("{message}\n");
+        requests.write_all(line.as_bytes()).await.expect("send");
+        requests.flush().await.expect("flush");
+    }
+
+    /// Read the next response the server writes.
+    ///
+    /// Panics when nothing arrives within [`RESPONSE_WAIT`], which is what a
+    /// run loop blocked behind an earlier request looks like from here.
+    pub(crate) async fn next_response(&mut self) -> Value {
+        let line = tokio::time::timeout(RESPONSE_WAIT, self.responses.next_line())
+            .await
+            .expect("the run loop stopped answering")
+            .expect("read a response line")
+            .expect("the run loop closed its output early");
+        serde_json::from_str(&line).unwrap_or_else(|err| panic!("`{line}` is not JSON: {err}"))
+    }
+
+    /// Close the input and collect every response still to come.
+    pub(crate) async fn finish(mut self) -> Vec<Value> {
+        // Dropping the writer is EOF, which is what ends the loop.
+        self.requests = None;
+
+        let mut rest = Vec::new();
+        while let Some(line) = tokio::time::timeout(RESPONSE_WAIT, self.responses.next_line())
+            .await
+            .expect("the run loop did not finish")
+            .expect("read a response line")
+        {
+            rest.push(
+                serde_json::from_str(&line)
+                    .unwrap_or_else(|err| panic!("`{line}` is not JSON: {err}")),
+            );
+        }
+
+        self.loop_task
+            .await
+            .expect("the run loop task must not panic")
+            .expect("the transport must survive every message");
+        rest
     }
 }
 
@@ -80,7 +186,7 @@ pub(crate) fn search_body(slug: &str, title: &str) -> Value {
 /// Every collected line is checked against the JSON-RPC 2.0 response envelope
 /// before it is returned: that check belongs to no single test, and running it
 /// here means no test can accidentally accept a malformed frame.
-pub(crate) async fn drive(server: &DataGovMcpServer, input: &[u8]) -> Vec<Value> {
+pub(crate) async fn drive(server: &Arc<DataGovMcpServer>, input: &[u8]) -> Vec<Value> {
     let (mut client_writer, server_reader) = tokio::io::duplex(1 << 16);
     let (server_writer, mut client_reader) = tokio::io::duplex(1 << 16);
 
@@ -99,7 +205,8 @@ pub(crate) async fn drive(server: &DataGovMcpServer, input: &[u8]) -> Vec<Value>
         raw
     };
 
-    let (served, (), raw) = tokio::join!(server.serve(server_reader, server_writer), feed, collect);
+    let owned = Arc::clone(server);
+    let (served, (), raw) = tokio::join!(owned.serve(server_reader, server_writer), feed, collect);
     served.expect("the transport must survive every malformed message");
 
     let text = String::from_utf8(raw).expect("responses must be valid UTF-8");

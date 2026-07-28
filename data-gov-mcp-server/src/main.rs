@@ -4,6 +4,8 @@ mod tools;
 mod types;
 
 #[cfg(test)]
+mod concurrency_tests;
+#[cfg(test)]
 mod dispatch_tests;
 #[cfg(test)]
 mod protocol_tests;

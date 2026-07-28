@@ -9,12 +9,28 @@ use tokio::io::{
 
 use crate::types::{Request, RequestIdKind, Response, ServerError, classify_request_id};
 
+/// A hold point a test can place in front of one method.
+///
+/// The concurrency tests need a request that provably has not finished, and a
+/// sleep only makes that probable. Holding the dispatch on a signal the test
+/// controls means "the second request was answered first" can be asserted
+/// without measuring anything.
+#[cfg(test)]
+pub(crate) struct TestGate {
+    /// The method this gate holds. Others pass straight through.
+    pub method: &'static str,
+    /// Released by the test. Until then the matching dispatch does not return.
+    pub release: std::sync::Arc<tokio::sync::Notify>,
+}
+
 /// The data.gov MCP server.
 ///
 /// Reads JSON-RPC requests from stdin and writes responses to stdout.
 pub struct DataGovMcpServer {
     pub(crate) data_gov: DataGovClient,
     pub(crate) portal_base_url: String,
+    #[cfg(test)]
+    pub(crate) test_gate: Option<TestGate>,
 }
 
 impl DataGovMcpServer {
@@ -42,6 +58,8 @@ impl DataGovMcpServer {
         Ok(Self {
             data_gov,
             portal_base_url,
+            #[cfg(test)]
+            test_gate: None,
         })
     }
 

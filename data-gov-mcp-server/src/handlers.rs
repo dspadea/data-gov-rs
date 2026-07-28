@@ -62,6 +62,13 @@ impl DataGovMcpServer {
         method: &str,
         params: Option<Value>,
     ) -> Result<Value, ServerError> {
+        #[cfg(test)]
+        if let Some(gate) = self.test_gate.as_ref()
+            && gate.method == method
+        {
+            gate.release.notified().await;
+        }
+
         match method {
             "initialize" => {
                 let params: InitializeParams = parse_optional_params(method, params)?;
