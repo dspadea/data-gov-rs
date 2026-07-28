@@ -1,19 +1,47 @@
 use crate::models;
 use serde::de::DeserializeOwned;
 use std::sync::Arc;
+use std::time::Duration;
+
+/// Connect timeout [`Configuration::default`] builds [`Configuration::client`] with.
+const DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Overall request timeout [`Configuration::default`] builds [`Configuration::client`] with.
+const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Configuration for the CKAN client
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct Configuration {
-    /// Base URL for the CKAN API (e.g., `https://catalog.data.gov/api/3`)
+    /// Base URL for the CKAN API (e.g., `https://demo.ckan.org/api/3`).
+    ///
+    /// [`Configuration::default`] does not point this at a live portal (see
+    /// its own docs); data.gov retired its CKAN endpoint in 2026, and no
+    /// other CKAN deployment is this crate's "default" one either. Set it to
+    /// your target CKAN-compatible portal.
     pub base_path: String,
     /// User agent string for HTTP requests
     pub user_agent: Option<String>,
-    /// HTTP client instance
+    /// HTTP client instance.
+    ///
+    /// A `reqwest::Client` bakes its connect and request timeouts in at
+    /// construction time; nothing can retime it afterward. `Configuration`
+    /// therefore has no public `connect_timeout` / `timeout` fields -- an
+    /// earlier version of this crate had exactly that pair, and
+    /// `Configuration { timeout: Duration::from_millis(50), ..Configuration
+    /// ::default() }` silently kept the client `default()` had already
+    /// built from the old value (#48). Use [`Configuration::with_timeouts`]
+    /// to build a `Configuration` whose client has specific timeouts, or
+    /// build your own [`reqwest::Client`] with the timeouts you want and
+    /// assign it here directly.
     pub client: reqwest::Client,
     /// Basic authentication credentials (username, optional password)
     pub basic_auth: Option<BasicAuth>,
-    /// OAuth access token
+    /// OAuth access token.
+    ///
+    /// Not currently attached to outgoing requests: CKAN's Action API
+    /// defines no OAuth flow of its own, and the RFC 6750 bearer semantics
+    /// an OAuth access token normally rides on over HTTP are covered by
+    /// [`Self::bearer_access_token`] instead. Kept for API compatibility.
     pub oauth_access_token: Option<String>,
     /// Bearer token for authentication
     pub bearer_access_token: Option<String>,
@@ -25,7 +53,7 @@ pub struct Configuration {
 pub type BasicAuth = (String, Option<String>);
 
 /// API key configuration
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct ApiKey {
     /// Optional prefix for the API key (e.g., "Bearer")
     pub prefix: Option<String>,
@@ -33,24 +61,115 @@ pub struct ApiKey {
     pub key: String,
 }
 
+impl std::fmt::Debug for ApiKey {
+    /// Redacts [`Self::key`] so an `ApiKey` never leaks a secret into a log
+    /// line, an error message, or a test failure printed to a CI console.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ApiKey")
+            .field("prefix", &self.prefix)
+            .field("key", &"[REDACTED]")
+            .finish()
+    }
+}
+
 impl Configuration {
     /// Create a new configuration with default values
     pub fn new() -> Configuration {
         Configuration::default()
     }
+
+    /// Build a [`Configuration`] whose [`Self::client`] has the given
+    /// connect and overall request timeouts baked in.
+    ///
+    /// This is the only way to change those timeouts: a `reqwest::Client`
+    /// fixes them at construction, so a field set on an already-built
+    /// `Configuration` cannot reach a `client` that was already built (see
+    /// [`Self::client`]). Everything else is taken from
+    /// [`Configuration::default`].
+    ///
+    /// ```rust
+    /// # use data_gov_ckan::Configuration;
+    /// # use std::time::Duration;
+    /// let config = Configuration {
+    ///     base_path: "https://demo.ckan.org/api/3".to_string(),
+    ///     ..Configuration::with_timeouts(Duration::from_secs(5), Duration::from_secs(15))
+    /// };
+    /// ```
+    pub fn with_timeouts(connect_timeout: Duration, timeout: Duration) -> Configuration {
+        Configuration {
+            client: build_client(connect_timeout, timeout),
+            ..Configuration::default()
+        }
+    }
+}
+
+/// Build a [`reqwest::Client`] with an explicit connect and request timeout.
+///
+/// `ClientBuilder::build()` only fails for structurally invalid client
+/// configuration (a bad TLS backend or proxy setup); a builder that sets only
+/// timeouts cannot fail in practice. Fall back to an untimed client rather
+/// than panicking, per #48's acceptance criteria -- a client with no timeout
+/// is still strictly better than no client at all.
+fn build_client(connect_timeout: Duration, timeout: Duration) -> reqwest::Client {
+    reqwest::Client::builder()
+        .connect_timeout(connect_timeout)
+        .timeout(timeout)
+        .build()
+        .unwrap_or_else(|_| reqwest::Client::new())
 }
 
 impl Default for Configuration {
     fn default() -> Self {
         Configuration {
-            base_path: "https://catalog.data.gov/api/3".to_owned(),
+            // This crate serves any compliant CKAN deployment, not one
+            // portal, so there is no principled reason to default to one
+            // government's live service over another's -- Canada's,
+            // Ireland's, and Australia's all appear in this crate's own
+            // fixtures with equal standing. Defaulting to any of them sends
+            // live traffic to a third party that never consented to it
+            // (previously open.canada.ca, silently, from every unconfigured
+            // client). `.invalid` is reserved by RFC 2606 and never
+            // resolves, so an unconfigured client fails fast and loud with
+            // RequestError -- not a confusing 404 that reads like the
+            // request itself, rather than the configuration, is broken.
+            // Point this at your own CKAN-compatible portal.
+            base_path: "https://ckan.example.invalid/api/3".to_owned(),
             user_agent: Some(concat!("data-gov-rs/", env!("CARGO_PKG_VERSION")).to_owned()),
-            client: reqwest::Client::new(),
+            client: build_client(DEFAULT_CONNECT_TIMEOUT, DEFAULT_TIMEOUT),
             basic_auth: None,
             oauth_access_token: None,
             bearer_access_token: None,
             api_key: None,
         }
+    }
+}
+
+/// `Some("[REDACTED]")` for a configured secret, `None` for an absent one.
+///
+/// Lets a `Configuration` be logged whole (`tracing::debug!(?config)`, a
+/// failed-assertion printout, ...) without a credential ever reaching a log
+/// line or a console.
+fn redacted(secret: &Option<String>) -> Option<&'static str> {
+    secret.as_ref().map(|_| "[REDACTED]")
+}
+
+impl std::fmt::Debug for Configuration {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Username is not secret; only the password half of basic auth is.
+        let basic_auth = self
+            .basic_auth
+            .as_ref()
+            .map(|(user, pass)| (user.as_str(), pass.as_deref().map(|_| "[REDACTED]")));
+
+        f.debug_struct("Configuration")
+            .field("base_path", &self.base_path)
+            .field("user_agent", &self.user_agent)
+            .field("client", &self.client)
+            .field("basic_auth", &basic_auth)
+            .field("oauth_access_token", &redacted(&self.oauth_access_token))
+            .field("bearer_access_token", &redacted(&self.bearer_access_token))
+            .field("api_key", &self.api_key)
+            .finish()
     }
 }
 
@@ -157,7 +276,8 @@ impl CkanClient {
     /// Create a new CKAN client instance
     ///
     /// Creates a client configured to work with a specific CKAN instance.
-    /// For data.gov, use the base URL: `https://catalog.data.gov/api/3`
+    /// data.gov no longer exposes a CKAN API; point this at your own
+    /// CKAN-compatible portal, e.g. `https://open.canada.ca/data/en/api/3`.
     ///
     /// # Arguments
     ///
@@ -171,29 +291,22 @@ impl CkanClient {
     ///
     /// // Basic client for read-only operations
     /// let config = Arc::new(Configuration {
-    ///     base_path: "https://catalog.data.gov/api/3".to_string(),
+    ///     base_path: "https://open.canada.ca/data/en/api/3".to_string(),
     ///     user_agent: Some("my-rust-app/1.0".to_string()),
-    ///     client: reqwest::Client::new(),
-    ///     basic_auth: None,
-    ///     oauth_access_token: None,
-    ///     bearer_access_token: None,
-    ///     api_key: None,
+    ///     ..Configuration::default()
     /// });
     ///
     /// let client = CkanClient::new(config);
     ///
     /// // Client with API key for write operations
     /// let authenticated_config = Arc::new(Configuration {
-    ///     base_path: "https://catalog.data.gov/api/3".to_string(),
+    ///     base_path: "https://open.canada.ca/data/en/api/3".to_string(),
     ///     user_agent: Some("my-rust-app/1.0".to_string()),
-    ///     client: reqwest::Client::new(),
-    ///     basic_auth: None,
-    ///     oauth_access_token: None,
-    ///     bearer_access_token: None,
     ///     api_key: Some(ApiKey {
     ///         prefix: None,
     ///         key: "your-api-key-here".to_string(),
     ///     }),
+    ///     ..Configuration::default()
     /// });
     ///
     /// let auth_client = CkanClient::new(authenticated_config);
@@ -215,36 +328,60 @@ impl CkanClient {
     ) -> Result<T, CkanError> {
         let url = format!("{}/action/{}", self.configuration.base_path, action);
 
-        let response = self
-            .configuration
-            .client
-            .get(&url)
-            .query(params)
+        let mut req = self.configuration.client.get(&url).query(params);
+        if let Some(ua) = &self.configuration.user_agent {
+            req = req.header(reqwest::header::USER_AGENT, ua);
+        }
+        req = self.apply_credentials(req);
+
+        let response = req
             .send()
             .await
             .map_err(|e| CkanError::RequestError(Box::new(e)))?;
 
         if !response.status().is_success() {
             let status = response.status().as_u16();
-            let error_text = response
+            // A dropped connection while reading the body is a transport
+            // failure and must surface as RequestError, not be folded into
+            // this branch's own ApiError -- `.text()` failing here means we
+            // never got CKAN's error body at all, so there is no CKAN error
+            // to report (#72.2). A body that arrived whole but isn't valid
+            // JSON, or isn't the error envelope's shape, stays a decode
+            // concern handled below by falling back to the raw text.
+            let body_text = response
                 .text()
                 .await
-                .unwrap_or_else(|_| "Unknown error".to_string());
-            return Err(CkanError::ApiError {
-                status,
-                message: error_text,
-            });
+                .map_err(|e| CkanError::RequestError(Box::new(e)))?;
+            let message = serde_json::from_str::<serde_json::Value>(&body_text)
+                .ok()
+                .and_then(|v| v.get("error").cloned())
+                .map(|error| error_envelope_message(&error))
+                .unwrap_or(body_text);
+            return Err(CkanError::ApiError { status, message });
         }
 
-        let wrapper: models::ActionResponse = response
-            .json()
+        // `.text()` failing is a transport problem (RequestError); the text
+        // arriving but not parsing as the expected envelope shape is a
+        // decode problem (ParseError). `response.json()` used to collapse
+        // both into RequestError, which is documented as covering
+        // "connection failures, timeouts, DNS resolution issues" -- not
+        // deserialization, which ParseError is documented as covering (#72.2).
+        let body_text = response
+            .text()
             .await
             .map_err(|e| CkanError::RequestError(Box::new(e)))?;
+        let wrapper: models::ActionResponse =
+            serde_json::from_str(&body_text).map_err(CkanError::ParseError)?;
 
         if !wrapper.success {
+            let message = wrapper
+                .error
+                .as_ref()
+                .map(error_envelope_message)
+                .unwrap_or_else(|| "CKAN API reported failure".to_string());
             return Err(CkanError::ApiError {
                 status: 400,
-                message: "CKAN API reported failure".to_string(),
+                message,
             });
         }
 
@@ -255,6 +392,37 @@ impl CkanClient {
                 message: "No result data in API response".to_string(),
             }),
         }
+    }
+
+    /// Attach whichever credential is configured, in priority order: an
+    /// explicit CKAN API key, then a bearer token, then HTTP basic auth.
+    ///
+    /// A CKAN API key is sent as `Authorization: <prefix> <key>` (or just
+    /// `<key>` with no configured prefix) -- the mechanism CKAN's own API
+    /// documents natively, distinct from RFC 6750 bearer tokens. Only one
+    /// credential is ever attached per request, so a `Configuration` with
+    /// more than one set is not an error, just resolved by this order.
+    ///
+    /// `oauth_access_token` is not attached here: CKAN's Action API defines
+    /// no OAuth flow of its own, and RFC 6750 bearer semantics -- which is
+    /// what an OAuth access token normally rides on over HTTP -- are already
+    /// covered by `bearer_access_token`.
+    fn apply_credentials(&self, req: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+        let config = &self.configuration;
+        if let Some(api_key) = &config.api_key {
+            let value = match &api_key.prefix {
+                Some(prefix) => format!("{prefix} {}", api_key.key),
+                None => api_key.key.clone(),
+            };
+            return req.header(reqwest::header::AUTHORIZATION, value);
+        }
+        if let Some(token) = &config.bearer_access_token {
+            return req.bearer_auth(token);
+        }
+        if let Some((username, password)) = &config.basic_auth {
+            return req.basic_auth(username, password.as_deref());
+        }
+        req
     }
 
     /// Search for datasets (packages) with advanced filtering and faceting
@@ -281,10 +449,9 @@ impl CkanClient {
     /// # use std::sync::Arc;
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// # let client = CkanClient::new(Arc::new(Configuration {
-    /// #     base_path: "https://catalog.data.gov/api/3".to_string(),
+    /// #     base_path: "https://open.canada.ca/data/en/api/3".to_string(),
     /// #     user_agent: Some("test".to_string()),
-    /// #     client: reqwest::Client::new(),
-    /// #     basic_auth: None, oauth_access_token: None, bearer_access_token: None, api_key: None,
+    /// #     ..Configuration::default()
     /// # }));
     ///
     /// // Basic text search
@@ -415,10 +582,9 @@ impl CkanClient {
     /// # use std::sync::Arc;
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// # let client = CkanClient::new(Arc::new(Configuration {
-    /// #     base_path: "https://catalog.data.gov/api/3".to_string(),
+    /// #     base_path: "https://open.canada.ca/data/en/api/3".to_string(),
     /// #     user_agent: Some("test".to_string()),
-    /// #     client: reqwest::Client::new(),
-    /// #     basic_auth: None, oauth_access_token: None, bearer_access_token: None, api_key: None,
+    /// #     ..Configuration::default()
     /// # }));
     ///
     /// // Get dataset by name
@@ -563,10 +729,9 @@ impl CkanClient {
     /// # use std::sync::Arc;
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// # let client = CkanClient::new(Arc::new(Configuration {
-    /// #     base_path: "https://catalog.data.gov/api/3".to_string(),
+    /// #     base_path: "https://open.canada.ca/data/en/api/3".to_string(),
     /// #     user_agent: Some("test".to_string()),
-    /// #     client: reqwest::Client::new(),
-    /// #     basic_auth: None, oauth_access_token: None, bearer_access_token: None, api_key: None,
+    /// #     ..Configuration::default()
     /// # }));
     ///
     /// // Get suggestions as user types "elect"
@@ -684,10 +849,9 @@ impl CkanClient {
     /// # use std::sync::Arc;
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// # let client = CkanClient::new(Arc::new(Configuration {
-    /// #     base_path: "https://catalog.data.gov/api/3".to_string(),
+    /// #     base_path: "https://open.canada.ca/data/en/api/3".to_string(),
     /// #     user_agent: Some("test".to_string()),
-    /// #     client: reqwest::Client::new(),
-    /// #     basic_auth: None, oauth_access_token: None, bearer_access_token: None, api_key: None,
+    /// #     ..Configuration::default()
     /// # }));
     ///
     /// // Find agriculture-related groups
@@ -766,5 +930,69 @@ impl CkanClient {
         }
 
         self.call_action("format_autocomplete", &params).await
+    }
+}
+
+/// Extract a human-readable message from a CKAN `error` envelope value.
+///
+/// Three tiers, most specific first:
+///
+/// 1. The documented shape, `{ "__type": ..., "message": ... }`
+///    ([`models::ErrorResponseError`]).
+/// 2. A bare `message` key without the rest of the documented shape (some
+///    CKAN-compatible backends may omit `__type`).
+/// 3. CKAN's validation-error shape replaces `message` with per-field arrays
+///    instead (`{"name_or_id": ["Missing value"], "__type": "Validation
+///    Error"}`), which has no message to extract at all -- render the raw
+///    error object as text rather than losing it.
+fn error_envelope_message(error: &serde_json::Value) -> String {
+    if let Ok(envelope) = serde_json::from_value::<models::ErrorResponseError>(error.clone()) {
+        return envelope.message;
+    }
+    if let Some(message) = error.get("message").and_then(serde_json::Value::as_str) {
+        return message.to_string();
+    }
+    error.to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use wiremock::matchers::method;
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    /// `Configuration::default()`'s own timeout fields
+    /// (`default_configuration_sets_explicit_connect_and_request_timeouts` in
+    /// `tests/unit_tests.rs`) do not prove `build_client` actually wires them
+    /// into the `reqwest::Client` it returns -- a client field set to the
+    /// right `Duration` and a client that was never told about it are
+    /// indistinguishable by inspecting the fields alone. This calls
+    /// `build_client` directly, the same function `Configuration::default()`
+    /// calls with the production 10s/30s values, with a timeout short enough
+    /// to prove within milliseconds rather than by waiting out 30 real
+    /// seconds in the test suite.
+    #[tokio::test]
+    async fn build_client_applies_the_given_request_timeout() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(200).set_delay(Duration::from_secs(10)))
+            .mount(&server)
+            .await;
+
+        let client = build_client(Duration::from_secs(10), Duration::from_millis(100));
+
+        let started = std::time::Instant::now();
+        let result = client.get(server.uri()).send().await;
+        let elapsed = started.elapsed();
+
+        assert!(
+            result.is_err(),
+            "a request past the configured timeout must error"
+        );
+        assert!(
+            elapsed < Duration::from_secs(2),
+            "expected the 100ms timeout to fire well before the mock's 10s \
+             delay; took {elapsed:?}"
+        );
     }
 }

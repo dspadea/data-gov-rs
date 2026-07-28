@@ -1,0 +1,11 @@
+{
+  "help": "https://open.canada.ca/data/en/api/3/action/help_show?name=organization_list",
+  "success": true,
+  "result": [
+    "16342451-canada-inc",
+    "2canl",
+    "3can",
+    "3nih",
+    "3nii"
+  ]
+}

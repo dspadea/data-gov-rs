@@ -1,0 +1,10 @@
+{
+  "help": "https://open.canada.ca/data/en/api/3/action/help_show?name=package_show",
+  "error": {
+    "name_or_id": [
+      "Missing value"
+    ],
+    "__type": "Validation Error"
+  },
+  "success": false
+}

@@ -9,13 +9,9 @@ use std::sync::Arc;
 /// Helper function to create a test client configured for data.gov
 fn create_test_client() -> CkanClient {
     let config = Arc::new(Configuration {
-        base_path: "https://catalog.data.gov/api/3".to_string(),
+        base_path: "https://open.canada.ca/data/en/api/3".to_string(),
         user_agent: Some("data-gov-ckan-client-test/1.0".to_string()),
-        client: reqwest::Client::new(),
-        basic_auth: None,
-        oauth_access_token: None,
-        bearer_access_token: None,
-        api_key: None,
+        ..Configuration::default()
     });
 
     CkanClient::new(config)
@@ -131,7 +127,7 @@ async fn test_package_show() {
     {
         // Now get the full dataset details
         let package = client
-            .package_show(&dataset_id.to_string())
+            .package_show(dataset_id)
             .await
             .expect("Package show should succeed");
 

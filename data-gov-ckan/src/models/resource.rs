@@ -12,10 +12,15 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Default, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Resource {
+    /// Unique identifier for the resource.
+    ///
+    /// CKAN's `id` column is unconstrained text; see [`crate::models::Package::id`]
+    /// for why this is a `String` rather than a `uuid::Uuid`.
     #[serde(rename = "id", skip_serializing_if = "Option::is_none")]
-    pub id: Option<uuid::Uuid>,
+    pub id: Option<String>,
+    /// Identifier of the dataset this resource belongs to.
     #[serde(rename = "package_id", skip_serializing_if = "Option::is_none")]
-    pub package_id: Option<uuid::Uuid>,
+    pub package_id: Option<String>,
     /// URL to the resource
     #[serde(rename = "url", skip_serializing_if = "Option::is_none")]
     pub url: Option<String>,
@@ -46,9 +51,23 @@ pub struct Resource {
     /// Cached URL for the resource
     #[serde(rename = "cache_url", skip_serializing_if = "Option::is_none")]
     pub cache_url: Option<String>,
-    /// Size of the resource in bytes
-    #[serde(rename = "size", skip_serializing_if = "Option::is_none")]
-    pub size: Option<i32>,
+    /// Size of the resource in bytes.
+    ///
+    /// CKAN's `resource.size` column is a `BigInteger`, so this is `i64`
+    /// rather than `i32` -- an `i32` rejects any file over 2 GiB and, because
+    /// `Resource` nests inside `Package.resources` inside
+    /// `PackageSearchResult.results`, takes the whole page down with it.
+    /// Deserialization also tolerates a numeric string (some portals send
+    /// `size` as text); a non-numeric string (e.g. a human-formatted
+    /// `"523 KiB"`, observed on data.qld.gov.au) degrades to `None` rather
+    /// than failing the resource.
+    #[serde(
+        rename = "size",
+        default,
+        deserialize_with = "deserialize_flexible_size",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub size: Option<i64>,
     #[serde(rename = "created", skip_serializing_if = "Option::is_none")]
     pub created: Option<String>,
     #[serde(rename = "last_modified", skip_serializing_if = "Option::is_none")]
@@ -81,5 +100,114 @@ impl Resource {
             cache_last_updated: None,
             datastore_active: None,
         }
+    }
+}
+
+/// Accepts `resource.size` as a JSON number, a numeric string, or a
+/// non-numeric string, in that order of preference.
+///
+/// A JSON number widens to `i64`, including an integral float (`523.0`):
+/// `serde_json::Number::as_i64` returns `None` for any number written with
+/// a decimal point, even a whole one, so a naive widen would silently lose
+/// every size from a CKAN-compatible backend whose JSON encoder always
+/// emits floats. A genuinely fractional value (`523.7`) or one outside
+/// `i64`'s range still yields `None` rather than a wrong truncation. A
+/// string is tried as a decimal integer first; when that fails -- a
+/// human-formatted value such as `"523 KiB"`, observed on a live portal --
+/// the field degrades to `None` rather than failing deserialization. A
+/// missing or `null` field also yields `None`. One resource's unparseable
+/// size must never fail the dataset it belongs to.
+fn deserialize_flexible_size<'de, D>(deserializer: D) -> Result<Option<i64>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = Option::<serde_json::Value>::deserialize(deserializer)?;
+    Ok(match value {
+        Some(serde_json::Value::Number(n)) => number_to_i64(&n),
+        Some(serde_json::Value::String(s)) => s.trim().parse::<i64>().ok(),
+        _ => None,
+    })
+}
+
+/// Widens a JSON number to `i64`, accepting an integral float alongside a
+/// plain integer literal.
+///
+/// `2^63` is exactly representable as `f64` and is one past `i64::MAX`; any
+/// float with no fractional part in `[-(2^63), 2^63)` therefore converts to
+/// `i64` exactly via `as`, with no rounding surprises at the boundary.
+fn number_to_i64(n: &serde_json::Number) -> Option<i64> {
+    if let Some(i) = n.as_i64() {
+        return Some(i);
+    }
+    const I64_MIN_F64: f64 = -9_223_372_036_854_775_808.0;
+    const I64_MAX_BOUND_F64: f64 = 9_223_372_036_854_775_808.0; // 2^63
+
+    let f = n.as_f64()?;
+    if f.fract() == 0.0 && (I64_MIN_F64..I64_MAX_BOUND_F64).contains(&f) {
+        Some(f as i64)
+    } else {
+        None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn size_of(value: serde_json::Value) -> Option<i64> {
+        let resource: Resource =
+            serde_json::from_value(json!({ "size": value })).expect("Resource must deserialize");
+        resource.size
+    }
+
+    #[test]
+    fn deserialize_flexible_size_accepts_a_json_integer() {
+        assert_eq!(size_of(json!(523)), Some(523));
+    }
+
+    #[test]
+    fn deserialize_flexible_size_accepts_a_numeric_string() {
+        assert_eq!(size_of(json!("523")), Some(523));
+    }
+
+    /// serde_json::Number::as_i64() returns None for any number written
+    /// with a decimal point, even a whole one -- 523.0 is stored as the
+    /// Float variant internally, and as_i64() never inspects Float. A
+    /// CKAN-compatible backend whose JSON encoder always emits floats for
+    /// numeric fields would otherwise lose every size.
+    #[test]
+    fn deserialize_flexible_size_accepts_an_integral_json_float() {
+        assert_eq!(size_of(json!(523.0)), Some(523));
+    }
+
+    #[test]
+    fn deserialize_flexible_size_rejects_a_non_integral_json_float() {
+        assert_eq!(size_of(json!(523.7)), None);
+    }
+
+    #[test]
+    fn deserialize_flexible_size_degrades_a_non_numeric_string_to_none() {
+        assert_eq!(size_of(json!("523 KiB")), None);
+    }
+
+    #[test]
+    fn deserialize_flexible_size_treats_null_as_none() {
+        assert_eq!(size_of(json!(null)), None);
+    }
+
+    #[test]
+    fn deserialize_flexible_size_treats_empty_string_as_none() {
+        assert_eq!(size_of(json!("")), None);
+    }
+
+    /// A value with no fractional part but too large for i64 (parsed as the
+    /// Float variant, since it doesn't fit u64 either) must still degrade to
+    /// None rather than truncating to a wrong-but-plausible i64.
+    #[test]
+    fn deserialize_flexible_size_rejects_a_value_beyond_i64_max() {
+        let beyond_i64_max: serde_json::Value =
+            serde_json::from_str("99999999999999999999999999999999").expect("valid JSON number");
+        assert_eq!(size_of(beyond_i64_max), None);
     }
 }

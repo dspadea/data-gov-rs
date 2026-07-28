@@ -1,0 +1,515 @@
+{
+  "help": "https://www.data.qld.gov.au/api/3/action/help_show?name=package_show",
+  "success": true,
+  "result": {
+    "author": "opendata@des.qld.gov.au",
+    "author_email": "opendata@des.qld.gov.au",
+    "creator_user_id": "600cb984-d9ed-4645-880c-cdad1e1794f1",
+    "data_driven_application": "NO",
+    "data_last_updated": "2026-07-28T11:33:01.974034",
+    "default_data_schema": {
+      "fields": [
+        {
+          "name": "Site",
+          "title": "Site",
+          "type": "string"
+        },
+        {
+          "name": "SiteNumber",
+          "title": "SiteNumber",
+          "type": "string"
+        },
+        {
+          "name": "Seconds",
+          "title": "Seconds",
+          "type": "number"
+        },
+        {
+          "format": "any",
+          "name": "DateTime",
+          "title": "DateTime",
+          "type": "datetime"
+        },
+        {
+          "name": "Latitude",
+          "title": "Latitude",
+          "type": "number"
+        },
+        {
+          "name": "Longitude",
+          "title": "Longitude",
+          "type": "number"
+        },
+        {
+          "name": "Hsig",
+          "title": "Hsig",
+          "type": "number"
+        },
+        {
+          "name": "Hmax",
+          "title": "Hmax",
+          "type": "number"
+        },
+        {
+          "name": "Tp",
+          "title": "Tp",
+          "type": "number"
+        },
+        {
+          "name": "Tz",
+          "title": "Tz",
+          "type": "number"
+        },
+        {
+          "name": "SST",
+          "title": "SST",
+          "type": "number"
+        },
+        {
+          "name": "Direction",
+          "title": "Hmax",
+          "type": "number"
+        },
+        {
+          "name": "Current Speed",
+          "title": "Current Speed",
+          "type": "number"
+        },
+        {
+          "name": "Current Direction",
+          "title": "Current Direction",
+          "type": "number"
+        }
+      ]
+    },
+    "id": "e9a4670f-4d1f-4c56-9855-dbcb103cebfd",
+    "isopen": true,
+    "license_id": "cc-by-4",
+    "license_title": "Creative Commons Attribution 4.0",
+    "license_url": "https://creativecommons.org/licenses/by/4.0/",
+    "maintainer": "opendata@des.qld.gov.au",
+    "maintainer_email": "opendata@des.qld.gov.au",
+    "metadata_created": "2014-06-25T00:33:08.830759",
+    "metadata_modified": "2026-07-28T11:33:59.661661",
+    "name": "coastal-data-system-near-real-time-wave-data",
+    "notes": "Near real time wave and sea surface temperature data for selected sites along the Queensland coast.   \r\n\r\nFor more information please refer to [www.qld.gov.au/waves](https://www.qld.gov.au/waves).  \r\n\r\nField names are;   \r\n**Hs** - Significant wave height, an average of the highest third of the waves in a record (26.6 minute recording period).   \r\n**Hmax** - The maximum wave height in the record.   \r\n**Tz** - The zero upcrossing wave period.   \r\n**Tp**- The peak energy wave period.   \r\n**Peak Direction**- Direction (related to true north) from which the peak period waves are coming from.   \r\n**SST** - Approximation of sea surface temperature.",
+    "num_resources": 1,
+    "num_tags": 29,
+    "organization": {
+      "id": "a3cdcdcb-201c-4360-9fa6-98e361c89279",
+      "name": "environment-tourism-science-and-innovation",
+      "title": "Environment, Tourism, Science and Innovation",
+      "type": "organization",
+      "description": " ",
+      "image_url": "",
+      "created": "2013-08-14T23:21:11.486654",
+      "is_organization": true,
+      "approval_status": "approved",
+      "state": "active"
+    },
+    "owner_org": "a3cdcdcb-201c-4360-9fa6-98e361c89279",
+    "private": false,
+    "schema_json": "",
+    "schema_upload": "",
+    "schema_url": "",
+    "security_classification": "PUBLIC",
+    "state": "active",
+    "title": "Coastal Data System \u2013 Near real time wave data",
+    "type": "dataset",
+    "update_frequency": "non-regular",
+    "url": "https://www.qld.gov.au/waves/",
+    "validation_options": {
+      "headers": 2,
+      "skip-checks": [
+        "non-matching-header"
+      ]
+    },
+    "version": "1",
+    "groups": [
+      {
+        "description": "",
+        "display_name": "Environment",
+        "id": "cf09d93a-a110-4a85-b95d-240170a5749f",
+        "image_display_url": "",
+        "name": "environment",
+        "title": "Environment"
+      },
+      {
+        "description": "",
+        "display_name": "Sciences",
+        "id": "5fb68ebf-aecb-4d22-b7a9-3995a5d382dd",
+        "image_display_url": "",
+        "name": "sciences",
+        "title": "Sciences"
+      }
+    ],
+    "resources": [
+      {
+        "align_default_schema": true,
+        "archiver": {
+          "resource_timestamp": "2022-06-20T00:00:15.690788",
+          "status_id": 0,
+          "is_broken": false,
+          "reason": "",
+          "url_redirected_to": null,
+          "cache_filepath": "archive/2b/2bbef99e-9974-49b9-a316-57402b00609c/wave-7dayopdata.csv",
+          "cache_url": "https://www.data.qld.gov.au/dataset/e9a4670f-4d1f-4c56-9855-dbcb103cebfd/resource/2bbef99e-9974-49b9-a316-57402b00609c/archive/wave-7dayopdata.csv",
+          "size": 1127748,
+          "mimetype": "text/csv",
+          "hash": "0b0b68e49923688249ddf7781486372599bc9eea",
+          "etag": null,
+          "last_modified": null,
+          "first_failure": null,
+          "last_success": "2026-07-28T11:34:03.723846",
+          "failure_count": 0,
+          "created": "2020-10-06T11:48:27.526988",
+          "updated": "2026-07-28T11:34:03.723846",
+          "status": "Archived successfully",
+          "is_broken_printable": "Downloaded OK"
+        },
+        "cache_last_updated": null,
+        "cache_url": null,
+        "ckan_url": "https://www.data.qld.gov.au",
+        "created": "2014-06-25T00:35:03.723031",
+        "datastore_active": true,
+        "datastore_contains_all_records_of_source_file": true,
+        "description": "Near real time wave and sea surface temperature data for selected sites along the Queensland coast.\r\n\r\nFor more information please refer to [www.qld.gov.au/waves](https://www.qld.gov.au/waves).\r\n\r\nField names are;  \r\n**Hs** - Significant wave height, an average of the highest third of the waves in a record (26.6 minute recording period).   \r\n**Hmax** - The maximum wave height in the record.  \r\n**Tz** - The zero upcrossing wave period.  \r\n**Tp**- The peak energy wave period.  \r\n**Dir_Tp TRUE**- Direction (related to true north) from which the peak period waves are coming from.  \r\n**SST** - Approximation of sea surface temperature.",
+        "format": "CSV",
+        "hash": "0a3744fa73a2bacbed87acdd178b82a4",
+        "id": "2bbef99e-9974-49b9-a316-57402b00609c",
+        "ignore_hash": false,
+        "last_modified": "2026-07-28T11:33:01.974034",
+        "metadata_modified": "2026-07-28T11:33:59.671220",
+        "mimetype": null,
+        "mimetype_inner": null,
+        "name": "Wave data",
+        "nature_of_change": "edit-resource-with-no-new-data",
+        "original_url": "https://apps.des.qld.gov.au/data-sets/waves/wave-7dayopdata.csv?timestamp=2026-07-28T21:33:01+10:00",
+        "package_id": "e9a4670f-4d1f-4c56-9855-dbcb103cebfd",
+        "position": 0,
+        "qa": {
+          "resource_timestamp": null,
+          "archival_timestamp": "2026-07-12T11:03:36.210162",
+          "openness_score": 4,
+          "openness_score_reason": "Content of file appeared to be format \"CSV\" which receives openness score: 4.",
+          "format": "CSV",
+          "created": "2020-10-06T05:14:28.309488",
+          "updated": "2026-07-12T11:03:40.164862"
+        },
+        "queue_name": "default2",
+        "resource_id": "2bbef99e-9974-49b9-a316-57402b00609c",
+        "resource_type": null,
+        "schema": {
+          "fields": [
+            {
+              "name": "Site",
+              "title": "Site",
+              "type": "string"
+            },
+            {
+              "name": "SiteNumber",
+              "title": "SiteNumber",
+              "type": "string"
+            },
+            {
+              "name": "Seconds",
+              "title": "Seconds",
+              "type": "number"
+            },
+            {
+              "format": "any",
+              "name": "DateTime",
+              "title": "DateTime",
+              "type": "datetime"
+            },
+            {
+              "name": "Latitude",
+              "title": "Latitude",
+              "type": "number"
+            },
+            {
+              "name": "Longitude",
+              "title": "Longitude",
+              "type": "number"
+            },
+            {
+              "name": "Hsig",
+              "title": "Hsig",
+              "type": "number"
+            },
+            {
+              "name": "Hmax",
+              "title": "Hmax",
+              "type": "number"
+            },
+            {
+              "name": "Tp",
+              "title": "Tp",
+              "type": "number"
+            },
+            {
+              "name": "Tz",
+              "title": "Tz",
+              "type": "number"
+            },
+            {
+              "name": "SST",
+              "title": "SST",
+              "type": "number"
+            },
+            {
+              "name": "Direction",
+              "title": "Hmax",
+              "type": "number"
+            },
+            {
+              "name": "Current Speed",
+              "title": "Current Speed",
+              "type": "number"
+            },
+            {
+              "name": "Current Direction",
+              "title": "Current Direction",
+              "type": "number"
+            }
+          ]
+        },
+        "set_url_type": false,
+        "size": "523 KiB",
+        "state": "active",
+        "task_created": "2026-07-28 11:33:02.343894",
+        "tries": 1,
+        "update_frequency": "hourly",
+        "update_frequency_days": "{\"monthly\": 30, \"quarterly\": 91, \"half-yearly\": 182, \"annually\": 365}",
+        "url": "https://apps.des.qld.gov.au/data-sets/waves/wave-7dayopdata.csv?timestamp=2026-07-28T21:33:01+10:00",
+        "url_type": "",
+        "validation_options": {
+          "headers": 2,
+          "skip-checks": [
+            "non-matching-header"
+          ]
+        },
+        "validation_status": "success",
+        "validation_timestamp": "2025-02-05T00:04:27.909505"
+      }
+    ],
+    "tags": [
+      {
+        "display_name": "Albatross Bay",
+        "id": "dd7e22d1-abdd-49e6-9bfa-811fceddb25a",
+        "name": "Albatross Bay",
+        "state": "active",
+        "vocabulary_id": null
+      },
+      {
+        "display_name": "Brisbane",
+        "id": "3851c625-6311-44c4-8e31-806c563d6a3d",
+        "name": "Brisbane",
+        "state": "active",
+        "vocabulary_id": null
+      },
+      {
+        "display_name": "Bundaberg",
+        "id": "48eb917d-f89e-40ae-8cb3-4f283035ddc4",
+        "name": "Bundaberg",
+        "state": "active",
+        "vocabulary_id": null
+      },
+      {
+        "display_name": "Cairns",
+        "id": "fd100a6a-a217-4a52-9323-9575f1f43f1b",
+        "name": "Cairns",
+        "state": "active",
+        "vocabulary_id": null
+      },
+      {
+        "display_name": "Caloundra",
+        "id": "c94f738b-7523-41db-998f-a6fcd11860e8",
+        "name": "Caloundra",
+        "state": "active",
+        "vocabulary_id": null
+      },
+      {
+        "display_name": "Emu Park",
+        "id": "edb171b9-f5ea-4801-b83d-ef689309b6ff",
+        "name": "Emu Park",
+        "state": "active",
+        "vocabulary_id": null
+      },
+      {
+        "display_name": "Gold Coast",
+        "id": "4553729b-ce63-403a-99ab-75c71b8805c4",
+        "name": "Gold Coast",
+        "state": "active",
+        "vocabulary_id": null
+      },
+      {
+        "display_name": "GovHack 2019",
+        "id": "16da9a7d-c14f-4c6f-b617-56b4607a5448",
+        "name": "GovHack 2019",
+        "state": "active",
+        "vocabulary_id": null
+      },
+      {
+        "display_name": "Hmax",
+        "id": "2ff89abb-ce0e-4657-a265-2a8fe921052c",
+        "name": "Hmax",
+        "state": "active",
+        "vocabulary_id": null
+      },
+      {
+        "display_name": "Hs",
+        "id": "177c85ca-2285-4287-8230-63b7d7f08e15",
+        "name": "Hs",
+        "state": "active",
+        "vocabulary_id": null
+      },
+      {
+        "display_name": "Mackay",
+        "id": "f765e59f-d5df-4896-a3ca-e065da1fa9b1",
+        "name": "Mackay",
+        "state": "active",
+        "vocabulary_id": null
+      },
+      {
+        "display_name": "Mooloolaba",
+        "id": "0e328906-0e5f-489a-ab00-a25161ede3e2",
+        "name": "Mooloolaba",
+        "state": "active",
+        "vocabulary_id": null
+      },
+      {
+        "display_name": "North Moreton",
+        "id": "105be8a5-3a74-4da2-bbe4-656e5bcc960c",
+        "name": "North Moreton",
+        "state": "active",
+        "vocabulary_id": null
+      },
+      {
+        "display_name": "Palm Beach",
+        "id": "658b2d3a-6eb7-478e-8a32-727cd67dee1e",
+        "name": "Palm Beach",
+        "state": "active",
+        "vocabulary_id": null
+      },
+      {
+        "display_name": "Queensland",
+        "id": "31c73cb6-00aa-40a1-8301-f59d223e171c",
+        "name": "Queensland",
+        "state": "active",
+        "vocabulary_id": null
+      },
+      {
+        "display_name": "The Science Sandpit",
+        "id": "a69bdaca-bcc8-4d33-b49c-315d8fe69971",
+        "name": "The Science Sandpit",
+        "state": "active",
+        "vocabulary_id": null
+      },
+      {
+        "display_name": "Townsville",
+        "id": "2129248f-1a6d-4416-9ead-855493251c30",
+        "name": "Townsville",
+        "state": "active",
+        "vocabulary_id": null
+      },
+      {
+        "display_name": "Tp",
+        "id": "c291d6b2-8599-4611-beeb-fb36d822b14f",
+        "name": "Tp",
+        "state": "active",
+        "vocabulary_id": null
+      },
+      {
+        "display_name": "Tweed River",
+        "id": "766032a9-bdfc-4bb5-b8a8-aff1b1935b71",
+        "name": "Tweed River",
+        "state": "active",
+        "vocabulary_id": null
+      },
+      {
+        "display_name": "Tz",
+        "id": "bd919153-34dd-4edb-ade2-3261ffd11402",
+        "name": "Tz",
+        "state": "active",
+        "vocabulary_id": null
+      },
+      {
+        "display_name": "WR Buoy",
+        "id": "94e47dcf-4ac7-43e7-bdd3-d155d7c39df5",
+        "name": "WR Buoy",
+        "state": "active",
+        "vocabulary_id": null
+      },
+      {
+        "display_name": "Wave",
+        "id": "537a33df-eaee-4a8c-9ac3-67e082ec52de",
+        "name": "Wave",
+        "state": "active",
+        "vocabulary_id": null
+      },
+      {
+        "display_name": "Wide Bay",
+        "id": "497371b0-2d9c-457a-a8a3-8410bc617f37",
+        "name": "Wide Bay",
+        "state": "active",
+        "vocabulary_id": null
+      },
+      {
+        "display_name": "beach",
+        "id": "366f3220-3631-4166-965c-5da41fe9d8eb",
+        "name": "beach",
+        "state": "active",
+        "vocabulary_id": null
+      },
+      {
+        "display_name": "buoy",
+        "id": "a1b08231-c06b-4deb-bb98-2e45e2ca05da",
+        "name": "buoy",
+        "state": "active",
+        "vocabulary_id": null
+      },
+      {
+        "display_name": "emergency",
+        "id": "0880fb0e-37dc-4d52-be5e-40dd3b844b06",
+        "name": "emergency",
+        "state": "active",
+        "vocabulary_id": null
+      },
+      {
+        "display_name": "science",
+        "id": "e1fb7883-3ebd-4f26-80ba-bab0ce4793d6",
+        "name": "science",
+        "state": "active",
+        "vocabulary_id": null
+      },
+      {
+        "display_name": "sea surface temperature",
+        "id": "ae6c5f19-1f8d-4f63-b976-a294e99f7483",
+        "name": "sea surface temperature",
+        "state": "active",
+        "vocabulary_id": null
+      },
+      {
+        "display_name": "waves",
+        "id": "8b1d68f4-5a00-4a64-b986-45570c64ca59",
+        "name": "waves",
+        "state": "active",
+        "vocabulary_id": null
+      }
+    ],
+    "relationships_as_subject": [],
+    "relationships_as_object": [],
+    "qa": {
+      "openness_score": 4,
+      "openness_score_reason": "Content of file appeared to be format \"CSV\" which receives openness score: 4.",
+      "updated": "2026-07-12T11:03:40.164862"
+    },
+    "archiver": {
+      "status_id": 0,
+      "status": "Archived successfully",
+      "reason": "",
+      "is_broken": false
+    }
+  }
+}

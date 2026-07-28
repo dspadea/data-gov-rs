@@ -1,0 +1,11 @@
+{
+  "help": "https://data.gov.ie/api/3/action/help_show?name=group_autocomplete",
+  "success": true,
+  "result": [
+    {
+      "id": "fb8c5612-b24a-4c40-9a14-ea642bb696eb",
+      "name": "haleandhearty",
+      "title": "Haleandhearty"
+    }
+  ]
+}

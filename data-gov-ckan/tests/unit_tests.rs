@@ -6,8 +6,63 @@
 //! ```bash
 //! cargo test -p data-gov-ckan --test unit_tests
 //! ```
+//!
+//! # Fixtures vs. hand-written bodies
+//!
+//! Where a wiremock response body needs to demonstrate real deserialization
+//! (does a genuine CKAN payload parse correctly?), it is loaded from
+//! `tests/fixtures/` via `include_str!` -- see `package_search_builds_correct_
+//! url_and_parses_response`, `package_show_returns_full_dataset`,
+//! `organization_list_with_sort_and_limit`, and the two `http_*` structured-
+//! error tests. A hand-written body encodes the author's assumption about the
+//! shape, and then the test only confirms that assumption; this crate's
+//! standing example is #63 and #62, where every pre-existing hand-written
+//! body used a UUID-shaped id and a small integer size because that is what
+//! the (buggy) models expected.
+//!
+//! The bodies that remain hand-written all fall into shapes a live capture
+//! cannot produce on demand, not shapes nobody thought to capture:
+//!
+//! - **Boundaries a real server will not spontaneously exhibit**: `rows=0`,
+//!   an offset past the total, a query with special characters to URL-encode.
+//! - **Malformed or absent data**: a non-JSON body, a `result` that is a bare
+//!   string instead of an object, a `success: false` response with no
+//!   `error` field at all. These test failure handling, so the failure has
+//!   to be constructed.
+//! - **A `success: false` combined with HTTP 200**: both captured error
+//!   fixtures (`package_show_not_found.json`,
+//!   `package_show_validation_error.json`) came back over a non-2xx status;
+//!   no live capture in this branch's set exercises the success:false path
+//!   at HTTP 200, so those tests stay synthetic.
+//! - **Genuinely flat, low-risk response shapes**: `group_list`,
+//!   `tag_autocomplete`, and `resource_format_autocomplete` return a bare
+//!   array of strings -- no field at all for a deserialization bug to hide
+//!   behind. `dataset_autocomplete`'s hand-written body is also low-risk:
+//!   `DatasetAutocomplete.id` is `Option<String>`, but `package_autocomplete`
+//!   never actually sends one on a live portal (verified against
+//!   data.gov.ie), so the field being absent from the test body matches the
+//!   field being absent on the wire.
+//!
+//!   An earlier version of this note extended that same claim -- "no id ...
+//!   field" -- to `organization_autocomplete` and `group_autocomplete`, and
+//!   that was wrong: `OrganizationAutocomplete` and `GroupAutocomplete` both
+//!   declare `id: Option<String>`, and both endpoints do send a real one on
+//!   data.gov.ie (a non-UUID slug such as `central-statistics-office` for
+//!   organizations, CKAN's default UUID for its one group). The hand-written
+//!   body below for `organization_autocomplete_parses_response` omits `id`
+//!   entirely, and `group_autocomplete` had no wiremock test at all -- so
+//!   neither model's `id` field was exercised anywhere (#102).
+//!   `organization_autocomplete.json` and `group_autocomplete.json`,
+//!   captured from data.gov.ie, now drive
+//!   `organization_autocomplete_returns_a_real_slug_id` and
+//!   `group_autocomplete_returns_a_real_id` in `fixture_parity_tests.rs`.
+//!   The wiremock test below stays focused on request shaping, as before.
+//! - **Client-side behavior with no response body to speak of**: the
+//!   credential, user-agent, Debug-redaction, and timeout tests below
+//!   configure a `Configuration` and assert what the *client* sends or
+//!   prints, not how it parses a response.
 
-use data_gov_ckan::{CkanClient, CkanError, Configuration};
+use data_gov_ckan::{ApiKey, CkanClient, CkanError, Configuration};
 use serde_json::json;
 use std::sync::Arc;
 use wiremock::matchers::{method, path, query_param};
@@ -18,11 +73,7 @@ fn test_client(base_url: &str) -> CkanClient {
     let config = Arc::new(Configuration {
         base_path: base_url.to_string(),
         user_agent: Some("test/1.0".to_string()),
-        client: reqwest::Client::new(),
-        basic_auth: None,
-        oauth_access_token: None,
-        bearer_access_token: None,
-        api_key: None,
+        ..Configuration::default()
     });
     CkanClient::new(config)
 }
@@ -31,28 +82,22 @@ fn test_client(base_url: &str) -> CkanClient {
 // package_search
 // ---------------------------------------------------------------------------
 
+/// Response body is a real capture (see `fixture_parity_tests.rs` for the
+/// deserialization-focused assertions on the same file). The query
+/// parameters this test sends (`q=climate&rows=5&start=0`) are independent
+/// of what the fixture was captured with -- this test is about request
+/// shaping, not about the fixture's own provenance.
 #[tokio::test]
 async fn package_search_builds_correct_url_and_parses_response() {
     let server = MockServer::start().await;
+    let body = include_str!("fixtures/package_search.json");
 
     Mock::given(method("GET"))
         .and(path("/action/package_search"))
         .and(query_param("q", "climate"))
         .and(query_param("rows", "5"))
         .and(query_param("start", "0"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "help": "", "success": true,
-            "result": {
-                "count": 42,
-                "results": [
-                    {
-                        "name": "climate-dataset-1",
-                        "title": "Climate Dataset 1",
-                        "id": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
-                    }
-                ]
-            }
-        })))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(body, "application/json"))
         .expect(1)
         .mount(&server)
         .await;
@@ -63,10 +108,14 @@ async fn package_search_builds_correct_url_and_parses_response() {
         .await
         .expect("should succeed");
 
-    assert_eq!(result.count, Some(42));
+    assert_eq!(result.count, Some(1));
     let results = result.results.expect("should have results");
     assert_eq!(results.len(), 1);
-    assert_eq!(results[0].name, "climate-dataset-1");
+    assert_eq!(results[0].name, "432527ab-7aac-45b5-81d6-7597107a7013");
+    assert_eq!(
+        results[0].title.as_deref(),
+        Some("Proactive Disclosure - Grants and Contributions")
+    );
 }
 
 #[tokio::test]
@@ -183,29 +232,19 @@ async fn package_search_with_offset_past_total_parses_empty_results_without_erro
 // package_show
 // ---------------------------------------------------------------------------
 
+/// Response body is a real capture: the same open.canada.ca dataset used by
+/// `fixture_parity_tests.rs`'s #62 acceptance test, so this exercises
+/// `package_show` end to end (client -> deserialization) against a record
+/// that includes a resource over i32::MAX bytes.
 #[tokio::test]
 async fn package_show_returns_full_dataset() {
     let server = MockServer::start().await;
+    let body = include_str!("fixtures/package_show.json");
 
     Mock::given(method("GET"))
         .and(path("/action/package_show"))
         .and(query_param("id", "my-dataset"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "help": "", "success": true,
-            "result": {
-                "name": "my-dataset",
-                "title": "My Dataset",
-                "id": "11111111-2222-3333-4444-555555555555",
-                "notes": "A description",
-                "resources": [
-                    {
-                        "name": "data.csv",
-                        "format": "CSV",
-                        "url": "https://example.com/data.csv"
-                    }
-                ]
-            }
-        })))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(body, "application/json"))
         .expect(1)
         .mount(&server)
         .await;
@@ -216,13 +255,20 @@ async fn package_show_returns_full_dataset() {
         .await
         .expect("should succeed");
 
-    assert_eq!(pkg.name, "my-dataset");
-    assert_eq!(pkg.title.as_deref(), Some("My Dataset"));
-    assert_eq!(pkg.notes.as_deref(), Some("A description"));
+    assert_eq!(pkg.name, "432527ab-7aac-45b5-81d6-7597107a7013");
+    assert_eq!(
+        pkg.title.as_deref(),
+        Some("Proactive Disclosure - Grants and Contributions")
+    );
+    assert!(pkg.notes.is_some());
 
     let resources = pkg.resources.expect("should have resources");
-    assert_eq!(resources.len(), 1);
-    assert_eq!(resources[0].format.as_deref(), Some("CSV"));
+    assert_eq!(resources.len(), 6);
+    assert!(resources.iter().any(|r| r.format.as_deref() == Some("CSV")));
+    assert!(
+        resources.iter().any(|r| r.size == Some(2_290_761_766)),
+        "the over-i32::MAX resource must survive deserialization"
+    );
 }
 
 #[tokio::test]
@@ -254,18 +300,17 @@ async fn package_show_url_encodes_special_characters() {
 // organization_list
 // ---------------------------------------------------------------------------
 
+/// Response body is a real capture from open.canada.ca.
 #[tokio::test]
 async fn organization_list_with_sort_and_limit() {
     let server = MockServer::start().await;
+    let body = include_str!("fixtures/organization_list.json");
 
     Mock::given(method("GET"))
         .and(path("/action/organization_list"))
         .and(query_param("sort", "name"))
         .and(query_param("limit", "3"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "help": "", "success": true,
-            "result": ["epa-gov", "nasa-gov", "usda-gov"]
-        })))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(body, "application/json"))
         .expect(1)
         .mount(&server)
         .await;
@@ -276,7 +321,10 @@ async fn organization_list_with_sort_and_limit() {
         .await
         .expect("should succeed");
 
-    assert_eq!(orgs, vec!["epa-gov", "nasa-gov", "usda-gov"]);
+    assert_eq!(
+        orgs,
+        vec!["16342451-canada-inc", "2canl", "3can", "3nih", "3nii"]
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -430,6 +478,10 @@ async fn resource_format_autocomplete_returns_formats() {
 // Error handling
 // ---------------------------------------------------------------------------
 
+// `http_404_returns_api_error_with_status` covers the fallback path
+// deliberately: a plain-text, non-JSON error body (a stock web server or
+// proxy error page rather than CKAN's own envelope) has no structure to
+// parse, so the raw text is the best message available.
 #[tokio::test]
 async fn http_404_returns_api_error_with_status() {
     let server = MockServer::start().await;
@@ -479,6 +531,77 @@ async fn http_500_returns_api_error() {
     }
 }
 
+/// Real capture: open.canada.ca's 404 body for `package_show`. This is
+/// CKAN's documented error envelope (`ErrorResponse` / `ErrorResponseError`
+/// -- `__type` and `message`), which the crate ships and never referenced.
+/// `ApiError.message` must be the parsed "Not found", not the raw envelope.
+#[tokio::test]
+async fn http_error_extracts_message_from_ckans_structured_error_envelope() {
+    let server = MockServer::start().await;
+    let body = include_str!("fixtures/package_show_not_found.json");
+
+    Mock::given(method("GET"))
+        .and(path("/action/package_show"))
+        .respond_with(ResponseTemplate::new(404).set_body_raw(body, "application/json"))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let client = test_client(&server.uri());
+    let err = client
+        .package_show("nonexistent")
+        .await
+        .expect_err("should fail");
+
+    match err {
+        CkanError::ApiError { status, message } => {
+            assert_eq!(status, 404);
+            assert_eq!(message, "Not found");
+        }
+        other => panic!("expected ApiError, got: {:?}", other),
+    }
+}
+
+/// Real capture: open.canada.ca's 409 body for `package_show` called with no
+/// `id`. CKAN's validation-error shape replaces the documented `message`
+/// field with per-field arrays, so it does not fit `ErrorResponseError`
+/// (whose `message` is required). The message must still surface that
+/// structure -- rendering the raw `error` object -- rather than discarding it
+/// or falling back to a generic literal.
+#[tokio::test]
+async fn http_validation_error_renders_the_raw_error_object_as_message() {
+    let server = MockServer::start().await;
+    let body = include_str!("fixtures/package_show_validation_error.json");
+
+    Mock::given(method("GET"))
+        .and(path("/action/package_show"))
+        .respond_with(ResponseTemplate::new(409).set_body_raw(body, "application/json"))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let client = test_client(&server.uri());
+    let err = client
+        .package_show("nonexistent")
+        .await
+        .expect_err("should fail");
+
+    match err {
+        CkanError::ApiError { status, message } => {
+            assert_eq!(status, 409);
+            assert!(message.contains("name_or_id"), "message: {message}");
+            assert!(message.contains("Missing value"), "message: {message}");
+            // Distinguishes "parsed just the error object" from "fell back to
+            // the whole raw body", which also contains those substrings.
+            assert!(
+                !message.contains("\"success\""),
+                "message should be the error object alone, not the whole envelope: {message}"
+            );
+        }
+        other => panic!("expected ApiError, got: {:?}", other),
+    }
+}
+
 #[tokio::test]
 async fn success_false_returns_api_error() {
     let server = MockServer::start().await;
@@ -500,7 +623,81 @@ async fn success_false_returns_api_error() {
         .expect_err("should fail");
 
     match err {
-        CkanError::ApiError { status: 400, .. } => {}
+        CkanError::ApiError {
+            status: 400,
+            message,
+        } => {
+            assert_eq!(message, "something went wrong");
+        }
+        other => panic!("expected ApiError with status 400, got: {:?}", other),
+    }
+}
+
+/// The HTTP-200-with-`success:false` path, CKAN's validation-error shape.
+/// `ActionResponse` did not declare an `error` field at all, so serde simply
+/// dropped it during deserialization and the whole object was lost -- not
+/// just left unparsed, as with the non-2xx path.
+#[tokio::test]
+async fn success_false_with_validation_style_error_renders_the_raw_error_object() {
+    let server = MockServer::start().await;
+
+    Mock::given(method("GET"))
+        .and(path("/action/package_search"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "help": "", "success": false, "result": null,
+            "error": { "name_or_id": ["Missing value"], "__type": "Validation Error" }
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let client = test_client(&server.uri());
+    let err = client
+        .package_search(Some("test"), None, None, None)
+        .await
+        .expect_err("should fail");
+
+    match err {
+        CkanError::ApiError {
+            status: 400,
+            message,
+        } => {
+            assert!(message.contains("name_or_id"), "message: {message}");
+            assert!(message.contains("Missing value"), "message: {message}");
+        }
+        other => panic!("expected ApiError with status 400, got: {:?}", other),
+    }
+}
+
+/// When CKAN sends `success: false` with no `error` field at all, there is
+/// genuinely nothing to parse. The literal fallback message is correct here,
+/// not a symptom of the bug the other tests in this section cover.
+#[tokio::test]
+async fn success_false_with_no_error_field_uses_fallback_message() {
+    let server = MockServer::start().await;
+
+    Mock::given(method("GET"))
+        .and(path("/action/package_search"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "help": "", "success": false, "result": null
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let client = test_client(&server.uri());
+    let err = client
+        .package_search(Some("test"), None, None, None)
+        .await
+        .expect_err("should fail");
+
+    match err {
+        CkanError::ApiError {
+            status: 400,
+            message,
+        } => {
+            assert_eq!(message, "CKAN API reported failure");
+        }
         other => panic!("expected ApiError with status 400, got: {:?}", other),
     }
 }
@@ -557,8 +754,15 @@ async fn malformed_result_returns_parse_error() {
     );
 }
 
+/// `RequestError` is documented as covering connection failures, timeouts,
+/// and DNS resolution -- transport, not content. A body that arrived intact
+/// but is not valid JSON is a decode failure, so it must be `ParseError`, the
+/// variant documented as covering exactly that. Before the fix, `call_action`
+/// deserialized straight from the `reqwest::Response` in one step, so a
+/// malformed body and a dropped connection produced the same variant and
+/// were indistinguishable to a caller matching on it.
 #[tokio::test]
-async fn malformed_json_body_returns_request_error() {
+async fn malformed_json_body_returns_parse_error() {
     let server = MockServer::start().await;
 
     Mock::given(method("GET"))
@@ -575,10 +779,70 @@ async fn malformed_json_body_returns_request_error() {
         .expect_err("should fail");
 
     assert!(
-        matches!(err, CkanError::RequestError(_)),
-        "expected RequestError, got: {:?}",
+        matches!(err, CkanError::ParseError(_)),
+        "expected ParseError, got: {:?}",
         err
     );
+}
+
+/// Reproduces the class of bug #72.2 was filed for: a connection that drops
+/// mid-body on a *non*-2xx response must surface as `RequestError` -- the
+/// variant documented as covering "connection failures, timeouts... HTTP
+/// protocol errors" -- not `ApiError`, which is for a status CKAN itself
+/// reported. Before the fix, `call_action`'s non-2xx branch read the body
+/// with `.text().await.unwrap_or_else(|_| "Unknown error".to_string())`,
+/// which discards the real transport error and reports the literal string
+/// "Unknown error" as though CKAN had said so -- indistinguishable, to a
+/// caller retrying on `RequestError`, from an actual permanent 500.
+///
+/// wiremock cannot reproduce this: it always serves a well-formed response.
+/// A raw TCP listener sends `HTTP/1.1 500` with `Content-Length: 1000`,
+/// writes 9 bytes of body, then closes -- the connection drops with 991
+/// bytes still promised and never sent.
+#[tokio::test]
+async fn a_connection_dropped_mid_body_on_a_non_2xx_status_is_a_request_error() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
+
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind ephemeral port");
+    let addr = listener.local_addr().expect("read local addr");
+
+    tokio::spawn(async move {
+        let (mut socket, _) = listener.accept().await.expect("accept connection");
+        // Drain the request so reqwest has genuinely sent it before we
+        // respond; the exact bytes read don't matter.
+        let mut buf = [0u8; 4096];
+        let _ = socket.read(&mut buf).await;
+
+        socket
+            .write_all(b"HTTP/1.1 500 Internal Server Error\r\nContent-Length: 1000\r\n\r\n")
+            .await
+            .expect("write status line and headers");
+        socket
+            .write_all(b"123456789")
+            .await
+            .expect("write partial body");
+        // Dropping `socket` here closes the connection with 991 of the
+        // promised 1000 bytes never sent.
+    });
+
+    let config = Arc::new(Configuration {
+        base_path: format!("http://{addr}"),
+        ..Configuration::default()
+    });
+    let client = CkanClient::new(config);
+
+    let result = client.package_search(None, None, None, None).await;
+
+    match result {
+        Err(CkanError::RequestError(_)) => {}
+        other => panic!(
+            "a connection dropped mid-body on a non-2xx status must be \
+             RequestError, not the API's own error, got: {other:?}"
+        ),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -613,13 +877,177 @@ fn ckan_error_implements_std_error() {
 }
 
 // ---------------------------------------------------------------------------
+// Credentials and user agent (#56)
+// ---------------------------------------------------------------------------
+//
+// `Configuration`'s credential and user-agent fields were accepted but never
+// read: `call_action` built every request from `client.get(&url).query(...)`
+// alone. A caller who believed a request was authenticated sent it anonymous,
+// with nothing in the response distinguishing "not authorized" from
+// "credential never left the client".
+
+async fn mount_ok_package_search(server: &MockServer) {
+    Mock::given(method("GET"))
+        .and(path("/action/package_search"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "help": "", "success": true,
+            "result": { "count": 0, "results": [] }
+        })))
+        .mount(server)
+        .await;
+}
+
+#[tokio::test]
+async fn configured_api_key_is_sent_as_authorization_header() {
+    let server = MockServer::start().await;
+    mount_ok_package_search(&server).await;
+
+    let config = Arc::new(Configuration {
+        base_path: server.uri(),
+        api_key: Some(ApiKey {
+            prefix: None,
+            key: "my-secret-key".to_string(),
+        }),
+        ..Configuration::default()
+    });
+    CkanClient::new(config)
+        .package_search(None, None, None, None)
+        .await
+        .expect("should succeed");
+
+    let requests = server
+        .received_requests()
+        .await
+        .expect("request recording must be enabled");
+    assert_eq!(requests.len(), 1);
+    let auth = requests[0]
+        .headers
+        .get("authorization")
+        .expect("Authorization header missing");
+    assert_eq!(auth.to_str().unwrap(), "my-secret-key");
+}
+
+#[tokio::test]
+async fn configured_api_key_with_prefix_is_sent_as_authorization_header() {
+    let server = MockServer::start().await;
+    mount_ok_package_search(&server).await;
+
+    let config = Arc::new(Configuration {
+        base_path: server.uri(),
+        api_key: Some(ApiKey {
+            prefix: Some("Token".to_string()),
+            key: "my-secret-key".to_string(),
+        }),
+        ..Configuration::default()
+    });
+    CkanClient::new(config)
+        .package_search(None, None, None, None)
+        .await
+        .expect("should succeed");
+
+    let requests = server.received_requests().await.unwrap();
+    let auth = requests[0].headers.get("authorization").unwrap();
+    assert_eq!(auth.to_str().unwrap(), "Token my-secret-key");
+}
+
+#[tokio::test]
+async fn configured_bearer_token_is_sent_as_authorization_header() {
+    let server = MockServer::start().await;
+    mount_ok_package_search(&server).await;
+
+    let config = Arc::new(Configuration {
+        base_path: server.uri(),
+        bearer_access_token: Some("bearer-token-value".to_string()),
+        ..Configuration::default()
+    });
+    CkanClient::new(config)
+        .package_search(None, None, None, None)
+        .await
+        .expect("should succeed");
+
+    let requests = server.received_requests().await.unwrap();
+    let auth = requests[0].headers.get("authorization").unwrap();
+    assert_eq!(auth.to_str().unwrap(), "Bearer bearer-token-value");
+}
+
+#[tokio::test]
+async fn configured_basic_auth_is_sent_as_authorization_header() {
+    let server = MockServer::start().await;
+    mount_ok_package_search(&server).await;
+
+    let config = Arc::new(Configuration {
+        base_path: server.uri(),
+        basic_auth: Some(("alice".to_string(), Some("hunter2".to_string()))),
+        ..Configuration::default()
+    });
+    CkanClient::new(config)
+        .package_search(None, None, None, None)
+        .await
+        .expect("should succeed");
+
+    let requests = server.received_requests().await.unwrap();
+    let auth = requests[0].headers.get("authorization").unwrap();
+    // "Basic " + base64("alice:hunter2")
+    assert_eq!(auth.to_str().unwrap(), "Basic YWxpY2U6aHVudGVyMg==");
+}
+
+#[tokio::test]
+async fn no_credential_configured_sends_no_authorization_header() {
+    let server = MockServer::start().await;
+    mount_ok_package_search(&server).await;
+
+    let config = Arc::new(Configuration {
+        base_path: server.uri(),
+        ..Configuration::default()
+    });
+    CkanClient::new(config)
+        .package_search(None, None, None, None)
+        .await
+        .expect("should succeed");
+
+    let requests = server.received_requests().await.unwrap();
+    assert!(
+        requests[0].headers.get("authorization").is_none(),
+        "no credential was configured; the client must not send one anyway"
+    );
+}
+
+#[tokio::test]
+async fn configured_user_agent_is_sent_on_every_request() {
+    let server = MockServer::start().await;
+    mount_ok_package_search(&server).await;
+
+    let config = Arc::new(Configuration {
+        base_path: server.uri(),
+        user_agent: Some("my-app/9.9".to_string()),
+        ..Configuration::default()
+    });
+    CkanClient::new(config)
+        .package_search(None, None, None, None)
+        .await
+        .expect("should succeed");
+
+    let requests = server.received_requests().await.unwrap();
+    let ua = requests[0]
+        .headers
+        .get("user-agent")
+        .expect("User-Agent header missing");
+    assert_eq!(ua.to_str().unwrap(), "my-app/9.9");
+}
+
+// ---------------------------------------------------------------------------
 // Configuration
 // ---------------------------------------------------------------------------
 
 #[test]
 fn default_configuration_has_expected_values() {
     let config = Configuration::default();
-    assert_eq!(config.base_path, "https://catalog.data.gov/api/3");
+    // No CKAN portal is this crate's "default" one: it serves any compliant
+    // deployment, so defaulting to one government's live service would send
+    // that operator traffic it never consented to. `.invalid` is reserved by
+    // RFC 2606 and never resolves (#72.3). Point Configuration::base_path at
+    // your own instance for any real use.
+    assert_eq!(config.base_path, "https://ckan.example.invalid/api/3");
     let expected_ua = concat!("data-gov-rs/", env!("CARGO_PKG_VERSION"));
     assert_eq!(config.user_agent.as_deref(), Some(expected_ua));
     assert!(config.api_key.is_none());
@@ -637,4 +1065,163 @@ fn client_debug_shows_base_path() {
     let client = CkanClient::new(config);
     let debug = format!("{:?}", client);
     assert!(debug.contains("example.com"));
+}
+
+// A `Configuration` is plausibly logged whole (`tracing::debug!(?config)`),
+// not just wrapped in `CkanClient`, so `Debug` on `Configuration` itself must
+// never print a credential in the clear.
+
+#[test]
+fn configuration_debug_redacts_api_key() {
+    let config = Configuration {
+        api_key: Some(ApiKey {
+            prefix: None,
+            key: "super-secret-api-key".to_string(),
+        }),
+        ..Configuration::default()
+    };
+    let debug = format!("{:?}", config);
+    assert!(
+        !debug.contains("super-secret-api-key"),
+        "API key leaked in Configuration Debug output: {debug}"
+    );
+}
+
+#[test]
+fn configuration_debug_redacts_bearer_token() {
+    let config = Configuration {
+        bearer_access_token: Some("super-secret-bearer-token".to_string()),
+        ..Configuration::default()
+    };
+    let debug = format!("{:?}", config);
+    assert!(
+        !debug.contains("super-secret-bearer-token"),
+        "bearer token leaked in Configuration Debug output: {debug}"
+    );
+}
+
+#[test]
+fn configuration_debug_redacts_oauth_access_token() {
+    let config = Configuration {
+        oauth_access_token: Some("super-secret-oauth-token".to_string()),
+        ..Configuration::default()
+    };
+    let debug = format!("{:?}", config);
+    assert!(
+        !debug.contains("super-secret-oauth-token"),
+        "OAuth token leaked in Configuration Debug output: {debug}"
+    );
+}
+
+#[test]
+fn configuration_debug_redacts_basic_auth_password() {
+    let config = Configuration {
+        basic_auth: Some((
+            "alice".to_string(),
+            Some("super-secret-password".to_string()),
+        )),
+        ..Configuration::default()
+    };
+    let debug = format!("{:?}", config);
+    assert!(
+        !debug.contains("super-secret-password"),
+        "basic auth password leaked in Configuration Debug output: {debug}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Timeouts (#48)
+// ---------------------------------------------------------------------------
+//
+// `Configuration::default()` built its client with a bare `reqwest::Client::
+// new()`: no connect timeout, no overall request timeout. A host that
+// accepts the TCP/TLS connection but never sends response headers -- a
+// partial outage, a blackholing middlebox -- hangs the caller forever. The
+// MCP server's run loop awaits each request to completion before reading the
+// next line, so one stalled call blocks every request after it, including
+// `shutdown`.
+
+#[tokio::test]
+async fn a_request_against_a_non_responding_endpoint_errors_within_the_configured_timeout() {
+    let server = MockServer::start().await;
+
+    // Far longer than the client's configured timeout below, so a client
+    // that ignores its own timeout would make this test hang instead of
+    // fail -- a stronger signal than a merely-slow response would give.
+    Mock::given(method("GET"))
+        .and(path("/action/package_search"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(json!({"help": "", "success": true, "result": {}}))
+                .set_delay(std::time::Duration::from_secs(10)),
+        )
+        .mount(&server)
+        .await;
+
+    let short_timeout_client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_millis(100))
+        .build()
+        .expect("client with just a timeout must build");
+    let config = Arc::new(Configuration {
+        base_path: server.uri(),
+        client: short_timeout_client,
+        ..Configuration::default()
+    });
+
+    let started = std::time::Instant::now();
+    let result = CkanClient::new(config)
+        .package_search(None, None, None, None)
+        .await;
+    let elapsed = started.elapsed();
+
+    assert!(
+        result.is_err(),
+        "a request against a server that never responds within the timeout must error"
+    );
+    assert!(
+        elapsed < std::time::Duration::from_secs(2),
+        "expected the 100ms client timeout to fire well before the mock's \
+         10s delay; took {elapsed:?}"
+    );
+}
+
+/// `Configuration` has no public `connect_timeout` / `timeout` fields (#48):
+/// a `reqwest::Client` bakes its timeouts in at construction, so a field
+/// that did not rebuild `client` would silently stop applying, the same way
+/// the two now-removed fields did. `with_timeouts` is the replacement, and
+/// this is its behavioural proof -- a mock delays 300ms; the client is built
+/// with a 50ms timeout, so a client that actually honours it errors well
+/// under 300ms.
+#[tokio::test]
+async fn with_timeouts_bounds_a_call_to_the_given_duration() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/action/package_search"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(json!({"help": "", "success": true, "result": {}}))
+                .set_delay(std::time::Duration::from_millis(300)),
+        )
+        .mount(&server)
+        .await;
+
+    let config = Arc::new(Configuration {
+        base_path: server.uri(),
+        ..Configuration::with_timeouts(
+            std::time::Duration::from_millis(50),
+            std::time::Duration::from_millis(50),
+        )
+    });
+
+    let started = std::time::Instant::now();
+    let result = CkanClient::new(config)
+        .package_search(None, None, None, None)
+        .await;
+    let elapsed = started.elapsed();
+
+    assert!(
+        result.is_err(),
+        "a 50ms with_timeouts client must bound a 300ms delayed response, \
+         but the call returned {result:?} after {elapsed:?}"
+    );
 }

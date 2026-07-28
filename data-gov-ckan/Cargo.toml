@@ -13,10 +13,6 @@ homepage = "https://github.com/dspadea/data-gov-rs"
 [dependencies]
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "^1.0"
-serde_repr = "^0.1"
-url = "^2.5"
-uuid = { version = "^1.8", features = ["serde", "v4"] }
-async-trait = "^0.1"
 reqwest = { version = "0.13.2", default-features = false, features = ["json", "multipart", "query"] }
 
 [dev-dependencies]
