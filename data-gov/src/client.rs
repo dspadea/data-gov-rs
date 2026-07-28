@@ -57,7 +57,32 @@ impl DataGovClient {
     }
 
     /// Create a new DataGov client with custom configuration.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DataGovError::ConfigError`] when `max_concurrent_downloads`
+    /// or `download_timeout_secs` is zero. Both are `pub` fields on a struct
+    /// that is not `#[non_exhaustive]`, so a struct literal can reach either
+    /// one without the builder that would otherwise clamp it -- and neither
+    /// zero has a useful meaning: a zero-permit semaphore never closes
+    /// (#73), and a zero-second connect/read timeout fails every download
+    /// immediately, in a way that reads as a network problem rather than a
+    /// configuration one (#107). Rejecting here, rather than clamping, means
+    /// the caller finds out at construction instead of at the first silent
+    /// failure.
     pub fn with_config(config: DataGovConfig) -> Result<Self> {
+        if config.max_concurrent_downloads == 0 {
+            return Err(DataGovError::config_error(
+                "max_concurrent_downloads must be at least 1, got 0",
+            ));
+        }
+        if config.download_timeout_secs == 0 {
+            return Err(DataGovError::config_error(
+                "download_timeout_secs must be at least 1, got 0 (a zero-second \
+                 connect/read timeout would fail every download immediately)",
+            ));
+        }
+
         let catalog = CatalogClient::new(config.catalog_config.clone());
 
         let allow_private = config.allow_private_network_downloads;
@@ -433,13 +458,14 @@ impl DataGovClient {
             .map(|p| p.to_path_buf())
             .unwrap_or_else(|| self.config.get_base_download_dir());
 
-        // Clamped here rather than only in `with_max_concurrent_downloads`,
-        // because the field is `pub` and a struct literal reaches it without
-        // passing through the builder. A zero-permit semaphore is never
-        // closed, so `acquire()` would stay pending forever.
-        let semaphore = Arc::new(tokio::sync::Semaphore::new(
-            self.config.max_concurrent_downloads.max(1),
-        ));
+        // `with_config` already refuses to build a client whose
+        // `max_concurrent_downloads` is zero (#107), but this stays a
+        // defense-in-depth backstop: a config assembled some other way must
+        // still not produce a zero-permit semaphore, which is never closed
+        // and would leave `acquire()` pending forever.
+        let semaphore = Arc::new(tokio::sync::Semaphore::new(Self::download_permits(
+            self.config.max_concurrent_downloads,
+        )));
 
         let status_reporter = self.reporter();
         let allow_private_network = self.config.allow_private_network_downloads;
@@ -518,6 +544,17 @@ impl DataGovClient {
 
     fn reporter(&self) -> Option<Arc<dyn StatusReporter + Send + Sync>> {
         self.config.status_reporter.clone()
+    }
+
+    /// Number of concurrent download permits to allocate for `max`.
+    ///
+    /// Never zero. `with_config` already rejects a zero
+    /// `max_concurrent_downloads` before a `DataGovClient` can exist
+    /// (#107), but this stays a defense-in-depth backstop for a config
+    /// assembled some other way: `Semaphore::new(0)` is never closed, so
+    /// `acquire()` would stay pending forever with no error (#73).
+    fn download_permits(max: usize) -> usize {
+        max.max(1)
     }
 
     async fn perform_download(
