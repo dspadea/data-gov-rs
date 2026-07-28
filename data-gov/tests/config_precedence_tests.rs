@@ -420,6 +420,21 @@ fn user_agent_default_applies_when_nothing_is_set() {
 // The chain itself, across the whole set of settings
 // ---------------------------------------------------------------------------
 
+/// The rendered value each entry in [`flags_set_everything`] must resolve to.
+///
+/// Kept next to the flags rather than derived from the result, so a resolver
+/// that reported the right *source* against the wrong *value* is caught. That
+/// is not hypothetical: a mutation that swapped the flag and environment
+/// arguments of the layer picker left every source reading `flag` while every
+/// value came from the environment, and a source-only assertion passed.
+const FLAG_VALUES: [(SettingKey, &str); 5] = [
+    (SettingKey::DownloadDir, "/from/flag"),
+    (SettingKey::BaseUrl, "https://flag.example.com"),
+    (SettingKey::MaxConcurrentDownloads, "33"),
+    (SettingKey::DownloadTimeoutSecs, "333"),
+    (SettingKey::UserAgent, "from-flag/1.0"),
+];
+
 /// "A setting a flag cannot override is a bug" (CLAUDE.md, "Configuration and
 /// file locations"). Checking the whole set means a sixth setting added
 /// without a flag layer fails here, rather than waiting for somebody to
@@ -433,11 +448,22 @@ fn a_flag_overrides_every_setting() {
         .resolve()
         .expect("resolution must succeed");
 
-    for key in SettingKey::ALL {
+    assert_eq!(
+        FLAG_VALUES.len(),
+        SettingKey::ALL.len(),
+        "every setting needs an expected flag value here"
+    );
+
+    for (key, expected) in FLAG_VALUES {
+        let setting = resolved.setting(key);
         assert_eq!(
-            resolved.source_of(key),
+            setting.source,
             SettingSource::Flag,
             "{key} must be overridable by a command-line flag"
+        );
+        assert_eq!(
+            setting.value, expected,
+            "{key} must carry the value the flag set, not merely be labelled as if it did"
         );
     }
 }
