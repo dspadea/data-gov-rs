@@ -1,1 +1,393 @@
-{"after":"Wzc5LjI0NDcxLDIxLCIxNzA3NjMzYi03OGE0LTQ0OWMtOTFmMy1iNzRiMGNmM2MwY2IiXQ==","results":[{"_score":82.62245,"_sort":[82.62245,3,"4bcf8ab6-9f75-4987-a8b5-6e35ee39822e"],"dcat":{"@type":"dcat:Dataset","accessLevel":"public","contactPoint":{"@type":"vcard:Contact","fn":"NYC OpenData","hasEmail":"mailto:no-reply@data.cityofnewyork.us"},"description":"This dataset rates all projects in the capital budget with over $50,000 with their climate alignment and categorizes investments that are related to climate. Amounts are in thousands. This dataset will be updated once a year during the Executive Budget.\n\nThis data can be used to create visualizations similar to the charts featured in the Climate Investments section of the FY25 New York City Climate Budgeting publication (https://www.nyc.gov/assets/omb/downloads/pdf/exec24-nyccb.pdf).\n\nYou can find the complete collection of Climate Budget data by <a href=\"https://data.cityofnewyork.us/browse?Data-Collection_Data-Collection=Climate+Budgeting\" rel=\"noopener noreferrer\" target=\"_blank\">clicking here.</a>","distribution":[{"@type":"dcat:Distribution","describedBy":"https://data.cityofnewyork.us/api/views/c99a-c5ux/columns.json","describedByType":"application/json","downloadURL":"https://data.cityofnewyork.us/api/views/c99a-c5ux/rows.json?accessType=DOWNLOAD","mediaType":"application/json"},{"@type":"dcat:Distribution","describedBy":"https://data.cityofnewyork.us/api/views/c99a-c5ux/columns.rdf","describedByType":"application/rdf+xml","downloadURL":"https://data.cityofnewyork.us/api/views/c99a-c5ux/rows.rdf?accessType=DOWNLOAD","mediaType":"application/rdf+xml"},{"@type":"dcat:Distribution","describedBy":"https://data.cityofnewyork.us/api/views/c99a-c5ux/columns.xml","describedByType":"application/xml","downloadURL":"https://data.cityofnewyork.us/api/views/c99a-c5ux/rows.xml?accessType=DOWNLOAD","mediaType":"application/xml"},{"@type":"dcat:Distribution","downloadURL":"https://data.cityofnewyork.us/api/views/c99a-c5ux/rows.csv?accessType=DOWNLOAD","mediaType":"text/csv"}],"identifier":"https://data.cityofnewyork.us/api/views/c99a-c5ux","issued":"2025-07-28","keyword":["capital climate investments","climate alignment assessment","climate budgeting","executive budget"],"landingPage":"https://data.cityofnewyork.us/d/c99a-c5ux","modified":"2025-07-28","publisher":{"@type":"org:Organization","name":"data.cityofnewyork.us"},"theme":["City Government"],"title":"NYC Climate Budgeting Report: Climate Alignment Assessment and Capital Climate Investments"},"description":"This dataset rates all projects in the capital budget with over $50,000 with their climate alignment and categorizes investments that are related to climate. Amounts are in thousands. This dataset will be updated once a year during the Executive Budget.\n\nThis data can be used to create visualizations similar to the charts featured in the Climate Investments section of the FY25 New York City Climate Budgeting publication (https://www.nyc.gov/assets/omb/downloads/pdf/exec24-nyccb.pdf).\n\nYou can find the complete collection of Climate Budget data by <a href=\"https://data.cityofnewyork.us/browse?Data-Collection_Data-Collection=Climate+Budgeting\" rel=\"noopener noreferrer\" target=\"_blank\">clicking here.</a>","distribution_titles":[],"harvest_record":"https://catalog-beta.data.gov/harvest_record/739007af-e7d1-4b44-bd7c-01951c296f9a","harvest_record_raw":"https://catalog-beta.data.gov/harvest_record/739007af-e7d1-4b44-bd7c-01951c296f9a/raw","has_spatial":false,"identifier":"https://data.cityofnewyork.us/api/views/c99a-c5ux","keyword":["capital climate investments","climate alignment assessment","climate budgeting","executive budget"],"last_harvested_date":"2025-08-02T16:06:31.489814","organization":{"aliases":[""],"description":null,"id":"1149ee63-2fff-494e-82e5-9aace9d3b3bf","logo":"https://raw.githubusercontent.com/GSA/logo/refs/heads/master/city_new_york_ny.png","name":"City of New York","organization_type":"City Government","slug":"nyc-ny"},"popularity":3,"publisher":"data.cityofnewyork.us","slug":"nyc-climate-budgeting-report-climate-alignment-assessment-and-capital-climate-investments","spatial_centroid":null,"spatial_shape":null,"theme":["City Government"],"title":"NYC Climate Budgeting Report: Climate Alignment Assessment and Capital Climate Investments"},{"_score":79.24471,"_sort":[79.24471,21,"1707633b-78a4-449c-91f3-b74b0cf3c0cb"],"dcat":{"@type":"dcat:Dataset","accessLevel":"public","contactPoint":{"@type":"vcard:Contact","fn":"NY Open Data","hasEmail":"mailto:no-reply@data.ny.gov"},"description":"The preferred citation when using this dataset is: Stevens, A., & Lamie, C., Eds. (2024). New York State Climate Impacts Assessment: Understanding and preparing for our changing climate. The New York State Climate Impacts Assessment is an investigation into how climate change will affect New York State\u2019s communities, ecosystems, and economy. The data and information presented will help New Yorkers plan and prepare for the impacts of climate change. The assessment also strives to show how addressing climate change provides opportunities to enhance equity and reduce the vulnerability of those most at risk.\n\nAs part of the assessment, Columbia University developed climate change projections for temperature and precipitation, extreme events, degree days, and sea level rise, downscaled to 12 regions of New York State. This dataset includes those projections of future climate conditions in New York State, for the 2030s through 2100.\n\nFor more information on these projections or to read the full NYS Climate Impacts Assessment, visit the assessment website at https://nysclimateimpacts.org/. \n\n\nThe New York State Energy Research and Development Authority (NYSERDA) offers objective information and analysis, innovative programs, technical expertise, and support to help New Yorkers increase energy efficiency, save money, use renewable energy, and reduce reliance on fossil fuels. To learn more about NYSERDA\u2019s programs, visit https://nyserda.ny.gov or follow us on X, Facebook, YouTube, or Instagram.","distribution":[{"@type":"dcat:Distribution","describedBy":"https://data.ny.gov/api/views/necg-zeuh/columns.json","describedByType":"application/json","downloadURL":"https://data.ny.gov/api/views/necg-zeuh/rows.json?accessType=DOWNLOAD","mediaType":"application/json"},{"@type":"dcat:Distribution","describedBy":"https://data.ny.gov/api/views/necg-zeuh/columns.rdf","describedByType":"application/rdf+xml","downloadURL":"https://data.ny.gov/api/views/necg-zeuh/rows.rdf?accessType=DOWNLOAD","mediaType":"application/rdf+xml"},{"@type":"dcat:Distribution","describedBy":"https://data.ny.gov/api/views/necg-zeuh/columns.xml","describedByType":"application/xml","downloadURL":"https://data.ny.gov/api/views/necg-zeuh/rows.xml?accessType=DOWNLOAD","mediaType":"application/xml"},{"@type":"dcat:Distribution","downloadURL":"https://data.ny.gov/api/views/necg-zeuh/rows.csv?accessType=DOWNLOAD","mediaType":"text/csv"}],"identifier":"https://data.ny.gov/api/views/necg-zeuh","issued":"2024-09-24","keyword":["climate change","climate change assessment","climate impacts assessment","climate projections","degree days","extreme events","extreme heat","extreme precipitation","precipitation","sea level","sea level rise","temperature"],"landingPage":"https://data.ny.gov/d/necg-zeuh","modified":"2025-08-09","publisher":{"@type":"org:Organization","name":"data.ny.gov"},"theme":["Energy & Environment"],"title":"NYS Climate Impacts Assessment: Climate Change Projections"},"description":"The preferred citation when using this dataset is: Stevens, A., & Lamie, C., Eds. (2024). New York State Climate Impacts Assessment: Understanding and preparing for our changing climate. The New York State Climate Impacts Assessment is an investigation into how climate change will affect New York State\u2019s communities, ecosystems, and economy. The data and information presented will help New Yorkers plan and prepare for the impacts of climate change. The assessment also strives to show how addressing climate change provides opportunities to enhance equity and reduce the vulnerability of those most at risk.\n\nAs part of the assessment, Columbia University developed climate change projections for temperature and precipitation, extreme events, degree days, and sea level rise, downscaled to 12 regions of New York State. This dataset includes those projections of future climate conditions in New York State, for the 2030s through 2100.\n\nFor more information on these projections or to read the full NYS Climate Impacts Assessment, visit the assessment website at https://nysclimateimpacts.org/. \n\n\nThe New York State Energy Research and Development Authority (NYSERDA) offers objective information and analysis, innovative programs, technical expertise, and support to help New Yorkers increase energy efficiency, save money, use renewable energy, and reduce reliance on fossil fuels. To learn more about NYSERDA\u2019s programs, visit https://nyserda.ny.gov or follow us on X, Facebook, YouTube, or Instagram.","distribution_titles":[],"harvest_record":"https://catalog-beta.data.gov/harvest_record/acbee793-d8a1-4eb9-99c1-97b16848f1b5","harvest_record_raw":"https://catalog-beta.data.gov/harvest_record/acbee793-d8a1-4eb9-99c1-97b16848f1b5/raw","has_spatial":false,"identifier":"https://data.ny.gov/api/views/necg-zeuh","keyword":["climate change","climate change assessment","climate impacts assessment","climate projections","degree days","extreme events","extreme heat","extreme precipitation","precipitation","sea level","sea level rise","temperature"],"last_harvested_date":"2025-08-10T09:23:28.100901","organization":{"aliases":["ny"],"description":null,"id":"dde3fc99-e074-41cf-a843-14aa9c777889","logo":"https://raw.githubusercontent.com/GSA/logo/refs/heads/master/state_NY.png","name":"State of New York","organization_type":"State Government","slug":"new-york"},"popularity":21,"publisher":"data.ny.gov","slug":"nys-climate-impacts-assessment-climate-change-projections","spatial_centroid":null,"spatial_shape":null,"theme":["Energy & Environment"],"title":"NYS Climate Impacts Assessment: Climate Change Projections"}],"sort":"relevance"}
+{
+  "after": "WzEuMCwxNDQxMSwiZWVmN2ExZjUtZjY0Ni00YzcwLTg2MDAtYjlmNmUzYzJhNjBkIl0=",
+  "results": [
+    {
+      "_score": 1.0,
+      "_sort": [
+        1.0,
+        16148,
+        "44a858b8-93c9-4ccf-9b9a-6b9bddf38416"
+      ],
+      "dcat": {
+        "@type": "dcat:Dataset",
+        "accessLevel": "public",
+        "bureauCode": [
+          "018:00"
+        ],
+        "contactPoint": {
+          "@type": "vcard:Contact",
+          "fn": "CRDC Team",
+          "hasEmail": "mailto:odp@ed.gov"
+        },
+        "description": "The 2015-16 tables are based on data collected from all of the nation\u2019s school districts and schools\u2014approximately 17,300 school districts and 96,300 schools. This set of Excel files contains data on students reported as harassed or bullied or disciplined for harassment or bullying on the basis of sex, race, or disability category for all states. Each file contains three spreadsheets: total students, male students, and female students. The Excel file contains data on allegations of harassment or bullying by type of allegations for all states.",
+        "distribution": [
+          {
+            "@type": "dcat:Distribution",
+            "description": "The 2015-16 tables are based on data collected from all of the nation\u2019s school districts and schools\u2014approximately 17,300 school districts and 96,300 schools. This set of Excel files contains data on students reported as harassed or bullied or disciplined for harassment or bullying on the basis of sex, race, or disability category for all states. Each file contains three spreadsheets: total students, male students, and female students. The Excel file contains data on allegations of harassment or bullying by type of allegations for all states.",
+            "downloadURL": "https://civilrightsdata.ed.gov/assets/downloads/2015-2016/Allegations-of-Harassment-or-Bullying.xlsx",
+            "format": "XLSX",
+            "mediaType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "title": "Allegations of Harassment or Bullying"
+          },
+          {
+            "@type": "dcat:Distribution",
+            "description": "The 2015-16 tables are based on data collected from all of the nation\u2019s school districts and schools\u2014approximately 17,300 school districts and 96,300 schools. This set of Excel files contains data on students reported as harassed or bullied or disciplined for harassment or bullying on the basis of sex, race, or disability category for all states. Each file contains three spreadsheets: total students, male students, and female students. The Excel file contains data on allegations of harassment or bullying by type of allegations for all states.",
+            "downloadURL": "https://civilrightsdata.ed.gov/assets/downloads/2015-2016/Harassment-Bullying-on-basis-of-disability-disciplined.xlsx",
+            "format": "XLSX",
+            "mediaType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "title": "On Basis of Disability - Disciplined "
+          },
+          {
+            "@type": "dcat:Distribution",
+            "description": "The 2015-16 tables are based on data collected from all of the nation\u2019s school districts and schools\u2014approximately 17,300 school districts and 96,300 schools. This set of Excel files contains data on students reported as harassed or bullied or disciplined for harassment or bullying on the basis of sex, race, or disability category for all states. Each file contains three spreadsheets: total students, male students, and female students. The Excel file contains data on allegations of harassment or bullying by type of allegations for all states.",
+            "downloadURL": "https://civilrightsdata.ed.gov/assets/downloads/2015-2016/Harassment-Bullying-on-basis-of-disability-reported.xlsx",
+            "format": "XLSX",
+            "mediaType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "title": "On Basis of Disability - Reported"
+          },
+          {
+            "@type": "dcat:Distribution",
+            "description": "The 2015-16 tables are based on data collected from all of the nation\u2019s school districts and schools\u2014approximately 17,300 school districts and 96,300 schools. This set of Excel files contains data on students reported as harassed or bullied or disciplined for harassment or bullying on the basis of sex, race, or disability category for all states. Each file contains three spreadsheets: total students, male students, and female students. The Excel file contains data on allegations of harassment or bullying by type of allegations for all states.",
+            "downloadURL": "https://civilrightsdata.ed.gov/assets/downloads/2015-2016/Harassment-Bullying-on-basis-of-race-disciplined.xlsx",
+            "format": "XLSX",
+            "mediaType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "title": "On Basis of Race - Disciplined"
+          },
+          {
+            "@type": "dcat:Distribution",
+            "description": "The 2015-16 tables are based on data collected from all of the nation\u2019s school districts and schools\u2014approximately 17,300 school districts and 96,300 schools. This set of Excel files contains data on students reported as harassed or bullied or disciplined for harassment or bullying on the basis of sex, race, or disability category for all states. Each file contains three spreadsheets: total students, male students, and female students. The Excel file contains data on allegations of harassment or bullying by type of allegations for all states.",
+            "downloadURL": "https://civilrightsdata.ed.gov/assets/downloads/2015-2016/Harassment-Bullying-on-basis-of-race-reported.xlsx",
+            "format": "XLSX",
+            "mediaType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "title": "On Basis of Race - Reported"
+          },
+          {
+            "@type": "dcat:Distribution",
+            "description": "The 2015-16 tables are based on data collected from all of the nation\u2019s school districts and schools\u2014approximately 17,300 school districts and 96,300 schools. This set of Excel files contains data on students reported as harassed or bullied or disciplined for harassment or bullying on the basis of sex, race, or disability category for all states. Each file contains three spreadsheets: total students, male students, and female students. The Excel file contains data on allegations of harassment or bullying by type of allegations for all states.",
+            "downloadURL": "https://civilrightsdata.ed.gov/assets/downloads/2015-2016/Harassment-Bullying-on-basis-of-sex-disciplined.xlsx",
+            "format": "XLSX",
+            "mediaType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "title": "On Basis of Sex - Disciplined"
+          },
+          {
+            "@type": "dcat:Distribution",
+            "description": "The 2015-16 tables are based on data collected from all of the nation\u2019s school districts and schools\u2014approximately 17,300 school districts and 96,300 schools. This set of Excel files contains data on students reported as harassed or bullied or disciplined for harassment or bullying on the basis of sex, race, or disability category for all states. Each file contains three spreadsheets: total students, male students, and female students. The Excel file contains data on allegations of harassment or bullying by type of allegations for all states.",
+            "downloadURL": "https://civilrightsdata.ed.gov/assets/downloads/2015-2016/Harassment-Bullying-on-basis-of-sex-reported.xlsx",
+            "format": "XLSX",
+            "mediaType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "title": "On Basis of Sex - Reported"
+          }
+        ],
+        "identifier": "a6312d29-ef5b-4df4-97ea-5da38ce36a7f",
+        "keyword": [
+          "Elementary-and-secondary",
+          "Language",
+          "civil-rights",
+          "minority",
+          "national",
+          "ocr",
+          "office-for-civil-rights-ocr",
+          "race",
+          "student-enrollment",
+          "student-retention",
+          "students"
+        ],
+        "landingPage": "https://civilrightsdata.ed.gov/estimations/2015-2016",
+        "license": "http://www.opendefinition.org/licenses/cc-by",
+        "modified": "2024-10-23T14:45:25.469196",
+        "programCode": [
+          "018:000"
+        ],
+        "publisher": {
+          "@type": "org:Organization",
+          "name": "Office for Civil Rights (OCR)"
+        },
+        "title": "2015-16 Harassment or Bullying by Basis Category Civil Rights Data Collection"
+      },
+      "description": "The 2015-16 tables are based on data collected from all of the nation\u2019s school districts and schools\u2014approximately 17,300 school districts and 96,300 schools. This set of Excel files contains data on students reported as harassed or bullied or disciplined for harassment or bullying on the basis of sex, race, or disability category for all states. Each file contains three spreadsheets: total students, male students, and female students. The Excel file contains data on allegations of harassment or bullying by type of allegations for all states.",
+      "distribution_titles": [
+        "Allegations of Harassment or Bullying",
+        "On Basis of Disability - Disciplined ",
+        "On Basis of Disability - Reported",
+        "On Basis of Race - Disciplined",
+        "On Basis of Race - Reported",
+        "On Basis of Sex - Disciplined",
+        "On Basis of Sex - Reported"
+      ],
+      "harvest_record": "https://catalog.data.gov/harvest_record/c4d2afc2-0d60-4a75-9a68-46c6a3dec87f",
+      "harvest_record_raw": "https://catalog.data.gov/harvest_record/c4d2afc2-0d60-4a75-9a68-46c6a3dec87f/raw",
+      "has_spatial": false,
+      "identifier": "a6312d29-ef5b-4df4-97ea-5da38ce36a7f",
+      "keyword": [
+        "Elementary-and-secondary",
+        "Language",
+        "civil-rights",
+        "minority",
+        "national",
+        "ocr",
+        "office-for-civil-rights-ocr",
+        "race",
+        "student-enrollment",
+        "student-retention",
+        "students"
+      ],
+      "last_harvested_date": "2026-05-08T20:16:21.838712",
+      "organization": {
+        "aliases": [
+          "dept"
+        ],
+        "description": null,
+        "id": "217e855b-cd64-4ebc-958b-abbbb0f57ac2",
+        "logo": "https://raw.githubusercontent.com/GSA/logo/refs/heads/master/ed.png",
+        "name": "Department of Education",
+        "organization_type": "Federal Government",
+        "slug": "ed"
+      },
+      "popularity": 16148,
+      "publisher": "Office for Civil Rights (OCR)",
+      "slug": "2015-16-harassment-or-bullying-by-basis-category-civil-rights-data-collection",
+      "spatial_centroid": null,
+      "spatial_shape": null,
+      "theme": [],
+      "title": "2015-16 Harassment or Bullying by Basis Category Civil Rights Data Collection"
+    },
+    {
+      "_score": 1.0,
+      "_sort": [
+        1.0,
+        14689,
+        "f305cd9b-8994-4115-949f-49f50cdae347"
+      ],
+      "dcat": {
+        "@type": "dcat:Dataset",
+        "accessLevel": "public",
+        "bureauCode": [
+          "018:00"
+        ],
+        "contactPoint": {
+          "@type": "vcard:Contact",
+          "fn": "CRDC Team",
+          "hasEmail": "mailto:odp@ed.gov"
+        },
+        "description": "The Civil Rights Data Collection, 2017-18 (CRDC 2017-18) is part of the Civil Rights Data Collection (CRDC) program; program data are available beginning with the 2000 collection at https://civilrightsdata.ed.gov/data. CRDC 2017-18 is a cross-sectional survey that collects data on key education and civil rights issues in the nation's public schools, which include student enrollment and educational programs and services, disaggregated by race/ethnicity, sex, limited English proficiency, and disability. LEAs submit administrative records about schools in the district. CRDC 2017-18 is a universe survey. Key statistics produced from CRDC 2017-18 can provide information about critical civil rights issues as well as contextual information on the state of civil rights in the nation, including enrollment demographics, advanced placement, school discipline, and special education services.",
+        "distribution": [
+          {
+            "@type": "dcat:Distribution",
+            "description": "A public-use data file containing the entire CRDC year-of-choice data set in CSV format can be downloaded in a zip file.",
+            "downloadURL": "https://civilrightsdata.ed.gov/assets/ocr/docs/2017-18-crdc-data.zip",
+            "format": "ZIP",
+            "mediaType": "application/zip",
+            "title": "2017-18-crdc-data.zip"
+          }
+        ],
+        "identifier": "dd80845b-924e-40d3-964c-dd4875113f0a",
+        "keyword": [
+          "Elementary-and-secondary",
+          "Language",
+          "civil-rights",
+          "discrimination",
+          "enrollment-demographics",
+          "minority-groups",
+          "national",
+          "office-for-civil-rights-ocr",
+          "race",
+          "student-retention",
+          "students"
+        ],
+        "landingPage": "https://civilrightsdata.ed.gov/data",
+        "license": "http://www.opendefinition.org/licenses/cc-by",
+        "modified": "2024-10-23T14:31:02.368789",
+        "programCode": [
+          "018:000"
+        ],
+        "publisher": {
+          "@type": "org:Organization",
+          "name": "Office for Civil Rights (OCR)"
+        },
+        "title": "Civil Rights Data Collection (CRDC) for the 2017-18 school year"
+      },
+      "description": "The Civil Rights Data Collection, 2017-18 (CRDC 2017-18) is part of the Civil Rights Data Collection (CRDC) program; program data are available beginning with the 2000 collection at https://civilrightsdata.ed.gov/data. CRDC 2017-18 is a cross-sectional survey that collects data on key education and civil rights issues in the nation's public schools, which include student enrollment and educational programs and services, disaggregated by race/ethnicity, sex, limited English proficiency, and disability. LEAs submit administrative records about schools in the district. CRDC 2017-18 is a universe survey. Key statistics produced from CRDC 2017-18 can provide information about critical civil rights issues as well as contextual information on the state of civil rights in the nation, including enrollment demographics, advanced placement, school discipline, and special education services.",
+      "distribution_titles": [
+        "2017-18-crdc-data.zip"
+      ],
+      "harvest_record": "https://catalog.data.gov/harvest_record/98a6ce25-0fc9-4954-af90-b7a5bb742e40",
+      "harvest_record_raw": "https://catalog.data.gov/harvest_record/98a6ce25-0fc9-4954-af90-b7a5bb742e40/raw",
+      "has_spatial": false,
+      "identifier": "dd80845b-924e-40d3-964c-dd4875113f0a",
+      "keyword": [
+        "Elementary-and-secondary",
+        "Language",
+        "civil-rights",
+        "discrimination",
+        "enrollment-demographics",
+        "minority-groups",
+        "national",
+        "office-for-civil-rights-ocr",
+        "race",
+        "student-retention",
+        "students"
+      ],
+      "last_harvested_date": "2026-05-08T20:16:25.118161",
+      "organization": {
+        "aliases": [
+          "dept"
+        ],
+        "description": null,
+        "id": "217e855b-cd64-4ebc-958b-abbbb0f57ac2",
+        "logo": "https://raw.githubusercontent.com/GSA/logo/refs/heads/master/ed.png",
+        "name": "Department of Education",
+        "organization_type": "Federal Government",
+        "slug": "ed"
+      },
+      "popularity": 14689,
+      "publisher": "Office for Civil Rights (OCR)",
+      "slug": "civil-rights-data-collection-crdc-for-the-2017-18-school-year",
+      "spatial_centroid": null,
+      "spatial_shape": null,
+      "theme": [],
+      "title": "Civil Rights Data Collection (CRDC) for the 2017-18 school year"
+    },
+    {
+      "_score": 1.0,
+      "_sort": [
+        1.0,
+        14411,
+        "eef7a1f5-f646-4c70-8600-b9f6e3c2a60d"
+      ],
+      "dcat": {
+        "@type": "dcat:Dataset",
+        "accessLevel": "public",
+        "bureauCode": [
+          "018:00"
+        ],
+        "contactPoint": {
+          "@type": "vcard:Contact",
+          "fn": "CRDC Team",
+          "hasEmail": "mailto:odp@ed.gov"
+        },
+        "description": "This set of Excel files contains data on students reported as harassed or bullied or disciplined for harassment or bullying on the basis of sex, race, or disability category for all states. Each file contains three spreadsheets: total students, male students, and female students.",
+        "distribution": [
+          {
+            "@type": "dcat:Distribution",
+            "description": "This set of Excel files contains data on students reported as harassed or bullied or disciplined for harassment or bullying on the basis of sex, race, or disability category for all states. Each file contains three spreadsheets: total students, male students, and female students.",
+            "downloadURL": "https://civilrightsdata.ed.gov/assets/downloads/2017-2018/School-Climate/Harassment-or-Bullying/Harassment-Bullying-on-basis-of-disability_discplined.xlsx",
+            "format": "XLSX",
+            "mediaType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "title": "On basis of disability - disciplined"
+          },
+          {
+            "@type": "dcat:Distribution",
+            "description": "This set of Excel files contains data on students reported as harassed or bullied or disciplined for harassment or bullying on the basis of sex, race, or disability category for all states. Each file contains three spreadsheets: total students, male students, and female students.",
+            "downloadURL": "https://civilrightsdata.ed.gov/assets/downloads/2017-2018/School-Climate/Harassment-or-Bullying/Harassment-Bullying-on-basis-of-disability_reported.xlsx",
+            "format": "XLSX",
+            "mediaType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "title": "On basis of disability - reported"
+          },
+          {
+            "@type": "dcat:Distribution",
+            "description": "This set of Excel files contains data on students reported as harassed or bullied or disciplined for harassment or bullying on the basis of sex, race, or disability category for all states. Each file contains three spreadsheets: total students, male students, and female students.",
+            "downloadURL": "https://civilrightsdata.ed.gov/assets/downloads/2017-2018/School-Climate/Harassment-or-Bullying/Harassment-Bullying-on-basis-of-race_disciplined.xlsx",
+            "format": "XLSX",
+            "mediaType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "title": "On basis of race - disciplined"
+          },
+          {
+            "@type": "dcat:Distribution",
+            "description": "This set of Excel files contains data on students reported as harassed or bullied or disciplined for harassment or bullying on the basis of sex, race, or disability category for all states. Each file contains three spreadsheets: total students, male students, and female students.",
+            "downloadURL": "https://civilrightsdata.ed.gov/assets/downloads/2017-2018/School-Climate/Harassment-or-Bullying/Harassment-Bullying-on-basis-of-race_reported.xlsx",
+            "format": "XLSX",
+            "mediaType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "title": "On basis of race - reported"
+          },
+          {
+            "@type": "dcat:Distribution",
+            "description": "This set of Excel files contains data on students reported as harassed or bullied or disciplined for harassment or bullying on the basis of sex, race, or disability category for all states. Each file contains three spreadsheets: total students, male students, and female students.",
+            "downloadURL": "https://civilrightsdata.ed.gov/assets/downloads/2017-2018/School-Climate/Harassment-or-Bullying/Harassment-Bullying-on-basis-of-sex_disciplined.xlsx",
+            "format": "XLSX",
+            "mediaType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "title": "On basis of sex - disciplined"
+          },
+          {
+            "@type": "dcat:Distribution",
+            "description": "This set of Excel files contains data on students reported as harassed or bullied or disciplined for harassment or bullying on the basis of sex, race, or disability category for all states. Each file contains three spreadsheets: total students, male students, and female students.",
+            "downloadURL": "https://civilrightsdata.ed.gov/assets/downloads/2017-2018/School-Climate/Harassment-or-Bullying/Harassment-Bullying-on-basis-of-sex_reported.xlsx",
+            "format": "XLSX",
+            "mediaType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "title": "On basis of sex - reported"
+          }
+        ],
+        "identifier": "c1816abc-d633-4fbd-aa48-b8998f9e9f66",
+        "keyword": [
+          "Elementary-and-secondary",
+          "Language",
+          "bullying",
+          "civil-rights",
+          "crdc",
+          "harassment",
+          "minority",
+          "national",
+          "ocr",
+          "race",
+          "students"
+        ],
+        "landingPage": "https://data.ed.gov/dataset/2017-18-harassment-or-bullying-civil-rights-data-collection",
+        "license": "http://www.opendefinition.org/licenses/cc-by",
+        "modified": "2024-10-23T14:45:22.979766",
+        "programCode": [
+          "018:000"
+        ],
+        "publisher": {
+          "@type": "org:Organization",
+          "name": "Office for Civil Rights (OCR)"
+        },
+        "title": "2017-18 Harassment or Bullying Civil Rights Data Collection"
+      },
+      "description": "This set of Excel files contains data on students reported as harassed or bullied or disciplined for harassment or bullying on the basis of sex, race, or disability category for all states. Each file contains three spreadsheets: total students, male students, and female students.",
+      "distribution_titles": [
+        "On basis of disability - disciplined",
+        "On basis of disability - reported",
+        "On basis of race - disciplined",
+        "On basis of race - reported",
+        "On basis of sex - disciplined",
+        "On basis of sex - reported"
+      ],
+      "harvest_record": "https://catalog.data.gov/harvest_record/ef98e1e3-2455-4b75-bbfa-6ef526fce7f9",
+      "harvest_record_raw": "https://catalog.data.gov/harvest_record/ef98e1e3-2455-4b75-bbfa-6ef526fce7f9/raw",
+      "has_spatial": false,
+      "identifier": "c1816abc-d633-4fbd-aa48-b8998f9e9f66",
+      "keyword": [
+        "Elementary-and-secondary",
+        "Language",
+        "bullying",
+        "civil-rights",
+        "crdc",
+        "harassment",
+        "minority",
+        "national",
+        "ocr",
+        "race",
+        "students"
+      ],
+      "last_harvested_date": "2026-05-08T20:16:21.959169",
+      "organization": {
+        "aliases": [
+          "dept"
+        ],
+        "description": null,
+        "id": "217e855b-cd64-4ebc-958b-abbbb0f57ac2",
+        "logo": "https://raw.githubusercontent.com/GSA/logo/refs/heads/master/ed.png",
+        "name": "Department of Education",
+        "organization_type": "Federal Government",
+        "slug": "ed"
+      },
+      "popularity": 14411,
+      "publisher": "Office for Civil Rights (OCR)",
+      "slug": "2017-18-harassment-or-bullying-civil-rights-data-collection",
+      "spatial_centroid": null,
+      "spatial_shape": null,
+      "theme": [],
+      "title": "2017-18 Harassment or Bullying Civil Rights Data Collection"
+    }
+  ],
+  "sort": "relevance"
+}

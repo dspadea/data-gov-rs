@@ -170,6 +170,65 @@ crate/
   Run in a separate CI job.
 - **Ignored tests** (`#[ignore]`): Expensive or flaky. Run with `--ignored`.
 
+## The live API is the source of truth
+
+The API's actual behaviour outranks this guide, the rustdoc, the READMEs, and
+the tests. Each of those has been wrong about it.
+
+### Never assert a parameter works without probing it
+
+`SearchParams::slug` shipped as a documented, builder-exposed filter that the
+Catalog API silently ignores: it returns a full unfiltered page with HTTP 200,
+so a caller receives arbitrary results and no error. The fixture test "covering"
+it could not catch this — wiremock asserts the parameter was *sent*, never that
+the server *honours* it.
+
+Before claiming a query parameter filters, probe the live endpoint and compare
+against an unfiltered baseline:
+
+```bash
+curl -s 'https://catalog.data.gov/search?per_page=3'
+curl -s 'https://catalog.data.gov/search?per_page=3&<param>=<value>'
+```
+
+**This API does not reject invalid filter values**, so the two failure modes read
+differently and must not be confused:
+
+| Result | Meaning |
+|--------------------------------|-------------------------------------------|
+| Identical to baseline | Parameter **ignored** — the filter is a no-op |
+| Zero results | Parameter **honoured**, value simply matched nothing |
+
+**Source test values from the API, never invent them.** A guessed value that
+returns nothing proves nothing. `org_slug=noaa-gov` looks broken; the real slug
+from `/api/organizations` is `noaa`, and the filter works correctly.
+
+### Changing a model requires fresh fixtures first
+
+Any time a model or document structure looks like it needs to change, the order
+is fixed and must not be reversed:
+
+1. **Capture fresh fixtures** — `scripts/capture-fixtures.sh`
+2. **Prove the change against them** — show the field really is absent, renamed,
+   or a different type in current responses
+3. **Then** change the model and update the tests
+
+Never change a struct from reasoning about the code, the docs, or a stale
+fixture alone.
+
+**Removing a field is a high bar; removing an identifier is higher.** Fields
+vanishing from a public open-data API is unlikely. A field missing from one
+sample far more often means the sample is unrepresentative — one publisher
+omitting an optional field — than that the API dropped it. Check several records
+from different publishers, and prefer `Option<T>` with `#[serde(default)]` over
+deletion. Widening a type (`i32` -> `i64`) or adding a `rename` is a lower bar,
+but still needs a captured response showing the real shape.
+
+This is not hypothetical: `ContactPoint::fn_` keys on the literal name `fn_`
+while payloads send `fn`, so every contact name is silently dropped. Only
+fixtures refreshed from reality catch that class of defect — and only if they
+are refreshed from the API rather than hand-edited to match the code.
+
 ### What to test
 
 For every public function or method:
@@ -182,12 +241,25 @@ For every public function or method:
 ### Running tests
 
 ```bash
+cargo test --all-features --workspace     # Everything CI runs (181+ tests)
 cargo test --lib --all-features           # Unit tests only (fast, no network)
 cargo test --doc --all-features           # Doc tests
-cargo test --test client_tests            # Fixture-based mock tests
+cargo test --test client_tests            # Request shaping, via wiremock
+cargo test --test fixture_parity_tests    # Model vs. captured API responses
 cargo test --test integration_tests       # Live API tests
-cargo test --test solr_syntax_tests -- --ignored  # Solr syntax (network)
+cargo test --all-features -- --ignored    # Network + known-defect acceptance tests
 ```
+
+Refresh the captured responses with:
+
+```bash
+scripts/capture-fixtures.sh               # Recapture from the live Catalog API
+```
+
+Fixtures addressed by slug are pinned to a specific long-lived dataset, because
+tests assert against their contents; a fixture whose subject changes on every
+capture cannot be asserted on. The script warns if the pinned dataset stops
+resolving, and never truncates an existing fixture when a request fails.
 
 ## Error handling
 
