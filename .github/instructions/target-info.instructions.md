@@ -51,7 +51,8 @@ Endpoints currently covered by `data-gov-catalog`:
 
 - `/search` — full-text search with cursor pagination (`SearchParams`
   builder for `q`, `per_page`, `after`, `org_slug`, `org_type`,
-  `keyword(s)`, `spatial_*`, `slug`, `sort`)
+  `keyword(s)`, `spatial_*`, `sort`). `/search` has no `slug` parameter;
+  it does not exist as a `SearchParams` field either.
 - `/api/organizations` — list publishing organizations
 - `/api/keywords` — keyword facets
 - `/api/locations/search`, `/api/location/{id}` — spatial lookups
@@ -95,7 +96,7 @@ if let Some(dcat) = hit.dcat.as_ref() {
 | Geographic intersection       | `.spatial_geometry(geojson).spatial_within(false)`  |
 | Page size                     | `.per_page(50)` (default 10, server caps the max)   |
 | Next page                     | `.after(prev_response.after.unwrap())`              |
-| Lookup a known slug           | `.slug("dataset-slug")` or `client.dataset_by_slug` |
+| Lookup a known slug           | `client.dataset_by_slug("dataset-slug")`            |
 
 ## CKAN API (for `data-gov-ckan` only)
 
