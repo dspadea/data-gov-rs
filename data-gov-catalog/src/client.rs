@@ -431,13 +431,13 @@ impl CatalogClient {
     /// shape is unconstrained GeoJSON and callers typically hand it straight
     /// to a mapping library.
     pub async fn location_geometry(&self, id: &str) -> Result<Value, CatalogError> {
-        let path = format!("/api/location/{id}");
+        let path = format!("/api/location/{}", encode_path_segment(id));
         self.get_json(&path, &[(); 0]).await
     }
 
     /// Retrieve a harvest record's metadata envelope.
     pub async fn harvest_record(&self, id: &str) -> Result<models::HarvestRecord, CatalogError> {
-        let path = format!("/harvest_record/{id}");
+        let path = format!("/harvest_record/{}", encode_path_segment(id));
         self.get_json(&path, &[(); 0]).await
     }
 
@@ -447,7 +447,7 @@ impl CatalogClient {
     /// XML fragments, and DCAT records through the same surface — so the
     /// result is returned as [`serde_json::Value`].
     pub async fn harvest_record_raw(&self, id: &str) -> Result<Value, CatalogError> {
-        let path = format!("/harvest_record/{id}/raw");
+        let path = format!("/harvest_record/{}/raw", encode_path_segment(id));
         self.get_json(&path, &[(); 0]).await
     }
 
@@ -456,7 +456,7 @@ impl CatalogClient {
         &self,
         id: &str,
     ) -> Result<models::Dataset, CatalogError> {
-        let path = format!("/harvest_record/{id}/transformed");
+        let path = format!("/harvest_record/{}/transformed", encode_path_segment(id));
         self.get_json(&path, &[(); 0]).await
     }
 }
