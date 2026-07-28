@@ -449,6 +449,52 @@ in the 2026-07 review it reported two advisories while OSV surfaced seven furthe
 database. Re-run at release time, not just at the start of the work — advisories
 land after the fact, so a clean run expires.
 
+## Configuration and file locations
+
+**Configuration lives in the XDG base directories, never in `$HOME` directly.**
+Use the `dirs` crate (already a dependency) rather than hand-building paths, so
+the behaviour is correct on every platform:
+
+| Purpose | Call | Linux | Path used |
+|---------------|-----------------------|--------------------------|--------------------------|
+| Configuration | `dirs::config_dir()` | `$XDG_CONFIG_HOME`, else `~/.config` | `<config>/data-gov/` |
+| Cached data | `dirs::cache_dir()` | `$XDG_CACHE_HOME`, else `~/.cache` | `<cache>/data-gov/` |
+| State/history | `dirs::data_dir()` | `$XDG_DATA_HOME`, else `~/.local/share` | `<data>/data-gov/` |
+| Downloads | `dirs::download_dir()` | `$XDG_DOWNLOAD_DIR` | user's own choice |
+
+Never write a dotfile to `$HOME` (`~/.data-gov`, `~/.data-gov-api-key`), and
+never hardcode `~/.config` — that string is wrong on macOS and Windows, and
+ignores `XDG_CONFIG_HOME` on Linux. Honour the environment variable by going
+through `dirs`.
+
+**Precedence**, highest first: command-line flag, then environment variable,
+then config file, then built-in default. A setting that a flag cannot override
+is a bug.
+
+### Secrets
+
+API keys and tokens are read from a file under `dirs::config_dir()` or from the
+environment. Never commit one, never log one, and **never accept one as a
+command-line argument** — `argv` is visible to every process on the machine via
+`ps`.
+
+**Permissions are part of the contract, on the directory as well as the file:**
+
+| Path | Mode | Why |
+|-----------------------------|--------|-----------------------------------------------|
+| `<config>/data-gov/` | `0700` | `0755` lets anyone list the directory and see that a key exists, even when they cannot read it |
+| `<config>/data-gov/api-key` | `0600` | `rw-------`. The execute bit in `0700` is meaningless on a key file; `0600` is what ssh, gpg, and netrc use |
+
+When creating either, set the mode at creation rather than `chmod`-ing
+afterwards — a file created `0644` and tightened a moment later was
+world-readable in between. In Rust, use
+`std::os::unix::fs::OpenOptionsExt::mode()` on the `OpenOptions` (and
+`DirBuilderExt::mode()` for the directory), behind `#[cfg(unix)]`.
+
+When *reading* a secret, check the mode first and refuse or warn if it is group-
+or world-accessible, the way ssh does. A key with the wrong permissions has
+already leaked; failing loudly is the only useful response.
+
 ## Code organization
 
 ### Modularization principles
