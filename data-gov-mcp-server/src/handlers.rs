@@ -5,6 +5,7 @@ use data_gov::catalog::models::{Distribution, SearchHit};
 use serde_json::{Value, json};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
+use tokio::time::timeout;
 
 use crate::server::DataGovMcpServer;
 use crate::tools::{
@@ -56,12 +57,37 @@ impl DataGovMcpServer {
         serde_json::to_value(response).map_err(ServerError::Serialization)
     }
 
-    /// Execute a single method and return the result as a JSON `Value`.
+    /// Execute a single method under the per-request timeout.
+    ///
+    /// The timeout is the outer bound on one request. Without it a hung
+    /// upstream holds a request, and its slot in the cancellation registry,
+    /// for as long as the session lasts. It sits here, around the resolved
+    /// method, so the message names the tool that was abandoned rather than
+    /// the `tools/call` envelope it arrived in.
+    ///
+    /// A timed-out tool becomes a result with `isError: true`, like any other
+    /// execution failure, because a model can act on it; a timed-out protocol
+    /// method has no tool result to travel in and stays a JSON-RPC error.
+    /// [`ServerError::is_tool_execution_failure`] makes that split.
     async fn invoke_method(
         &self,
         method: &str,
         params: Option<Value>,
     ) -> Result<Value, ServerError> {
+        match timeout(self.request_timeout, self.run_method(method, params)).await {
+            Ok(result) => result,
+            Err(_elapsed) => {
+                let budget = self.request_timeout;
+                tracing::warn!(method = %method, "request abandoned after {budget:?}");
+                Err(ServerError::Timeout(format!(
+                    "{method}: the server gave up after {budget:?}"
+                )))
+            }
+        }
+    }
+
+    /// Execute a single method and return the result as a JSON `Value`.
+    async fn run_method(&self, method: &str, params: Option<Value>) -> Result<Value, ServerError> {
         #[cfg(test)]
         if let Some(gate) = self.test_gate.as_ref()
             && gate.method == method
@@ -78,6 +104,10 @@ impl DataGovMcpServer {
             }
             "initialized" => Ok(Value::Null),
             "shutdown" => Ok(Value::Null),
+            // MCP ping: "The receiver MUST respond promptly with an empty
+            // response." A keepalive answered with -32601 reads to the client
+            // as a dead connection.
+            "ping" => Ok(json!({})),
             "tools/list" => {
                 let params: ListToolsParams = parse_optional_params(method, params)?;
                 let _ = params.cursor;

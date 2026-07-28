@@ -136,6 +136,11 @@ impl From<ServerError> for ResponseError {
                 message,
                 data: None,
             },
+            ServerError::Timeout(message) => Self {
+                code: -32030,
+                message,
+                data: None,
+            },
         }
     }
 }
@@ -172,6 +177,9 @@ pub enum ServerError {
     /// code below only applies if such a fault ever escapes a tool path.
     #[error("{0}")]
     ToolFailed(String),
+    /// The request outran the server's per-request timeout.
+    #[error("{0}")]
+    Timeout(String),
 }
 
 impl ServerError {
@@ -187,7 +195,7 @@ impl ServerError {
     /// rather than defaulting to either side.
     pub(crate) fn is_tool_execution_failure(&self) -> bool {
         match self {
-            Self::DataGov(_) | Self::Io(_) | Self::ToolFailed(_) => true,
+            Self::DataGov(_) | Self::Io(_) | Self::ToolFailed(_) | Self::Timeout(_) => true,
             Self::InvalidRequest(_)
             | Self::InvalidMethod(_)
             | Self::InvalidParams(_)

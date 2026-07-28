@@ -9,9 +9,13 @@
 
 use serde_json::{Value, json};
 use std::collections::HashSet;
+use std::time::Duration;
 use wiremock::MockServer;
 
-use crate::test_support::{Session, drive, test_server, test_server_with_gate};
+use crate::test_support::{
+    INVALID_PARAMS, INVALID_REQUEST, METHOD_NOT_FOUND, PARSE_ERROR, Session, drive, error_code,
+    gated_server, test_server, test_server_with_gate,
+};
 
 /// The tool method the gate holds in these tests. Held at the dispatch, so no
 /// download, no network, and no timing is involved.
@@ -286,4 +290,79 @@ async fn concurrent_responses_are_written_as_whole_lines() {
             "every line must be a whole, parseable result: {response}"
         );
     }
+}
+
+// ---------------------------------------------------------------------------
+// The per-request timeout
+// ---------------------------------------------------------------------------
+
+/// A request that never finishes must not hold its slot forever. The gate is
+/// never released here, so the wait is unbounded and any finite timeout has to
+/// fire: the outcome does not depend on how long the test takes.
+///
+/// A tool that timed out reports it the way any other execution failure does,
+/// because the model can act on it - retry with fewer files, or a narrower
+/// filter.
+#[tokio::test]
+async fn a_tool_that_outruns_the_timeout_is_answered_with_a_tool_error() {
+    let mock = MockServer::start().await;
+    let (server, _never_released) =
+        gated_server(&mock.uri(), SLOW_METHOD, Duration::from_millis(50));
+    let mut session = Session::start(server);
+
+    session.send(&slow_call(1)).await;
+
+    let response = session.next_response().await;
+    assert_eq!(response.get("id"), Some(&json!(1)), "got: {response}");
+    assert_eq!(
+        response["result"]["isError"],
+        json!(true),
+        "an abandoned tool call is a tool execution error: {response}"
+    );
+    let text = response["result"]["content"][0]["text"]
+        .as_str()
+        .unwrap_or_default();
+    assert!(
+        text.contains(SLOW_METHOD),
+        "the message must name the call that was abandoned: {response}"
+    );
+
+    session.finish().await;
+}
+
+/// A protocol method has no tool result to travel in, so its timeout is a
+/// JSON-RPC error. JSON-RPC 2.0 section 5.1 reserves -32000 to -32099 for
+/// "implementation-defined server-errors" and assigns the rest, so the code
+/// has to sit in that band and must not collide with a defined one.
+#[tokio::test]
+async fn a_protocol_method_that_outruns_the_timeout_is_a_server_error() {
+    let mock = MockServer::start().await;
+    let (server, _never_released) =
+        gated_server(&mock.uri(), "tools/list", Duration::from_millis(50));
+    let mut session = Session::start(server);
+
+    session
+        .send(&json!({"jsonrpc": "2.0", "id": 1, "method": "tools/list"}))
+        .await;
+
+    let response = session.next_response().await;
+    let code = error_code(&response);
+    assert!(
+        (-32099..=-32000).contains(&code),
+        "a timeout is an implementation-defined server error, got {code}: {response}"
+    );
+    for reserved in [
+        PARSE_ERROR,
+        INVALID_REQUEST,
+        METHOD_NOT_FOUND,
+        INVALID_PARAMS,
+        -32603,
+    ] {
+        assert_ne!(
+            code, reserved,
+            "a timeout must not reuse a code JSON-RPC already defines: {response}"
+        );
+    }
+
+    session.finish().await;
 }

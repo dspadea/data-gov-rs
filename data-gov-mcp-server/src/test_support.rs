@@ -12,7 +12,7 @@ use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader, DuplexS
 use tokio::sync::Notify;
 use tokio::task::JoinHandle;
 
-use crate::server::{DataGovMcpServer, TestGate};
+use crate::server::{DEFAULT_REQUEST_TIMEOUT, DataGovMcpServer, TestGate};
 use crate::types::ServerError;
 
 /// How long a session waits for a response before calling the loop hung.
@@ -49,6 +49,7 @@ pub(crate) fn test_server(mock_uri: &str) -> DataGovMcpServer {
     DataGovMcpServer {
         data_gov,
         portal_base_url: mock_uri.to_string(),
+        request_timeout: DEFAULT_REQUEST_TIMEOUT,
         test_gate: None,
     }
 }
@@ -61,8 +62,18 @@ pub(crate) fn test_server_with_gate(
     mock_uri: &str,
     method: &'static str,
 ) -> (Arc<DataGovMcpServer>, Arc<Notify>) {
+    gated_server(mock_uri, method, DEFAULT_REQUEST_TIMEOUT)
+}
+
+/// A gated server that abandons a request after `request_timeout`.
+pub(crate) fn gated_server(
+    mock_uri: &str,
+    method: &'static str,
+    request_timeout: Duration,
+) -> (Arc<DataGovMcpServer>, Arc<Notify>) {
     let release = Arc::new(Notify::new());
     let mut server = test_server(mock_uri);
+    server.request_timeout = request_timeout;
     server.test_gate = Some(TestGate {
         method,
         release: Arc::clone(&release),
