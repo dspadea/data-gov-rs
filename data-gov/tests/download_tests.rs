@@ -237,6 +237,47 @@ async fn disambiguates_duplicate_filenames_by_index() {
     }
 }
 
+/// #73: `max_concurrent_downloads` is a `pub` field on a struct that is not
+/// `#[non_exhaustive]`, so a struct literal bypasses the clamp in
+/// `with_max_concurrent_downloads`. A zero-permit semaphore is never closed, so
+/// `acquire()` stays pending and `join_all` never resolves.
+#[tokio::test]
+async fn zero_max_concurrent_downloads_set_by_struct_literal_still_completes() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path_regex(r"^/files/.*"))
+        .respond_with(ResponseTemplate::new(200).set_body_bytes(b"payload".to_vec()))
+        .mount(&server)
+        .await;
+
+    let tmp = TempDir::new().expect("tempdir");
+    let config = DataGovConfig {
+        max_concurrent_downloads: 0,
+        base_download_dir: tmp.path().to_path_buf(),
+        ..DataGovConfig::default()
+    };
+    let client = DataGovClient::with_config(config).expect("test client must build");
+
+    // Two distributions, because the single-distribution fast path skips the
+    // semaphore entirely and would pass whatever the permit count is.
+    let distributions = vec![
+        mock_distribution(&server.uri(), "/files/a.csv", "a", "CSV"),
+        mock_distribution(&server.uri(), "/files/b.csv", "b", "CSV"),
+    ];
+
+    let results = tokio::time::timeout(
+        Duration::from_secs(5),
+        client.download_distributions(&distributions, Some(tmp.path())),
+    )
+    .await
+    .expect("a zero permit count must not stall download_distributions");
+
+    assert_eq!(results.len(), 2);
+    for (i, r) in results.iter().enumerate() {
+        assert!(r.is_ok(), "distribution {i} should have succeeded: {r:?}");
+    }
+}
+
 #[tokio::test]
 async fn honors_max_concurrent_downloads_cap() {
     let server = MockServer::start().await;
