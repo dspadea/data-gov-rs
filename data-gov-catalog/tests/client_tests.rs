@@ -3,7 +3,9 @@
 //! These tests never hit the network. Fixtures live in `tests/fixtures/` and
 //! are trimmed captures of real responses.
 
-use data_gov_catalog::{CatalogClient, CatalogError, Configuration, SearchParams, SpatialFilter};
+use data_gov_catalog::{
+    CatalogClient, CatalogError, Configuration, SearchParams, SortOrder, SpatialFilter,
+};
 use serde_json::json;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -192,6 +194,38 @@ async fn search_with_spatial_within_sends_true_and_false() {
             .search(SearchParams::new().spatial_within(within))
             .await
             .unwrap_or_else(|e| panic!("spatial_within={within} search succeeds: {e}"));
+    }
+}
+
+/// `SearchParams::sort` was a bare `String`, so a typo like
+/// `sort=BOGUS_NOT_A_SORT` compiled fine and the server silently substituted
+/// `relevance` (confirmed live -- see `SortOrder`'s doc comment for the
+/// probe). `SortOrder` makes only the four values the Catalog API's own
+/// OpenAPI schema declares (`https://catalog.data.gov/openapi.json`,
+/// `/search`'s `sort` parameter `enum`) representable at all.
+#[tokio::test]
+async fn search_with_sort_sends_the_wire_value_for_each_variant() {
+    for (variant, wire_value) in [
+        (SortOrder::Relevance, "relevance"),
+        (SortOrder::Popularity, "popularity"),
+        (SortOrder::Distance, "distance"),
+        (SortOrder::LastHarvestedDate, "last_harvested_date"),
+    ] {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/search"))
+            .and(query_param("sort", wire_value))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_raw(fixture("search_filtered.json"), "application/json"),
+            )
+            .mount(&server)
+            .await;
+
+        client_for(&server)
+            .search(SearchParams::new().sort(variant))
+            .await
+            .unwrap_or_else(|e| panic!("{variant:?} search succeeds: {e}"));
     }
 }
 
