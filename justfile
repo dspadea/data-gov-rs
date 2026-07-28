@@ -20,7 +20,7 @@ default:
     @just --list
 
 # The full gate. Run this before you push.
-check: fmt-check check-ascii check-home-paths lint build test check-rustls examples docs
+check: fmt-check check-ascii check-home-paths check-deps lint build test check-rustls examples docs
 
 # Format every file in place.
 fmt:
@@ -63,6 +63,18 @@ check-home-paths:
       exit 1
     fi
     exit 0
+
+# Fail if a workspace crate declares a dependency nothing imports (#76).
+# Installs cargo-machete on demand so a fresh clone with just `just` and Rust
+# still runs `just check` end to end.
+check-deps:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if ! command -v cargo-machete >/dev/null 2>&1; then
+      echo "cargo-machete not found; installing..." >&2
+      cargo install cargo-machete --locked
+    fi
+    cargo machete
 
 # Clippy over every target and feature, warnings fatal.
 lint:
