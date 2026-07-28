@@ -55,11 +55,17 @@ async fn catalog_client_reaches_search_params_that_the_shortcut_does_not_expose(
 #[tokio::test]
 async fn catalog_client_shares_the_configured_base_url_with_the_shortcut_methods() {
     let server = MockServer::start().await;
+    // `total` is a number the real data.gov catalog could never plausibly
+    // answer with, so a response carrying it can only have come from this
+    // mock -- an `.is_ok()` check alone would pass just as well against the
+    // live API's own /api/organizations, which also answers successfully,
+    // and would not prove the escape hatch reached *this* configuration.
+    const DISTINCTIVE_TOTAL: i64 = 987_654_321;
     Mock::given(method("GET"))
         .and(path("/api/organizations"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
             "organizations": [],
-            "total": 0
+            "total": DISTINCTIVE_TOTAL
         })))
         .mount(&server)
         .await;
@@ -67,10 +73,14 @@ async fn catalog_client_shares_the_configured_base_url_with_the_shortcut_methods
     let config = DataGovConfig::new().with_base_url(server.uri());
     let client = DataGovClient::with_config(config).expect("client must build");
 
-    let via_escape_hatch = client.catalog_client().organizations().await;
-    assert!(
-        via_escape_hatch.is_ok(),
-        "the escape hatch must be wired to the same configured base URL as \
-         DataGovClient's own shortcuts, got {via_escape_hatch:?}"
+    let via_escape_hatch = client
+        .catalog_client()
+        .organizations()
+        .await
+        .expect("the escape hatch must reach the configured base URL");
+    assert_eq!(
+        via_escape_hatch.total, DISTINCTIVE_TOTAL,
+        "got a response, but not this mock's response -- the escape hatch is not \
+         wired to the same configuration as DataGovClient's own shortcuts"
     );
 }
