@@ -103,7 +103,10 @@ impl DataGovMcpServer {
         method: &str,
         params: Option<Value>,
     ) -> Result<Value, ServerError> {
-        let params: SearchParams = parse_required_params(method, params)?;
+        // Optional, not required: the advertised `inputSchema` lists no
+        // required properties, so a call that omits `arguments` entirely is a
+        // valid call and every field falls back to its default.
+        let params: SearchParams = parse_optional_params(method, params)?;
         validate_limit(method, params.limit, 1, 1000)?;
         let mut page = self
             .data_gov

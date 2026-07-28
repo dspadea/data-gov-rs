@@ -4,15 +4,51 @@ use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::{Value, json};
 use thiserror::Error;
 
-/// Incoming JSON-RPC request.
+/// Incoming JSON-RPC request, without its `id`.
+///
+/// The id is read from the raw message by [`classify_request_id`] instead,
+/// because `Option<Value>` cannot tell an absent `id` from an explicit
+/// `"id": null` - and those two mean opposite things. The first is a
+/// notification the server must not answer; the second is a malformed request
+/// a client is waiting on.
+///
+/// `jsonrpc` stays optional so that an absent member reaches
+/// [`crate::server::DataGovMcpServer`] as a rejection with a message naming
+/// what is missing, rather than as serde's "missing field" text.
 #[derive(Debug, Deserialize)]
 pub(crate) struct Request {
     #[serde(default)]
     pub jsonrpc: Option<String>,
-    pub id: Option<Value>,
     pub method: String,
     #[serde(default)]
     pub params: Option<Value>,
+}
+
+/// How a message's `id` member reads against the JSON-RPC and MCP rules.
+#[derive(Debug)]
+pub(crate) enum RequestIdKind {
+    /// No `id` member at all. JSON-RPC 2.0: "Notifications MUST NOT include an
+    /// ID", and the receiver "MUST NOT send a response".
+    Absent,
+    /// A string or an integer, the only two shapes MCP allows.
+    Valid(Value),
+    /// An `id` member that is present but is not a usable request id.
+    Invalid,
+}
+
+/// Classify the `id` member of a received message.
+///
+/// MCP narrows JSON-RPC here: "Requests MUST include a string or integer ID"
+/// and "Unlike base JSON-RPC, the ID MUST NOT be `null`." A fractional number
+/// is not an integer, so it is rejected with the rest.
+pub(crate) fn classify_request_id(message: &Value) -> RequestIdKind {
+    match message.get("id") {
+        None => RequestIdKind::Absent,
+        Some(id) if id.is_string() || id.is_i64() || id.is_u64() => {
+            RequestIdKind::Valid(id.clone())
+        }
+        Some(_) => RequestIdKind::Invalid,
+    }
 }
 
 /// Outgoing JSON-RPC response.
@@ -544,8 +580,8 @@ mod tests {
     fn request_deserializes_full_json_rpc() {
         let json_str = r#"{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}"#;
         let req: Request = serde_json::from_str(json_str).expect("should parse");
+        assert_eq!(req.jsonrpc.as_deref(), Some("2.0"));
         assert_eq!(req.method, "tools/list");
-        assert_eq!(req.id, Some(json!(1)));
         assert!(req.params.is_some());
     }
 
@@ -554,7 +590,7 @@ mod tests {
         let json_str = r#"{"method":"initialize"}"#;
         let req: Request = serde_json::from_str(json_str).expect("should parse");
         assert_eq!(req.method, "initialize");
-        assert!(req.id.is_none());
+        assert!(req.jsonrpc.is_none());
         assert!(req.params.is_none());
     }
 
@@ -563,6 +599,70 @@ mod tests {
         let json_str = r#"{"jsonrpc":"2.0","id":1}"#;
         let result = serde_json::from_str::<Request>(json_str);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn request_rejects_a_non_string_jsonrpc_member() {
+        for version in [json!(2.0), json!(2), json!(true), json!(["2.0"])] {
+            let message = json!({"jsonrpc": version, "id": 1, "method": "tools/list"});
+            assert!(
+                serde_json::from_value::<Request>(message).is_err(),
+                "jsonrpc {version} is not the string \"2.0\""
+            );
+        }
+    }
+
+    /// An absent `id` is a notification; every other reading is not.
+    #[test]
+    fn an_absent_id_is_the_only_notification() {
+        assert!(matches!(
+            classify_request_id(&json!({"jsonrpc": "2.0", "method": "tools/list"})),
+            RequestIdKind::Absent
+        ));
+        assert!(
+            !matches!(
+                classify_request_id(&json!({"jsonrpc": "2.0", "id": null, "method": "x"})),
+                RequestIdKind::Absent
+            ),
+            "an explicit null id is a request, not a notification"
+        );
+    }
+
+    /// "Requests MUST include a string or integer ID."
+    #[test]
+    fn a_string_or_integer_id_is_valid_and_survives_verbatim() {
+        for id in [
+            json!("req-1"),
+            json!(""),
+            json!(0),
+            json!(-7),
+            json!(u64::MAX),
+        ] {
+            let message = json!({"jsonrpc": "2.0", "id": id, "method": "tools/list"});
+            match classify_request_id(&message) {
+                RequestIdKind::Valid(seen) => assert_eq!(seen, id, "the id must survive verbatim"),
+                other => panic!("{id} is a valid request id, got {other:?}"),
+            }
+        }
+    }
+
+    /// "Unlike base JSON-RPC, the ID MUST NOT be `null`", and MCP's `RequestId`
+    /// admits no type beyond string and integer.
+    #[test]
+    fn a_null_or_non_scalar_id_is_invalid() {
+        for id in [
+            json!(null),
+            json!({"a": 1}),
+            json!([1]),
+            json!(true),
+            json!(1.5),
+        ] {
+            let message = json!({"jsonrpc": "2.0", "id": id, "method": "tools/list"});
+            assert!(
+                matches!(classify_request_id(&message), RequestIdKind::Invalid),
+                "{id} is not a string or an integer, so it is not a RequestId"
+            );
+        }
     }
 
     #[test]

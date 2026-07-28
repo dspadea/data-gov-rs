@@ -1,12 +1,13 @@
 //! MCP server entry point — struct definition, construction, and run loop.
 
 use data_gov::{DataGovClient, DataGovConfig, OperatingMode};
+use serde_json::Value;
 use std::env;
 use tokio::io::{
     self, AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader, BufWriter,
 };
 
-use crate::types::{Request, Response, ServerError};
+use crate::types::{Request, RequestIdKind, Response, ServerError, classify_request_id};
 
 /// The data.gov MCP server.
 ///
@@ -68,38 +69,105 @@ impl DataGovMcpServer {
         R: AsyncRead + Unpin,
         W: AsyncWrite + Unpin,
     {
-        let reader = BufReader::new(reader);
+        let mut reader = BufReader::new(reader);
         let mut writer = BufWriter::new(writer);
+        let mut raw = Vec::new();
 
-        let mut lines = reader.lines();
+        loop {
+            raw.clear();
+            // Bytes, not lines. `Lines::next_line` fails the whole stream on a
+            // single byte that is not UTF-8, so one stray byte would end the
+            // session for every well-formed request behind it. Decoding
+            // lossily turns that byte into a message this server can answer
+            // and move on from. Only EOF and a transport failure end the loop.
+            if reader.read_until(b'\n', &mut raw).await? == 0 {
+                break;
+            }
 
-        while let Some(line) = lines.next_line().await? {
+            let line = String::from_utf8_lossy(&raw);
             let trimmed = line.trim();
             if trimmed.is_empty() {
                 continue;
             }
 
-            let request = match serde_json::from_str::<Request>(trimmed) {
-                Ok(request) => request,
-                Err(err) => {
-                    tracing::warn!("invalid request: {err}");
-                    let response =
-                        Response::error(None, ServerError::InvalidRequest(err.to_string()));
-                    self.write_response(&mut writer, &response).await?;
-                    continue;
-                }
-            };
-
-            // Per JSON-RPC 2.0: a request without an `id` is a notification, and
-            // the server MUST NOT reply. Still dispatch for side effects.
-            let is_notification = request.id.is_none();
-            let response = self.handle_request(request).await;
-            if !is_notification {
+            if let Some(response) = self.answer(trimmed).await {
                 self.write_response(&mut writer, &response).await?;
             }
         }
 
         Ok(())
+    }
+
+    /// Turn one received line into the response owed to the client.
+    ///
+    /// Returns `None` for a notification: JSON-RPC 2.0 says the receiver "MUST
+    /// NOT send a response" to one, and that holds however malformed it is.
+    async fn answer(&self, line: &str) -> Option<Response> {
+        // Deserialize to a `Value` before a `Request`. It is what makes an
+        // absent `id` distinguishable from an explicit `"id": null`, and what
+        // keeps the client's id recoverable when the rest of the object is not
+        // a valid Request.
+        let message: Value = match serde_json::from_str(line) {
+            Ok(message) => message,
+            Err(err) => {
+                tracing::warn!("unparseable message: {err}");
+                // Nothing can be recovered from text that is not JSON, so
+                // JSON-RPC 2.0 requires a null id on this response.
+                return Some(Response::error(None, ServerError::Json(err)));
+            }
+        };
+
+        let id = match classify_request_id(&message) {
+            RequestIdKind::Absent => {
+                self.dispatch_notification(message).await;
+                return None;
+            }
+            RequestIdKind::Invalid => {
+                tracing::warn!("request id is not a string or an integer");
+                return Some(Response::error(
+                    None,
+                    ServerError::InvalidRequest(
+                        "request id must be a string or an integer; MCP forbids a null id"
+                            .to_string(),
+                    ),
+                ));
+            }
+            RequestIdKind::Valid(id) => id,
+        };
+
+        // The message parsed as JSON, so a failure here is -32600 (not a valid
+        // Request object), never -32700, and the id above is still echoable.
+        let request: Request = match serde_json::from_value(message) {
+            Ok(request) => request,
+            Err(err) => {
+                tracing::warn!("invalid request: {err}");
+                return Some(Response::error(
+                    Some(id),
+                    ServerError::InvalidRequest(err.to_string()),
+                ));
+            }
+        };
+
+        Some(self.handle_request(Some(id), request).await)
+    }
+
+    /// Run a notification for its side effects and swallow its outcome.
+    ///
+    /// The client is not owed a response, so a failure here can only be
+    /// logged.
+    async fn dispatch_notification(&self, message: Value) {
+        let request: Request = match serde_json::from_value(message) {
+            Ok(request) => request,
+            Err(err) => {
+                tracing::warn!("invalid notification: {err}");
+                return;
+            }
+        };
+
+        let method = request.method.clone();
+        if let Err(err) = self.dispatch(&request.method, request.params).await {
+            tracing::debug!(method = %method, "notification not handled: {err}");
+        }
     }
 
     /// Serialize and write a single response line.
@@ -118,22 +186,36 @@ impl DataGovMcpServer {
         Ok(())
     }
 
-    /// Validate the request and dispatch to the handler.
-    async fn handle_request(&self, request: Request) -> Response {
-        if let Some(ref version) = request.jsonrpc
-            && version != "2.0"
-        {
-            return Response::error(
-                request.id,
-                ServerError::InvalidRequest(format!(
-                    "invalid jsonrpc version: expected \"2.0\", got \"{version}\""
-                )),
-            );
+    /// Validate the request envelope and dispatch to the handler.
+    async fn handle_request(&self, id: Option<Value>, request: Request) -> Response {
+        // JSON-RPC 2.0, section 4: the `jsonrpc` member "MUST be exactly
+        // \"2.0\"". An absent member fails that as surely as a wrong one, and
+        // rejecting it here is the client's earliest signal that it built the
+        // message against a different protocol.
+        match request.jsonrpc.as_deref() {
+            Some("2.0") => {}
+            Some(version) => {
+                return Response::error(
+                    id,
+                    ServerError::InvalidRequest(format!(
+                        "invalid jsonrpc version: expected \"2.0\", got \"{version}\""
+                    )),
+                );
+            }
+            None => {
+                return Response::error(
+                    id,
+                    ServerError::InvalidRequest(
+                        "missing jsonrpc member: JSON-RPC 2.0 requires \"jsonrpc\": \"2.0\""
+                            .to_string(),
+                    ),
+                );
+            }
         }
 
         match self.dispatch(&request.method, request.params).await {
-            Ok(result) => Response::success(request.id, result),
-            Err(err) => Response::error(request.id, err),
+            Ok(result) => Response::success(id, result),
+            Err(err) => Response::error(id, err),
         }
     }
 }
