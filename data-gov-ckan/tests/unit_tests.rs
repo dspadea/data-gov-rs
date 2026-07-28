@@ -7,7 +7,7 @@
 //! cargo test -p data-gov-ckan --test unit_tests
 //! ```
 
-use data_gov_ckan::{CkanClient, CkanError, Configuration};
+use data_gov_ckan::{ApiKey, CkanClient, CkanError, Configuration};
 use serde_json::json;
 use std::sync::Arc;
 use wiremock::matchers::{method, path, query_param};
@@ -610,6 +610,165 @@ fn error_display_formats() {
 fn ckan_error_implements_std_error() {
     fn assert_error<T: std::error::Error>() {}
     assert_error::<CkanError>();
+}
+
+// ---------------------------------------------------------------------------
+// Credentials and user agent (#56)
+// ---------------------------------------------------------------------------
+//
+// `Configuration`'s credential and user-agent fields were accepted but never
+// read: `call_action` built every request from `client.get(&url).query(...)`
+// alone. A caller who believed a request was authenticated sent it anonymous,
+// with nothing in the response distinguishing "not authorized" from
+// "credential never left the client".
+
+async fn mount_ok_package_search(server: &MockServer) {
+    Mock::given(method("GET"))
+        .and(path("/action/package_search"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "help": "", "success": true,
+            "result": { "count": 0, "results": [] }
+        })))
+        .mount(server)
+        .await;
+}
+
+#[tokio::test]
+async fn configured_api_key_is_sent_as_authorization_header() {
+    let server = MockServer::start().await;
+    mount_ok_package_search(&server).await;
+
+    let config = Arc::new(Configuration {
+        base_path: server.uri(),
+        api_key: Some(ApiKey {
+            prefix: None,
+            key: "my-secret-key".to_string(),
+        }),
+        ..Configuration::default()
+    });
+    CkanClient::new(config)
+        .package_search(None, None, None, None)
+        .await
+        .expect("should succeed");
+
+    let requests = server
+        .received_requests()
+        .await
+        .expect("request recording must be enabled");
+    assert_eq!(requests.len(), 1);
+    let auth = requests[0]
+        .headers
+        .get("authorization")
+        .expect("Authorization header missing");
+    assert_eq!(auth.to_str().unwrap(), "my-secret-key");
+}
+
+#[tokio::test]
+async fn configured_api_key_with_prefix_is_sent_as_authorization_header() {
+    let server = MockServer::start().await;
+    mount_ok_package_search(&server).await;
+
+    let config = Arc::new(Configuration {
+        base_path: server.uri(),
+        api_key: Some(ApiKey {
+            prefix: Some("Token".to_string()),
+            key: "my-secret-key".to_string(),
+        }),
+        ..Configuration::default()
+    });
+    CkanClient::new(config)
+        .package_search(None, None, None, None)
+        .await
+        .expect("should succeed");
+
+    let requests = server.received_requests().await.unwrap();
+    let auth = requests[0].headers.get("authorization").unwrap();
+    assert_eq!(auth.to_str().unwrap(), "Token my-secret-key");
+}
+
+#[tokio::test]
+async fn configured_bearer_token_is_sent_as_authorization_header() {
+    let server = MockServer::start().await;
+    mount_ok_package_search(&server).await;
+
+    let config = Arc::new(Configuration {
+        base_path: server.uri(),
+        bearer_access_token: Some("bearer-token-value".to_string()),
+        ..Configuration::default()
+    });
+    CkanClient::new(config)
+        .package_search(None, None, None, None)
+        .await
+        .expect("should succeed");
+
+    let requests = server.received_requests().await.unwrap();
+    let auth = requests[0].headers.get("authorization").unwrap();
+    assert_eq!(auth.to_str().unwrap(), "Bearer bearer-token-value");
+}
+
+#[tokio::test]
+async fn configured_basic_auth_is_sent_as_authorization_header() {
+    let server = MockServer::start().await;
+    mount_ok_package_search(&server).await;
+
+    let config = Arc::new(Configuration {
+        base_path: server.uri(),
+        basic_auth: Some(("alice".to_string(), Some("hunter2".to_string()))),
+        ..Configuration::default()
+    });
+    CkanClient::new(config)
+        .package_search(None, None, None, None)
+        .await
+        .expect("should succeed");
+
+    let requests = server.received_requests().await.unwrap();
+    let auth = requests[0].headers.get("authorization").unwrap();
+    // "Basic " + base64("alice:hunter2")
+    assert_eq!(auth.to_str().unwrap(), "Basic YWxpY2U6aHVudGVyMg==");
+}
+
+#[tokio::test]
+async fn no_credential_configured_sends_no_authorization_header() {
+    let server = MockServer::start().await;
+    mount_ok_package_search(&server).await;
+
+    let config = Arc::new(Configuration {
+        base_path: server.uri(),
+        ..Configuration::default()
+    });
+    CkanClient::new(config)
+        .package_search(None, None, None, None)
+        .await
+        .expect("should succeed");
+
+    let requests = server.received_requests().await.unwrap();
+    assert!(
+        requests[0].headers.get("authorization").is_none(),
+        "no credential was configured; the client must not send one anyway"
+    );
+}
+
+#[tokio::test]
+async fn configured_user_agent_is_sent_on_every_request() {
+    let server = MockServer::start().await;
+    mount_ok_package_search(&server).await;
+
+    let config = Arc::new(Configuration {
+        base_path: server.uri(),
+        user_agent: Some("my-app/9.9".to_string()),
+        ..Configuration::default()
+    });
+    CkanClient::new(config)
+        .package_search(None, None, None, None)
+        .await
+        .expect("should succeed");
+
+    let requests = server.received_requests().await.unwrap();
+    let ua = requests[0]
+        .headers
+        .get("user-agent")
+        .expect("User-Agent header missing");
+    assert_eq!(ua.to_str().unwrap(), "my-app/9.9");
 }
 
 // ---------------------------------------------------------------------------
