@@ -45,11 +45,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   goes to stderr via `tracing` at startup.
 
 ### Changed
+- **One TLS stack, and you can now choose which** (#47). `data-gov` declared
+  `reqwest` without `default-features = false`, so reqwest's own default
+  backend was always enabled on top of whatever `data-gov-catalog` and
+  `data-gov-ckan` selected. Every build compiled **both** native-tls (pulling
+  `openssl`) and rustls, and the `native-tls` / `rustls-tls` features the lower
+  two crates expose could not actually select anything, because `data-gov`
+  re-enabled the default underneath them. A default workspace build drops from
+  173 crates to 156.
+
+  `data-gov` and `data-gov-mcp-server` now expose their own `native-tls`
+  (default) and `rustls-tls` features, forwarding the choice down the whole
+  chain. To drop `openssl` entirely:
+
+  ```toml
+  data-gov = { version = "0.5", default-features = false, features = ["rustls-tls"] }
+  ```
+
+  If you were relying on rustls being present because reqwest's default pulled
+  it in, you must now select it explicitly.
+- **Inter-crate dependencies resolve from the tree you cloned** (#75). No member
+  manifest declared a sibling `path`, so local resolution worked only through a
+  root `[patch.crates-io]` table — and `[patch]` applies to the top-level
+  workspace of the build being run, so it was never inherited by consumers. A
+  git-dependency consumer silently got the published crate instead of the tree
+  they cloned; three commits had already landed on `data-gov-catalog/src` while
+  `data-gov` was pinned to a published version. Each edge now declares both
+  `version` and `path`, and the patch table is gone.
 - All dependencies refreshed to their latest semver-compatible releases.
   `rustyline` 17 → 18 is deliberately **not** included; it is a major bump
   under the whole REPL and is tracked separately.
 
 ### Security
+- **`openssl` is now avoidable rather than unconditional** (#47). It was
+  reachable only because `reqwest` pulled its default TLS backend, which is why
+  the seven GHSA advisories below applied to this workspace at all. Selecting
+  `rustls-tls` now leaves `cargo tree -i openssl` empty for every crate. The
+  rustls path brings `aws-lc-rs` in openssl's place, which is a C library with
+  the same class of build requirement — a different trade, not a free one.
 - **Cleared three advisories** by refreshing the lockfile (#46):
   - `quinn-proto` 0.11.14 → 0.11.16 — RUSTSEC-2026-0185, remote memory
     exhaustion from unbounded out-of-order stream reassembly (7.5 High).
@@ -62,6 +95,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `Error::downcast_mut()`.
 
 ### Fixed
+- **A build with no TLS backend is rejected instead of shipped** (#47). Turning
+  reqwest's defaults off made a new configuration reachable:
+  `default-features = false` with neither `native-tls` nor `rustls-tls`
+  compiled clean and produced a client with an HTTP-only connector. Every
+  data.gov endpoint is HTTPS, so the crate built and then failed on the first
+  request with `invalid URL, scheme is not http` — an error naming the scheme
+  rather than the missing feature. All four crate roots now fail the build with
+  a message that says which feature to enable.
 - **`dataset_by_slug` now resolves every dataset that exists** (#94). It was
   implemented as a full-text search — `q=<slug>&per_page=20`, scanning the page
   for an exact match — because the `slug=` query parameter it was written
