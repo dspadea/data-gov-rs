@@ -54,13 +54,22 @@ Working inside this repository? Point to the local path instead: `data-gov-ckan 
 
 ## Quick start
 
+`Configuration::default()` does not point at any live portal — this crate
+works with any CKAN-compatible deployment, not one operator's service, so
+there is no portal it defaults to. Set `base_path` to the portal you want to
+query before making a call:
+
 ```rust
 use data_gov_ckan::{CkanClient, Configuration};
 use std::sync::Arc;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let client = CkanClient::new(Arc::new(Configuration::default()));
+    let config = Configuration {
+        base_path: "https://demo.ckan.org/api/3".to_string(),
+        ..Configuration::default()
+    };
+    let client = CkanClient::new(Arc::new(config));
 
     let results = client.package_search(Some("climate"), Some(10), Some(0), None).await?;
     println!("Found {} datasets", results.count.unwrap_or(0));
