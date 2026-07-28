@@ -77,6 +77,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Breaking - MCP server
 
+- **`jsonrpc` is now required, and ids must be a string or an integer** (#93,
+  #55). A request with no `jsonrpc` member was accepted and served: the version
+  check existed and worked, but only fired when the member was present. An
+  explicit `"id": null` was treated as a notification and never answered, so the
+  client waited forever - MCP forbids a null request id outright. All of these
+  now return `-32600`, echoing the client's id where one can be recovered.
+- **Tool arguments reject undeclared properties** (#70). Every tool schema
+  advertised `additionalProperties: false` and no parameter struct enforced it,
+  so a misspelled key was dropped and the tool returned success computed from
+  different arguments - `{"datasetId":"x","output_dir":"/data"}` wrote to the
+  default directory and reported success. Unknown keys now yield `-32602`.
+- **A request id already in flight is refused**, so a client cannot have two
+  outstanding requests under one id.
+
 - **`structuredContent` is now always a JSON object** (#60). Two tools —
   `data_gov.listOrganizations` and `data_gov.autocompleteDatasets` — returned a
   bare JSON array, which the spec does not permit: structured content "is
@@ -110,6 +124,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   goes to stderr via `tracing` at startup.
 
 ### Changed
+- **MCP responses may arrive out of order; correlate by `id`** (#65). The run
+  loop awaited each handler before reading the next line, so a
+  `downloadResources` call holding that await for minutes queued every later
+  request behind it - including `shutdown`, which meant the process had to be
+  killed. Requests now dispatch concurrently behind a single writer, so whole
+  lines are still never interleaved.
+- **Content-dependent MCP failures return a result, not a JSON-RPC error** (#70).
+  "No matching downloadable distributions" and "dataset has no DCAT metadata"
+  were `-32602 invalid parameters`, which neither describes. They now return
+  `isError: true` with the reason in `content`, which is what lets a model see
+  the failure and correct itself; `isError` is always present. Genuine protocol
+  faults stay JSON-RPC errors.
+- **The MCP read loop bounds itself** (#109). It dispatches at most 256 requests
+  at once and caps an accepted line at 1 MiB. Peak memory with an undrained
+  stdout falls from tens of gigabytes to a flat 25 MB - and a drained pipeline
+  runs 3.2x faster, because the unbounded loop had been thrashing.
 - **Downloads refuse a destination on your own network** (#51). A distribution's
   `downloadURL` comes from harvested third-party metadata, so it is untrusted
   input. Loopback, RFC1918, carrier-grade NAT, IPv6 unique-local, and link-local
@@ -218,6 +248,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `Error::downcast_mut()`.
 
 ### Added
+- MCP `ping` and `notifications/cancelled`. Cancelling drops the in-flight
+  handler and sends no response, as the spec requires.
 - `util::join_inside` in `data-gov`, which joins a component onto a directory and
   refuses a result that leaves it.
 - `DataGovConfig::with_private_network_downloads`.
@@ -227,6 +259,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   client with specific timeouts.
 
 ### Fixed
+- **One non-UTF-8 byte no longer ends the MCP session** (#55). `next_line`
+  returns an error on invalid UTF-8 and it propagated to `main`, so a single
+  malformed byte killed the server for every subsequent well-formed request.
+- **A cancelled id that is then reused is answered** (#65). A completing request
+  could deregister a retry that had claimed its freed id, dropping that retry's
+  cancellation sender and leaving it with no response and no error.
+- **`tools/call` with no `arguments` succeeds** where the schema requires none,
+  and **`datasetSubdirectory: false` is honoured when `outputDir` is omitted**
+  (#70) - the flag was inert across half its input space.
+- **`unavailableFormats` names the right format** (#70). A `.filter()` dropped
+  blank entries, so the vector no longer index-aligned with the one it was
+  zipped against and the report paired the wrong strings.
 - **An interrupted download no longer destroys the file it was replacing** (#49).
   `File::create` is create-plus-truncate, so an existing complete file was zeroed
   the moment the request succeeded, and every error path left a partial file
