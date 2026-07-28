@@ -21,6 +21,20 @@ use assert_cmd::Command;
 use predicates::prelude::*;
 use std::path::{Path, PathBuf};
 
+/// A `data-gov` command whose configuration directory is an empty temporary
+/// directory.
+///
+/// The binary reads `<config>/data-gov/config.toml` (#86), so without this
+/// every test here would depend on whether the person running it happens to
+/// have a `config.toml`, and on what it sets. `XDG_CONFIG_HOME` relocates
+/// that directory on every platform, which is what makes the isolation
+/// portable.
+fn isolated_command(config_home: &Path) -> Command {
+    let mut command = Command::cargo_bin("data-gov").expect("data-gov binary must build");
+    command.env("XDG_CONFIG_HOME", config_home);
+    command
+}
+
 /// Path to `data-gov-catalog`'s own captured-and-manifest-tracked
 /// "zero results" fixture (see that crate's `tests/fixtures/MANIFEST.json`
 /// and CLAUDE.md's "Capture the negatives too" section). Reused rather
@@ -64,9 +78,9 @@ fn mock_search_no_matches_server() -> (tokio::runtime::Runtime, wiremock::MockSe
 #[test]
 fn unknown_command_error_lands_on_stderr_not_stdout_and_exits_nonzero() {
     let dir = tempfile::tempdir().expect("tempdir");
+    let config_home = tempfile::tempdir().expect("tempdir");
 
-    let assert = Command::cargo_bin("data-gov")
-        .expect("data-gov binary must build")
+    let assert = isolated_command(config_home.path())
         .current_dir(dir.path())
         .arg("definitely-not-a-real-command-xyz123")
         .assert()
@@ -94,9 +108,9 @@ fn unknown_command_error_lands_on_stderr_not_stdout_and_exits_nonzero() {
 #[test]
 fn successful_command_writes_nothing_to_stderr() {
     let dir = tempfile::tempdir().expect("tempdir");
+    let config_home = tempfile::tempdir().expect("tempdir");
 
-    Command::cargo_bin("data-gov")
-        .expect("data-gov binary must build")
+    isolated_command(config_home.path())
         .current_dir(dir.path())
         .arg("help")
         .assert()
@@ -113,9 +127,9 @@ fn search_with_no_matches_exits_zero() {
     // catch could just as easily have turned "empty results" into a
     // nonzero exit as it could have swapped stdout for stderr.
     let (rt, server) = mock_search_no_matches_server();
+    let config_home = tempfile::tempdir().expect("tempdir");
 
-    Command::cargo_bin("data-gov")
-        .expect("data-gov binary must build")
+    isolated_command(config_home.path())
         .env("DATA_GOV_BASE_URL", server.uri())
         .args([
             "search",
@@ -127,4 +141,117 @@ fn search_with_no_matches_exits_zero() {
 
     drop(server);
     drop(rt);
+}
+
+// --- #53: --download-dir is accepted and then honoured, in a one-shot
+// invocation as well as in the REPL ---
+
+/// #53: `--download-dir` was accepted by clap, applied to the configuration,
+/// and then discarded, because `get_base_download_dir()` returned
+/// `current_dir()` unconditionally in `CommandLine` mode - which is the mode
+/// every non-REPL invocation runs in. Files landed in the working directory.
+///
+/// `info` prints the download directory and touches no network, so this
+/// drives the real argv, the real mode selection, and the real resolution
+/// without a download.
+#[test]
+fn download_dir_flag_is_honoured_by_a_one_shot_command() {
+    let working_dir = tempfile::tempdir().expect("tempdir");
+    let chosen_dir = tempfile::tempdir().expect("tempdir");
+    let config_home = tempfile::tempdir().expect("tempdir");
+
+    let assert = isolated_command(config_home.path())
+        .current_dir(working_dir.path())
+        .args(["--color", "never", "--download-dir"])
+        .arg(chosen_dir.path())
+        .arg("info")
+        .assert()
+        .success();
+
+    let stdout = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
+    let chosen = chosen_dir.path().display().to_string();
+    let working = working_dir.path().display().to_string();
+
+    assert!(
+        stdout.contains(&chosen),
+        "a one-shot command must download into the directory the flag named, got: {stdout}"
+    );
+    assert!(
+        !stdout.contains(&working),
+        "the working directory must not override the flag, got: {stdout}"
+    );
+}
+
+/// The environment layer reaches the same setting, one step below the flag.
+#[test]
+fn download_dir_environment_variable_is_honoured_by_a_one_shot_command() {
+    let working_dir = tempfile::tempdir().expect("tempdir");
+    let chosen_dir = tempfile::tempdir().expect("tempdir");
+    let config_home = tempfile::tempdir().expect("tempdir");
+
+    let assert = isolated_command(config_home.path())
+        .current_dir(working_dir.path())
+        .env("DATA_GOV_DOWNLOAD_DIR", chosen_dir.path())
+        .args(["--color", "never", "info"])
+        .assert()
+        .success();
+
+    let stdout = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
+    assert!(
+        stdout.contains(&chosen_dir.path().display().to_string()),
+        "DATA_GOV_DOWNLOAD_DIR must reach the download directory, got: {stdout}"
+    );
+}
+
+/// The file layer reaches the same setting, one step below the environment.
+#[test]
+fn a_config_file_download_dir_is_honoured_by_a_one_shot_command() {
+    let working_dir = tempfile::tempdir().expect("tempdir");
+    let chosen_dir = tempfile::tempdir().expect("tempdir");
+    let config_home = tempfile::tempdir().expect("tempdir");
+
+    let app_config_dir = config_home.path().join("data-gov");
+    std::fs::create_dir_all(&app_config_dir).expect("create the app config directory");
+    std::fs::write(
+        app_config_dir.join("config.toml"),
+        format!(
+            "download_dir = {:?}\n",
+            chosen_dir.path().display().to_string()
+        ),
+    )
+    .expect("write config.toml");
+
+    let assert = isolated_command(config_home.path())
+        .current_dir(working_dir.path())
+        .args(["--color", "never", "info"])
+        .assert()
+        .success();
+
+    let stdout = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
+    assert!(
+        stdout.contains(&chosen_dir.path().display().to_string()),
+        "config.toml must reach the download directory, got: {stdout}"
+    );
+}
+
+/// A broken configuration file fails loudly on stderr rather than being
+/// ignored, so a typo cannot silently change what the tool does.
+#[test]
+fn a_malformed_config_file_fails_on_stderr_and_exits_nonzero() {
+    let config_home = tempfile::tempdir().expect("tempdir");
+    let app_config_dir = config_home.path().join("data-gov");
+    std::fs::create_dir_all(&app_config_dir).expect("create the app config directory");
+    std::fs::write(app_config_dir.join("config.toml"), "download_dir = \n")
+        .expect("write the broken config.toml");
+
+    let assert = isolated_command(config_home.path())
+        .args(["--color", "never", "info"])
+        .assert()
+        .failure();
+
+    let stderr = String::from_utf8_lossy(&assert.get_output().stderr).into_owned();
+    assert!(
+        stderr.contains("config.toml"),
+        "the failure must name the file that could not be parsed, got: {stderr}"
+    );
 }

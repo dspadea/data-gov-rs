@@ -34,6 +34,13 @@ indicatif = { version = "0.18.1", features = ["tokio"] }
 url = "2.5"
 # Cross-platform directories
 dirs = "6.0"
+# Configuration file (src/config/file.rs). The standard library has no TOML
+# parser and no derive-based deserialization, and config.toml is a data shape
+# with a known key set that CLAUDE.md requires be modelled as a struct rather
+# than a map. Versions confirmed current via `cargo info` against the live
+# crates.io index, and scanned against OSV before the first build.
+serde = { version = "1.0.229", features = ["derive"] }
+toml = { version = "1.1.4", default-features = false, features = ["std", "serde", "parse"] }
 
 [dev-dependencies]
 wiremock = "0.6"

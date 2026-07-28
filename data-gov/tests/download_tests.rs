@@ -254,7 +254,7 @@ async fn zero_max_concurrent_downloads_set_by_struct_literal_is_rejected_by_with
     let tmp = TempDir::new().expect("tempdir");
     let config = DataGovConfig {
         max_concurrent_downloads: 0,
-        base_download_dir: tmp.path().to_path_buf(),
+        base_download_dir: Some(tmp.path().to_path_buf()),
         allow_private_network_downloads: true,
         ..DataGovConfig::default()
     };

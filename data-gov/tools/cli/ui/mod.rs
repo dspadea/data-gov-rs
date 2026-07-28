@@ -18,7 +18,8 @@ use self::handlers::execute_command;
 use self::repl::DataGovRepl;
 use self::reporter::CliStatusReporter;
 
-use data_gov::{DataGovClient, DataGovConfig, OperatingMode};
+use data_gov::config::{ConfigOverrides, ConfigResolver};
+use data_gov::{DataGovClient, OperatingMode};
 
 /// Global color helper - will be set at startup
 static COLOR_HELPER: OnceLock<ColorHelper> = OnceLock::new();
@@ -173,21 +174,36 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     let matches = app.get_matches();
 
-    // Build configuration
-    let mut config = DataGovConfig::default();
-    let mut color_mode = ColorMode::default();
+    // The mode has to be settled before the configuration is resolved: it is
+    // what the download directory falls back to when no layer chose one. A
+    // positional command means a one-shot invocation, anything else the REPL.
+    let mode = if matches.get_one::<String>("command").is_some() {
+        OperatingMode::CommandLine
+    } else {
+        OperatingMode::Interactive
+    };
 
+    let mut flags = ConfigOverrides::default();
     if let Some(download_dir) = matches.get_one::<String>("download-dir") {
-        config = config.with_download_dir(PathBuf::from(download_dir));
+        flags = flags.with_download_dir(PathBuf::from(download_dir));
     }
 
-    // Mirrors `data-gov-mcp-server`'s own `DATA_GOV_BASE_URL` handling: lets
-    // either front door point at a mirror, a proxy, or — for this crate's
-    // own process-level tests — a mock server, without a CLI flag for
-    // something nobody sets by hand day to day.
-    if let Ok(base_url) = std::env::var("DATA_GOV_BASE_URL") {
-        config = config.with_base_url(base_url);
+    // One chain for every setting: flag, then environment, then
+    // <config>/data-gov/config.toml, then the built-in default. `--download-dir`
+    // therefore wins by construction rather than by a mode check that used to
+    // discard it (#53), and `DATA_GOV_BASE_URL` - which the MCP server also
+    // honours - now sits in the chain instead of beside it.
+    let resolved = ConfigResolver::from_process()?
+        .with_flags(flags)
+        .with_mode(mode)
+        .resolve()?;
+
+    for warning in resolved.warnings() {
+        eprintln!("Warning: {warning}");
     }
+
+    let mut config = resolved.into_config();
+    let mut color_mode = ColorMode::default();
 
     // Parse color mode
     if let Some(color_str) = matches.get_one::<String>("color") {
@@ -213,15 +229,13 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
         .set(color_helper.clone())
         .map_err(|_| "Failed to set color helper")?;
 
-    // Check if we're in CLI mode or REPL mode and set the appropriate mode
+    // The mode was settled before resolution, so it is already on `config`.
     if let Some(command) = matches.get_one::<String>("command") {
         // CLI mode - execute single command and exit
-        config = config.with_mode(OperatingMode::CommandLine);
         let client = DataGovClient::with_config(config)?;
         run_cli_mode(client, command, &matches)?;
     } else {
         // REPL mode - interactive session
-        config = config.with_mode(OperatingMode::Interactive);
         let client = DataGovClient::with_config(config)?;
         let mut repl = DataGovRepl::new(client)?;
         repl.run()?;
@@ -370,6 +384,7 @@ fn run_script_file(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use data_gov::DataGovConfig;
     use std::io::Write;
 
     fn test_client() -> DataGovClient {
