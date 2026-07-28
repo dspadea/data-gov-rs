@@ -214,6 +214,137 @@ async fn dataset_by_slug_percent_encodes_hostile_slugs_into_one_path_segment() {
     }
 }
 
+/// A single hostile id, probed against one endpoint template.
+///
+/// Shared by the four `#71.1` tests below: `harvest_record`,
+/// `harvest_record_raw`, `harvest_record_transformed`, and
+/// `location_geometry` all still built their path with a bare
+/// `format!("/prefix/{id}/suffix")`. `Url::parse` removes dot-segments
+/// *after* percent-decoding, so an unencoded `..` or `%2e` can redirect the
+/// GET to a different path, and a bare `#` or `?` strands the rest of the
+/// value in the fragment or query instead of the path -- which is the
+/// silent-success case: an unrelated JSON object then deserializes into an
+/// all-`None` model with no error at all.
+struct HostilePathCase {
+    /// The id supplied to the client method.
+    hostile: &'static str,
+    /// What the resulting request path must start with.
+    prefix: &'static str,
+    /// How many `/` characters the full path must contain: proof the hostile
+    /// id landed in exactly one path segment rather than adding or removing
+    /// segments.
+    slash_count: usize,
+}
+
+const HOSTILE_IDS: [&str; 8] = [
+    "../search",
+    "..%2Fsearch",
+    "a/b",
+    "with space",
+    "quote\"inside",
+    "sem;colon",
+    "q?uery=1",
+    "frag#ment",
+];
+
+/// Mount a catch-all 200 responder, issue one request, and assert it landed
+/// on exactly one path segment under `case.prefix`.
+async fn assert_hostile_id_stays_in_one_segment(
+    case: &HostilePathCase,
+    body: serde_json::Value,
+    call: impl AsyncFnOnce(&CatalogClient, &str) -> (),
+) {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(body))
+        .mount(&server)
+        .await;
+
+    call(&client_for(&server), case.hostile).await;
+
+    let requests = server.received_requests().await.expect("recorded requests");
+    assert_eq!(requests.len(), 1, "{:?}: exactly one request", case.hostile);
+    let path = requests[0].url.path();
+
+    assert!(
+        path.starts_with(case.prefix),
+        "{:?} escaped the endpoint: requested {path}",
+        case.hostile
+    );
+    assert_eq!(
+        path.matches('/').count(),
+        case.slash_count,
+        "{:?} must occupy exactly one path segment, got {path}",
+        case.hostile
+    );
+    assert!(
+        requests[0].url.query().is_none(),
+        "{:?} must not introduce a query string: {}",
+        case.hostile,
+        requests[0].url
+    );
+}
+
+#[tokio::test]
+async fn harvest_record_percent_encodes_hostile_ids_into_one_path_segment() {
+    for hostile in HOSTILE_IDS {
+        let case = HostilePathCase {
+            hostile,
+            prefix: "/harvest_record/",
+            slash_count: 2,
+        };
+        assert_hostile_id_stays_in_one_segment(&case, json!({}), async |client, id| {
+            let _ = client.harvest_record(id).await;
+        })
+        .await;
+    }
+}
+
+#[tokio::test]
+async fn harvest_record_raw_percent_encodes_hostile_ids_into_one_path_segment() {
+    for hostile in HOSTILE_IDS {
+        let case = HostilePathCase {
+            hostile,
+            prefix: "/harvest_record/",
+            slash_count: 3,
+        };
+        assert_hostile_id_stays_in_one_segment(&case, json!({}), async |client, id| {
+            let _ = client.harvest_record_raw(id).await;
+        })
+        .await;
+    }
+}
+
+#[tokio::test]
+async fn harvest_record_transformed_percent_encodes_hostile_ids_into_one_path_segment() {
+    for hostile in HOSTILE_IDS {
+        let case = HostilePathCase {
+            hostile,
+            prefix: "/harvest_record/",
+            slash_count: 3,
+        };
+        assert_hostile_id_stays_in_one_segment(&case, json!({}), async |client, id| {
+            let _ = client.harvest_record_transformed(id).await;
+        })
+        .await;
+    }
+}
+
+#[tokio::test]
+async fn location_geometry_percent_encodes_hostile_ids_into_one_path_segment() {
+    for hostile in HOSTILE_IDS {
+        let case = HostilePathCase {
+            hostile,
+            prefix: "/api/location/",
+            slash_count: 3,
+        };
+        assert_hostile_id_stays_in_one_segment(&case, json!({}), async |client, id| {
+            let _ = client.location_geometry(id).await;
+        })
+        .await;
+    }
+}
+
 #[tokio::test]
 async fn organizations_parses_envelope() {
     let server = MockServer::start().await;
