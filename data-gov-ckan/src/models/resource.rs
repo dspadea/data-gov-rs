@@ -123,3 +123,65 @@ where
         _ => None,
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn size_of(value: serde_json::Value) -> Option<i64> {
+        let resource: Resource =
+            serde_json::from_value(json!({ "size": value })).expect("Resource must deserialize");
+        resource.size
+    }
+
+    #[test]
+    fn deserialize_flexible_size_accepts_a_json_integer() {
+        assert_eq!(size_of(json!(523)), Some(523));
+    }
+
+    #[test]
+    fn deserialize_flexible_size_accepts_a_numeric_string() {
+        assert_eq!(size_of(json!("523")), Some(523));
+    }
+
+    /// serde_json::Number::as_i64() returns None for any number written
+    /// with a decimal point, even a whole one -- 523.0 is stored as the
+    /// Float variant internally, and as_i64() never inspects Float. A
+    /// CKAN-compatible backend whose JSON encoder always emits floats for
+    /// numeric fields would otherwise lose every size.
+    #[test]
+    fn deserialize_flexible_size_accepts_an_integral_json_float() {
+        assert_eq!(size_of(json!(523.0)), Some(523));
+    }
+
+    #[test]
+    fn deserialize_flexible_size_rejects_a_non_integral_json_float() {
+        assert_eq!(size_of(json!(523.7)), None);
+    }
+
+    #[test]
+    fn deserialize_flexible_size_degrades_a_non_numeric_string_to_none() {
+        assert_eq!(size_of(json!("523 KiB")), None);
+    }
+
+    #[test]
+    fn deserialize_flexible_size_treats_null_as_none() {
+        assert_eq!(size_of(json!(null)), None);
+    }
+
+    #[test]
+    fn deserialize_flexible_size_treats_empty_string_as_none() {
+        assert_eq!(size_of(json!("")), None);
+    }
+
+    /// A value with no fractional part but too large for i64 (parsed as the
+    /// Float variant, since it doesn't fit u64 either) must still degrade to
+    /// None rather than truncating to a wrong-but-plausible i64.
+    #[test]
+    fn deserialize_flexible_size_rejects_a_value_beyond_i64_max() {
+        let beyond_i64_max: serde_json::Value =
+            serde_json::from_str("99999999999999999999999999999999").expect("valid JSON number");
+        assert_eq!(size_of(beyond_i64_max), None);
+    }
+}
