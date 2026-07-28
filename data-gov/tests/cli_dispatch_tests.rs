@@ -151,12 +151,21 @@ fn shebang_script_runs_through_the_real_kernel_mechanism() {
     use std::os::unix::fs::PermissionsExt;
 
     let bin_path = assert_cmd::cargo::cargo_bin("data-gov");
-    let bin_dir = bin_path
-        .parent()
-        .expect("the data-gov binary path has a parent directory")
-        .to_path_buf();
 
     let dir = tempfile::tempdir().expect("tempdir");
+
+    // Copy the binary rather than putting `target/debug` on PATH. Executing
+    // the build artifact directly races cargo: while cargo still holds a
+    // write handle on it, `exec` fails with ETXTBSY ("Text file busy"), which
+    // surfaced as an intermittent failure under the full gate. The copy is
+    // ours alone, so nothing can be writing it while we run it.
+    let bin_dir = dir.path().join("bin");
+    fs::create_dir(&bin_dir).expect("create the private bin directory");
+    let bin_copy = bin_dir.join("data-gov");
+    fs::copy(&bin_path, &bin_copy).expect("copy the data-gov binary out of the build directory");
+    fs::set_permissions(&bin_copy, fs::Permissions::from_mode(0o755))
+        .expect("make the copied binary executable");
+
     let script_path = dir.path().join("report.sh");
     {
         let mut file = fs::File::create(&script_path).expect("create script file");
@@ -171,7 +180,7 @@ fn shebang_script_runs_through_the_real_kernel_mechanism() {
     fs::set_permissions(&script_path, perms).expect("chmod +x the script");
 
     // `env` resolves the bare `data-gov` named in the shebang via PATH,
-    // so the freshly-built binary's directory has to be on it.
+    // so our private copy's directory has to be on it.
     let existing_path = std::env::var_os("PATH").unwrap_or_default();
     let mut new_path = std::ffi::OsString::from(bin_dir);
     new_path.push(":");
