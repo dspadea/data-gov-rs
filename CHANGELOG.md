@@ -92,6 +92,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `data_gov::catalog` re-export. The lockfile drops from 308 to 279 crates.
 
 ### Infrastructure
+
+- **Recorded the lessons from the 2026-07 review in `CLAUDE.md`**, each written
+  from a specific failure rather than from principle: falsifiability is proven
+  by mutation rather than by introspection; assertions are driven from the
+  registry rather than one hand-picked instance; the machine-readable API spec
+  outranks the prose docs; work branches never stack, because a stacked PR
+  receives no CI and says so quietly.
+- **Adopted the engineering standards from the adelie-ai repositories** that
+  this project did not already cover: mechanical warnings-as-errors via a
+  `[workspace.lints]` table, the observation that `--all-features` compiles a
+  superset rather than exercising mutually exclusive features, an advisory scan
+  that cannot pass by accident, scanning before the first build because
+  `build.rs` executes at compile time, adversarial self-review of a diff before
+  requesting review, earning abstractions at roughly three call sites, worktree
+  and issue hygiene, and a reference list of which upstream sources are
+  authoritative and which are stale.
 - Documented the testing standard in `CLAUDE.md`: test conditions derive from
   the specification or real API data and never from the current implementation;
   every test must name the wrong implementation it would catch; real captured
