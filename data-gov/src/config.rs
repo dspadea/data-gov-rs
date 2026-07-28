@@ -220,3 +220,32 @@ impl DataGovConfig {
         self.status_reporter.as_ref()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct NullReporter;
+    impl StatusReporter for NullReporter {}
+
+    /// #77: `without_status_reporter` had zero callers, zero tests. It is
+    /// the natural complement of `with_status_reporter`, which the CLI does
+    /// use to wire up its UI callbacks, so it is kept rather than removed.
+    /// A pure setter with two possible outcomes is cheap to fully prove.
+    #[test]
+    fn without_status_reporter_clears_a_previously_configured_reporter() {
+        let config = DataGovConfig::new()
+            .with_status_reporter(Arc::new(NullReporter))
+            .without_status_reporter();
+        assert!(
+            config.status_reporter().is_none(),
+            "without_status_reporter must clear whatever with_status_reporter set"
+        );
+    }
+
+    #[test]
+    fn without_status_reporter_is_a_no_op_when_none_was_configured() {
+        let config = DataGovConfig::new().without_status_reporter();
+        assert!(config.status_reporter().is_none());
+    }
+}
