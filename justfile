@@ -20,7 +20,7 @@ default:
     @just --list
 
 # The full gate. Run this before you push.
-check: fmt-check check-ascii lint build test check-rustls examples docs
+check: fmt-check check-ascii check-home-paths lint build test check-rustls examples docs
 
 # Format every file in place.
 fmt:
@@ -43,6 +43,26 @@ check-ascii:
       fi
     done
     exit $status
+
+# Fail if the tracked tree contains a real developer's absolute home path
+# (#74): /home/<name>, /Users/<name>, or C:\Users\<name>. A committed path
+# like that works on nobody's machine but the one it was captured from.
+#
+# The lookbehind excludes a path segment inside a URL - "arcgis.com/home/..."
+# is not a home directory - and the three-character floor on the name
+# excludes short synthetic placeholders such as the "me" in a Windows
+# path-traversal test fixture, without hardcoding that value by name.
+# Bracket-class syntax right after the literal prefix keeps this recipe from
+# matching its own pattern definition.
+check-home-paths:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    pattern='(?<![A-Za-z0-9])(/home/|/Users/|C:\\+Users\\+)[A-Za-z0-9._-]{3,}'
+    if git grep -nIP "$pattern" -- .; then
+      echo "^ absolute home path(s) above. Use \$HOME, a workspace-relative path, or a placeholder like /home/<user>." >&2
+      exit 1
+    fi
+    exit 0
 
 # Clippy over every target and feature, warnings fatal.
 lint:
