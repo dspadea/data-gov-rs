@@ -242,19 +242,15 @@ async fn disambiguates_duplicate_filenames_by_index() {
     }
 }
 
-/// #73: `max_concurrent_downloads` is a `pub` field on a struct that is not
-/// `#[non_exhaustive]`, so a struct literal bypasses the clamp in
-/// `with_max_concurrent_downloads`. A zero-permit semaphore is never closed, so
-/// `acquire()` stays pending and `join_all` never resolves.
+/// #73 / #107: `max_concurrent_downloads` is a `pub` field on a struct that
+/// is not `#[non_exhaustive]`, so a struct literal reaches it without
+/// passing through `with_max_concurrent_downloads`. `with_config` now
+/// refuses to build a client from a zero value at all, rather than silently
+/// clamping it (#107): a zero-permit semaphore is never closed, and
+/// clamping would have hidden that from the caller the same way a stale
+/// value hid the original bug in this family (#106).
 #[tokio::test]
-async fn zero_max_concurrent_downloads_set_by_struct_literal_still_completes() {
-    let server = MockServer::start().await;
-    Mock::given(method("GET"))
-        .and(path_regex(r"^/files/.*"))
-        .respond_with(ResponseTemplate::new(200).set_body_bytes(b"payload".to_vec()))
-        .mount(&server)
-        .await;
-
+async fn zero_max_concurrent_downloads_set_by_struct_literal_is_rejected_by_with_config() {
     let tmp = TempDir::new().expect("tempdir");
     let config = DataGovConfig {
         max_concurrent_downloads: 0,
@@ -262,26 +258,17 @@ async fn zero_max_concurrent_downloads_set_by_struct_literal_still_completes() {
         allow_private_network_downloads: true,
         ..DataGovConfig::default()
     };
-    let client = DataGovClient::with_config(config).expect("test client must build");
 
-    // Two distributions, because the single-distribution fast path skips the
-    // semaphore entirely and would pass whatever the permit count is.
-    let distributions = vec![
-        mock_distribution(&server.uri(), "/files/a.csv", "a", "CSV"),
-        mock_distribution(&server.uri(), "/files/b.csv", "b", "CSV"),
-    ];
-
-    let results = tokio::time::timeout(
-        Duration::from_secs(5),
-        client.download_distributions(&distributions, Some(tmp.path())),
-    )
-    .await
-    .expect("a zero permit count must not stall download_distributions");
-
-    assert_eq!(results.len(), 2);
-    for (i, r) in results.iter().enumerate() {
-        assert!(r.is_ok(), "distribution {i} should have succeeded: {r:?}");
-    }
+    let err = DataGovClient::with_config(config)
+        .expect_err("a zero-permit semaphore must be refused at construction, not built");
+    assert!(
+        matches!(err, DataGovError::ConfigError { .. }),
+        "got {err:?}"
+    );
+    assert!(
+        err.to_string().contains("max_concurrent_downloads"),
+        "the error must name the field, got: {err}"
+    );
 }
 
 #[tokio::test]

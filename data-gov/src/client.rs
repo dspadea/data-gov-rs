@@ -1011,4 +1011,67 @@ mod tests {
             .expect("should succeed");
         assert!(!tmp.path().join(".write_test").exists());
     }
+
+    // === #107: with_config rejects the zero values a struct literal or a
+    // clamp-free builder path can produce ===
+
+    #[test]
+    fn with_config_rejects_a_zero_download_timeout() {
+        let config = crate::config::DataGovConfig {
+            download_timeout_secs: 0,
+            ..crate::config::DataGovConfig::default()
+        };
+        let err = DataGovClient::with_config(config)
+            .expect_err("a zero-second connect/read timeout must be rejected, not clamped");
+        match err {
+            DataGovError::ConfigError { message } => {
+                assert!(
+                    message.contains("download_timeout_secs"),
+                    "the error must name the field, got: {message}"
+                );
+            }
+            other => panic!("expected ConfigError, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn with_config_rejects_a_zero_max_concurrent_downloads() {
+        let config = crate::config::DataGovConfig {
+            max_concurrent_downloads: 0,
+            ..crate::config::DataGovConfig::default()
+        };
+        let err = DataGovClient::with_config(config)
+            .expect_err("a zero-permit semaphore must be rejected, not built");
+        match err {
+            DataGovError::ConfigError { message } => {
+                assert!(
+                    message.contains("max_concurrent_downloads"),
+                    "the error must name the field, got: {message}"
+                );
+            }
+            other => panic!("expected ConfigError, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn with_config_accepts_the_smallest_valid_values() {
+        let config = crate::config::DataGovConfig {
+            download_timeout_secs: 1,
+            max_concurrent_downloads: 1,
+            ..crate::config::DataGovConfig::default()
+        };
+        DataGovClient::with_config(config).expect("1 is a valid value for both fields");
+    }
+
+    /// #73's point-of-use clamp in `download_distributions` stays as a
+    /// backstop even though `with_config` now refuses to build a client
+    /// whose `max_concurrent_downloads` is zero: a config assembled some
+    /// other way must still not produce a zero-permit semaphore, which is
+    /// never closed and would stall `acquire()` forever with no error.
+    #[test]
+    fn download_permits_never_returns_zero() {
+        assert_eq!(DataGovClient::download_permits(0), 1);
+        assert_eq!(DataGovClient::download_permits(1), 1);
+        assert_eq!(DataGovClient::download_permits(5), 5);
+    }
 }
