@@ -326,13 +326,16 @@ impl CkanClient {
         if !response.status().is_success() {
             let status = response.status().as_u16();
             // A dropped connection while reading the body is a transport
-            // failure; a body that arrived but is not valid JSON is a decode
-            // failure. Keep those separate rather than folding a `.json()`
-            // call's two failure modes into one RequestError.
+            // failure and must surface as RequestError, not be folded into
+            // this branch's own ApiError -- `.text()` failing here means we
+            // never got CKAN's error body at all, so there is no CKAN error
+            // to report (#72.2). A body that arrived whole but isn't valid
+            // JSON, or isn't the error envelope's shape, stays a decode
+            // concern handled below by falling back to the raw text.
             let body_text = response
                 .text()
                 .await
-                .unwrap_or_else(|_| "Unknown error".to_string());
+                .map_err(|e| CkanError::RequestError(Box::new(e)))?;
             let message = serde_json::from_str::<serde_json::Value>(&body_text)
                 .ok()
                 .and_then(|v| v.get("error").cloned())
