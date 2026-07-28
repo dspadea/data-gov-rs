@@ -101,6 +101,14 @@ jobs:
     name: Create GitHub Release
     runs-on: ubuntu-latest
     needs: gate
+    # The repository default for GITHUB_TOKEN is read-only, so creating a
+    # release needs this granted explicitly. Without it the step fails with
+    # "Resource not accessible by integration" - which is exactly how all
+    # three earlier runs of this workflow died, each in under ten seconds,
+    # taking the publish job with them because it needs this one.
+    # Granted on this job alone; nothing else here writes to the repository.
+    permissions:
+      contents: write
     steps:
     - uses: actions/checkout@v4
 
@@ -114,6 +122,8 @@ jobs:
     name: Publish to crates.io
     runs-on: ubuntu-latest
     needs: [gate, create-release]
+    env:
+      CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
     steps:
     - uses: actions/checkout@v4
 
@@ -129,25 +139,33 @@ jobs:
           target
         key: ${{ runner.os }}-cargo-release-${{ hashFiles('**/Cargo.lock') }}
 
-    # A small helper, not a tracked script: it polls the crates.io sparse
-    # index directly rather than sleeping a fixed amount of time. crates.io
-    # serializes index updates, so publishing a dependent immediately after
-    # its dependency often fails with "no matching version found" - the
-    # actual propagation delay varies with registry load and is not a
-    # constant, so a fixed sleep is either too short under load (still
-    # fails) or wastes minutes when the index is already current. Polling
-    # the same sparse index cargo itself resolves dependencies against
-    # returns as soon as the real answer is available, and fails loudly
-    # after a generous ceiling instead of hanging forever.
-    - name: Write the crates.io index poll helper
+    # Two small helpers, not tracked scripts.
+    #
+    # `index-has` asks the crates.io sparse index - the same index cargo
+    # resolves against - whether a name/version pair is visible yet.
+    #
+    # `publish-crate` uses it to make publishing idempotent. A crates.io
+    # publish cannot be undone, only yanked, and yanking does not free the
+    # version number. So if this job fails partway through, the natural
+    # recovery - GitHub's "Re-run failed jobs" - would re-attempt the
+    # publishes that already succeeded and hard-fail on "crate version
+    # already exists", blocking every crate after the failure point and
+    # leaving the release half-done with no in-workflow way to finish it.
+    # Skipping what is already live makes a re-run resume instead of jam.
+    #
+    # `wait-for-crate` polls rather than sleeping a fixed amount: crates.io
+    # serializes index updates and the real delay varies with load, so a
+    # fixed sleep is either too short under load or wastes minutes when the
+    # index is already current. It fails loudly after a bounded ceiling
+    # instead of hanging.
+    - name: Write the crates.io index helpers
       run: |
-        cat > /tmp/wait-for-crate.sh <<'SCRIPT'
+        cat > /tmp/index-has.sh <<'SCRIPT'
         #!/usr/bin/env bash
-        set -euo pipefail
+        # Exit 0 if <name> <version> is visible in the crates.io sparse index.
+        set -uo pipefail
         name="$1"
         version="$2"
-        max_attempts=40
-        delay=15
         len=${#name}
         if [ "$len" -ge 4 ]; then
           path="${name:0:2}/${name:2:2}/${name}"
@@ -158,20 +176,55 @@ jobs:
         else
           path="1/${name}"
         fi
-        echo "Polling https://index.crates.io/${path} for ${name} ${version}..."
+        curl -fsS "https://index.crates.io/${path}" 2>/dev/null \
+          | grep -q "\"vers\":\"${version}\""
+        SCRIPT
+
+        cat > /tmp/publish-crate.sh <<'SCRIPT'
+        #!/usr/bin/env bash
+        set -euo pipefail
+        name="$1"
+        version="$2"
+        if /tmp/index-has.sh "$name" "$version"; then
+          echo "${name} ${version} is already on crates.io; skipping."
+          exit 0
+        fi
+        echo "Publishing ${name} ${version}..."
+        cargo publish -p "$name" --locked
+        SCRIPT
+
+        cat > /tmp/wait-for-crate.sh <<'SCRIPT'
+        #!/usr/bin/env bash
+        set -euo pipefail
+        name="$1"
+        version="$2"
+        max_attempts=40
+        delay=15
+        echo "Waiting for ${name} ${version} to reach the crates.io index..."
         for attempt in $(seq 1 "$max_attempts"); do
-          if curl -fsS "https://index.crates.io/${path}" 2>/dev/null \
-              | grep -q "\"vers\":\"${version}\""; then
+          if /tmp/index-has.sh "$name" "$version"; then
             echo "${name} ${version} is visible in the crates.io index."
             exit 0
           fi
           echo "Attempt ${attempt}/${max_attempts}: not yet visible, waiting ${delay}s..."
           sleep "$delay"
         done
-        echo "::error::${name} ${version} did not appear in the crates.io index within $((max_attempts * delay))s" >&2
+        echo "::error::${name} ${version} did not appear in the crates.io index within $((max_attempts * delay))s. If crates.io is healthy, the publish may have failed silently - check the publish step above before re-running." >&2
         exit 1
         SCRIPT
-        chmod +x /tmp/wait-for-crate.sh
+        chmod +x /tmp/index-has.sh /tmp/publish-crate.sh /tmp/wait-for-crate.sh
+
+    # cargo reads CARGO_REGISTRY_TOKEN from the environment, so the token
+    # never appears in a command line. An unset secret expands to an empty
+    # string rather than erroring, which would otherwise surface as an
+    # opaque authentication failure from crates.io several steps later.
+    - name: Check the crates.io token is present
+      run: |
+        if [ -z "${CARGO_REGISTRY_TOKEN:-}" ]; then
+          echo "::error::CARGO_REGISTRY_TOKEN is not set. Add it under Settings > Secrets and variables > Actions before tagging a release." >&2
+          exit 1
+        fi
+        echo "crates.io token is present."
 
     # Publish order follows the dependency graph: data-gov-catalog and
     # data-gov-ckan have no internal workspace dependencies and can publish
@@ -179,19 +232,19 @@ jobs:
     # for it to be resolvable; data-gov-mcp-server depends on data-gov and
     # goes last, after its own wait.
     - name: Publish data-gov-catalog
-      run: cargo publish -p data-gov-catalog --locked --token ${{ secrets.CARGO_REGISTRY_TOKEN }}
+      run: /tmp/publish-crate.sh data-gov-catalog "${{ needs.gate.outputs.version }}"
 
     - name: Publish data-gov-ckan
-      run: cargo publish -p data-gov-ckan --locked --token ${{ secrets.CARGO_REGISTRY_TOKEN }}
+      run: /tmp/publish-crate.sh data-gov-ckan "${{ needs.gate.outputs.version }}"
 
     - name: Wait for data-gov-catalog to reach the crates.io index
       run: /tmp/wait-for-crate.sh data-gov-catalog "${{ needs.gate.outputs.version }}"
 
     - name: Publish data-gov
-      run: cargo publish -p data-gov --locked --token ${{ secrets.CARGO_REGISTRY_TOKEN }}
+      run: /tmp/publish-crate.sh data-gov "${{ needs.gate.outputs.version }}"
 
     - name: Wait for data-gov to reach the crates.io index
       run: /tmp/wait-for-crate.sh data-gov "${{ needs.gate.outputs.version }}"
 
     - name: Publish data-gov-mcp-server
-      run: cargo publish -p data-gov-mcp-server --locked --token ${{ secrets.CARGO_REGISTRY_TOKEN }}
+      run: /tmp/publish-crate.sh data-gov-mcp-server "${{ needs.gate.outputs.version }}"
