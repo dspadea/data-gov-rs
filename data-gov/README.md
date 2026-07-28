@@ -236,6 +236,20 @@ let client = DataGovClient::with_config(config)?;
 
 Configuration covers the underlying Catalog API settings, download directory logic, concurrency, progress output, and colour preferences.
 
+## Cargo features
+
+| Feature       | Default | Effect                                             |
+|---------------|---------|-----------------------------------------------------|
+| `native-tls`  | yes     | Use the platform TLS stack (`reqwest/native-tls`), forwarded to `data-gov-catalog`. |
+| `rustls-tls`  | no      | Use rustls instead (`reqwest/rustls`), forwarded to `data-gov-catalog`.             |
+
+To use rustls:
+
+```toml
+[dependencies]
+data-gov = { version = "0.5", default-features = false, features = ["rustls-tls"] }
+```
+
 ## Development
 
 ```bash

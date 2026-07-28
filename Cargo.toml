@@ -14,8 +14,3 @@ warnings = "deny"
 
 [workspace.lints.clippy]
 all = "deny"
-
-[patch.crates-io]
-data-gov = { path = "data-gov" }
-data-gov-ckan = { path = "data-gov-ckan" }
-data-gov-catalog = { path = "data-gov-catalog" }
