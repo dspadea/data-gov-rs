@@ -6,6 +6,45 @@
 //! ```bash
 //! cargo test -p data-gov-ckan --test unit_tests
 //! ```
+//!
+//! # Fixtures vs. hand-written bodies
+//!
+//! Where a wiremock response body needs to demonstrate real deserialization
+//! (does a genuine CKAN payload parse correctly?), it is loaded from
+//! `tests/fixtures/` via `include_str!` -- see `package_search_builds_correct_
+//! url_and_parses_response`, `package_show_returns_full_dataset`,
+//! `organization_list_with_sort_and_limit`, and the two `http_*` structured-
+//! error tests. A hand-written body encodes the author's assumption about the
+//! shape, and then the test only confirms that assumption; this crate's
+//! standing example is #63 and #62, where every pre-existing hand-written
+//! body used a UUID-shaped id and a small integer size because that is what
+//! the (buggy) models expected.
+//!
+//! The bodies that remain hand-written all fall into shapes a live capture
+//! cannot produce on demand, not shapes nobody thought to capture:
+//!
+//! - **Boundaries a real server will not spontaneously exhibit**: `rows=0`,
+//!   an offset past the total, a query with special characters to URL-encode.
+//! - **Malformed or absent data**: a non-JSON body, a `result` that is a bare
+//!   string instead of an object, a `success: false` response with no
+//!   `error` field at all. These test failure handling, so the failure has
+//!   to be constructed.
+//! - **A `success: false` combined with HTTP 200**: both captured error
+//!   fixtures (`package_show_not_found.json`,
+//!   `package_show_validation_error.json`) came back over a non-2xx status;
+//!   no live capture in this branch's set exercises the success:false path
+//!   at HTTP 200, so those tests stay synthetic.
+//! - **Flat, low-risk response shapes**: `group_list`, and the four
+//!   `*_autocomplete` endpoints, return either a bare array of strings or a
+//!   3-4 field struct with no id or numeric field of the kind #63/#62
+//!   affected. They were not part of #102's required capture set
+//!   (`package_search`, `package_show`, `organization_list`, error
+//!   responses), and a hand-written body for them carries little of the risk
+//!   the fixture work exists to catch.
+//! - **Client-side behavior with no response body to speak of**: the
+//!   credential, user-agent, Debug-redaction, and timeout tests below
+//!   configure a `Configuration` and assert what the *client* sends or
+//!   prints, not how it parses a response.
 
 use data_gov_ckan::{ApiKey, CkanClient, CkanError, Configuration};
 use serde_json::json;
@@ -27,28 +66,22 @@ fn test_client(base_url: &str) -> CkanClient {
 // package_search
 // ---------------------------------------------------------------------------
 
+/// Response body is a real capture (see `fixture_parity_tests.rs` for the
+/// deserialization-focused assertions on the same file). The query
+/// parameters this test sends (`q=climate&rows=5&start=0`) are independent
+/// of what the fixture was captured with -- this test is about request
+/// shaping, not about the fixture's own provenance.
 #[tokio::test]
 async fn package_search_builds_correct_url_and_parses_response() {
     let server = MockServer::start().await;
+    let body = include_str!("fixtures/package_search.json");
 
     Mock::given(method("GET"))
         .and(path("/action/package_search"))
         .and(query_param("q", "climate"))
         .and(query_param("rows", "5"))
         .and(query_param("start", "0"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "help": "", "success": true,
-            "result": {
-                "count": 42,
-                "results": [
-                    {
-                        "name": "climate-dataset-1",
-                        "title": "Climate Dataset 1",
-                        "id": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
-                    }
-                ]
-            }
-        })))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(body, "application/json"))
         .expect(1)
         .mount(&server)
         .await;
@@ -59,10 +92,14 @@ async fn package_search_builds_correct_url_and_parses_response() {
         .await
         .expect("should succeed");
 
-    assert_eq!(result.count, Some(42));
+    assert_eq!(result.count, Some(1));
     let results = result.results.expect("should have results");
     assert_eq!(results.len(), 1);
-    assert_eq!(results[0].name, "climate-dataset-1");
+    assert_eq!(results[0].name, "432527ab-7aac-45b5-81d6-7597107a7013");
+    assert_eq!(
+        results[0].title.as_deref(),
+        Some("Proactive Disclosure - Grants and Contributions")
+    );
 }
 
 #[tokio::test]
@@ -179,29 +216,19 @@ async fn package_search_with_offset_past_total_parses_empty_results_without_erro
 // package_show
 // ---------------------------------------------------------------------------
 
+/// Response body is a real capture: the same open.canada.ca dataset used by
+/// `fixture_parity_tests.rs`'s #62 acceptance test, so this exercises
+/// `package_show` end to end (client -> deserialization) against a record
+/// that includes a resource over i32::MAX bytes.
 #[tokio::test]
 async fn package_show_returns_full_dataset() {
     let server = MockServer::start().await;
+    let body = include_str!("fixtures/package_show.json");
 
     Mock::given(method("GET"))
         .and(path("/action/package_show"))
         .and(query_param("id", "my-dataset"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "help": "", "success": true,
-            "result": {
-                "name": "my-dataset",
-                "title": "My Dataset",
-                "id": "11111111-2222-3333-4444-555555555555",
-                "notes": "A description",
-                "resources": [
-                    {
-                        "name": "data.csv",
-                        "format": "CSV",
-                        "url": "https://example.com/data.csv"
-                    }
-                ]
-            }
-        })))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(body, "application/json"))
         .expect(1)
         .mount(&server)
         .await;
@@ -212,13 +239,20 @@ async fn package_show_returns_full_dataset() {
         .await
         .expect("should succeed");
 
-    assert_eq!(pkg.name, "my-dataset");
-    assert_eq!(pkg.title.as_deref(), Some("My Dataset"));
-    assert_eq!(pkg.notes.as_deref(), Some("A description"));
+    assert_eq!(pkg.name, "432527ab-7aac-45b5-81d6-7597107a7013");
+    assert_eq!(
+        pkg.title.as_deref(),
+        Some("Proactive Disclosure - Grants and Contributions")
+    );
+    assert!(pkg.notes.is_some());
 
     let resources = pkg.resources.expect("should have resources");
-    assert_eq!(resources.len(), 1);
-    assert_eq!(resources[0].format.as_deref(), Some("CSV"));
+    assert_eq!(resources.len(), 6);
+    assert!(resources.iter().any(|r| r.format.as_deref() == Some("CSV")));
+    assert!(
+        resources.iter().any(|r| r.size == Some(2_290_761_766)),
+        "the over-i32::MAX resource must survive deserialization"
+    );
 }
 
 #[tokio::test]
@@ -250,18 +284,17 @@ async fn package_show_url_encodes_special_characters() {
 // organization_list
 // ---------------------------------------------------------------------------
 
+/// Response body is a real capture from open.canada.ca.
 #[tokio::test]
 async fn organization_list_with_sort_and_limit() {
     let server = MockServer::start().await;
+    let body = include_str!("fixtures/organization_list.json");
 
     Mock::given(method("GET"))
         .and(path("/action/organization_list"))
         .and(query_param("sort", "name"))
         .and(query_param("limit", "3"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "help": "", "success": true,
-            "result": ["epa-gov", "nasa-gov", "usda-gov"]
-        })))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(body, "application/json"))
         .expect(1)
         .mount(&server)
         .await;
@@ -272,7 +305,10 @@ async fn organization_list_with_sort_and_limit() {
         .await
         .expect("should succeed");
 
-    assert_eq!(orgs, vec!["epa-gov", "nasa-gov", "usda-gov"]);
+    assert_eq!(
+        orgs,
+        vec!["16342451-canada-inc", "2canl", "3can", "3nih", "3nii"]
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -571,7 +607,10 @@ async fn success_false_returns_api_error() {
         .expect_err("should fail");
 
     match err {
-        CkanError::ApiError { status: 400, message } => {
+        CkanError::ApiError {
+            status: 400,
+            message,
+        } => {
             assert_eq!(message, "something went wrong");
         }
         other => panic!("expected ApiError with status 400, got: {:?}", other),
@@ -603,7 +642,10 @@ async fn success_false_with_validation_style_error_renders_the_raw_error_object(
         .expect_err("should fail");
 
     match err {
-        CkanError::ApiError { status: 400, message } => {
+        CkanError::ApiError {
+            status: 400,
+            message,
+        } => {
             assert!(message.contains("name_or_id"), "message: {message}");
             assert!(message.contains("Missing value"), "message: {message}");
         }
@@ -634,7 +676,10 @@ async fn success_false_with_no_error_field_uses_fallback_message() {
         .expect_err("should fail");
 
     match err {
-        CkanError::ApiError { status: 400, message } => {
+        CkanError::ApiError {
+            status: 400,
+            message,
+        } => {
             assert_eq!(message, "CKAN API reported failure");
         }
         other => panic!("expected ApiError with status 400, got: {:?}", other),
@@ -996,7 +1041,10 @@ fn configuration_debug_redacts_oauth_access_token() {
 #[test]
 fn configuration_debug_redacts_basic_auth_password() {
     let config = Configuration {
-        basic_auth: Some(("alice".to_string(), Some("super-secret-password".to_string()))),
+        basic_auth: Some((
+            "alice".to_string(),
+            Some("super-secret-password".to_string()),
+        )),
         ..Configuration::default()
     };
     let debug = format!("{:?}", config);
