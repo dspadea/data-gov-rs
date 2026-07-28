@@ -478,10 +478,13 @@ fn a_flag_overrides_every_setting() {
         .resolve()
         .expect("resolution must succeed");
 
+    // Matching only the count would let a duplicated entry hide a missing
+    // setting.
+    let covered: Vec<SettingKey> = FLAG_VALUES.iter().map(|(key, _)| *key).collect();
     assert_eq!(
-        FLAG_VALUES.len(),
-        SettingKey::ALL.len(),
-        "every setting needs an expected flag value here"
+        covered,
+        SettingKey::ALL.to_vec(),
+        "every setting needs an expected flag value here, in SettingKey::ALL order"
     );
 
     for (key, expected) in FLAG_VALUES {
