@@ -200,6 +200,161 @@ async fn a_redirect_to_a_link_local_address_is_refused() {
     );
 }
 
+/// A redirect target that is a *name* has to be resolved before it can be
+/// judged, which a synchronous redirect callback cannot do. This states that
+/// the hop goes through the same check the first URL does - the check that
+/// resolves - rather than through whatever the connect path happens to catch.
+#[tokio::test]
+async fn a_redirect_to_a_name_is_judged_by_the_destination_check() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/data.csv"))
+        .respond_with(
+            ResponseTemplate::new(302)
+                // Reserved by RFC 6761 and guaranteed not to resolve, so the
+                // verdict comes from the check and not from a live lookup.
+                .insert_header("location", "http://data-gov-rs.invalid/secret"),
+        )
+        .mount(&server)
+        .await;
+
+    let tmp = TempDir::new().expect("tempdir");
+    let client = client_for(tmp.path(), true);
+    let dist = distribution(&format!("{}/data.csv", server.uri()), "data", "csv");
+
+    let message = refusal_for(&client, &dist, tmp.path()).await;
+
+    assert!(
+        message.contains("data-gov-rs.invalid"),
+        "the refusal must name the host the hop pointed at, got: {message}"
+    );
+}
+
+/// Every status reqwest treats as a redirect is followed here, and every one of
+/// them is checked. A hop cap or a status the handling forgot about would leave
+/// one of these unjudged.
+#[tokio::test]
+async fn every_redirect_status_is_checked_before_it_is_followed() {
+    for status in [301, 302, 303, 307, 308] {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/data.csv"))
+            .respond_with(ResponseTemplate::new(status).insert_header("location", METADATA_URL))
+            .mount(&server)
+            .await;
+
+        let tmp = TempDir::new().expect("tempdir");
+        let client = client_for(tmp.path(), true);
+        let dist = distribution(&format!("{}/data.csv", server.uri()), "data", "csv");
+
+        let message = refusal_for(&client, &dist, tmp.path()).await;
+
+        assert!(
+            message.contains("169.254.169.254"),
+            "HTTP {status} must be followed only after the target is judged, got: {message}"
+        );
+    }
+}
+
+/// A `Location` is a reference, not necessarily an absolute URL. Resolving it
+/// against the current URL is what decides which host is actually judged.
+#[tokio::test]
+async fn a_relative_redirect_resolves_against_the_url_it_came_from() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/first/data.csv"))
+        .respond_with(ResponseTemplate::new(302).insert_header("location", "../second/data.csv"))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/second/data.csv"))
+        .respond_with(ResponseTemplate::new(200).set_body_bytes(b"second hop".to_vec()))
+        .mount(&server)
+        .await;
+
+    let tmp = TempDir::new().expect("tempdir");
+    let client = client_for(tmp.path(), true);
+    let dist = distribution(&format!("{}/first/data.csv", server.uri()), "data", "csv");
+
+    let written = client
+        .download_distribution(&dist, Some(tmp.path()))
+        .await
+        .expect("a relative redirect must resolve and be followed");
+
+    assert_eq!(
+        tokio::fs::read(&written).await.expect("read back"),
+        b"second hop",
+        "the body must come from the hop the relative Location named"
+    );
+}
+
+/// A redirect chain that ends in a real body still delivers it. Without this,
+/// refusing every redirect would pass every other test in this file.
+#[tokio::test]
+async fn a_redirect_to_a_permitted_destination_is_followed_and_delivers_the_body() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/start"))
+        .respond_with(ResponseTemplate::new(302).insert_header("location", "/middle"))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/middle"))
+        .respond_with(ResponseTemplate::new(307).insert_header("location", "/end"))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/end"))
+        .respond_with(ResponseTemplate::new(200).set_body_bytes(b"the real body".to_vec()))
+        .mount(&server)
+        .await;
+
+    let tmp = TempDir::new().expect("tempdir");
+    let client = client_for(tmp.path(), true);
+    let dist = distribution(&format!("{}/start", server.uri()), "data", "csv");
+
+    let written = client
+        .download_distribution(&dist, Some(tmp.path()))
+        .await
+        .expect("a permitted redirect chain must still deliver its body");
+
+    assert_eq!(
+        tokio::fs::read(&written).await.expect("read back"),
+        b"the real body",
+        "the body must come from the end of the chain"
+    );
+}
+
+/// A 3xx with no `Location` is not a redirect anybody can follow. It has to be
+/// reported as the failed download it is, not silently treated as a body.
+#[tokio::test]
+async fn a_redirect_without_a_location_is_reported_as_a_failure() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/data.csv"))
+        .respond_with(ResponseTemplate::new(302))
+        .mount(&server)
+        .await;
+
+    let tmp = TempDir::new().expect("tempdir");
+    let client = client_for(tmp.path(), true);
+    let dist = distribution(&format!("{}/data.csv", server.uri()), "data", "csv");
+
+    let error = client
+        .download_distribution(&dist, Some(tmp.path()))
+        .await
+        .expect_err("a 302 with nowhere to go is not a download");
+
+    assert!(
+        matches!(error, DataGovError::DownloadError { .. }),
+        "expected a download failure naming the status, got {error:?}"
+    );
+    assert!(
+        error.to_string().contains("302"),
+        "the failure must name the status it could not use, got: {error}"
+    );
+}
+
 #[tokio::test]
 async fn an_endless_redirect_chain_is_refused() {
     let server = MockServer::start().await;
