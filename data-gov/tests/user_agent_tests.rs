@@ -84,9 +84,7 @@ async fn a_user_agent_set_without_the_builder_reaches_both_catalog_requests_and_
         .expect("the catalog request must carry the configured agent");
 
     let dist = distribution(&format!("{}/files/data.csv", server.uri()));
-    let outcome = client
-        .download_distribution(&dist, Some(tmp.path()))
-        .await;
+    let outcome = client.download_distribution(&dist, Some(tmp.path())).await;
     assert!(
         outcome.is_ok(),
         "the download request must carry the same configured agent, got {outcome:?}"
@@ -127,9 +125,7 @@ async fn with_user_agent_builder_reaches_both_catalog_requests_and_downloads() {
         .expect("the catalog request must carry the configured agent");
 
     let dist = distribution(&format!("{}/files/data.csv", server.uri()));
-    let outcome = client
-        .download_distribution(&dist, Some(tmp.path()))
-        .await;
+    let outcome = client.download_distribution(&dist, Some(tmp.path())).await;
     assert!(
         outcome.is_ok(),
         "the download request must carry the same configured agent, got {outcome:?}"
