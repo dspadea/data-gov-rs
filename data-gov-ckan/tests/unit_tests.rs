@@ -769,6 +769,66 @@ async fn malformed_json_body_returns_parse_error() {
     );
 }
 
+/// Reproduces the class of bug #72.2 was filed for: a connection that drops
+/// mid-body on a *non*-2xx response must surface as `RequestError` -- the
+/// variant documented as covering "connection failures, timeouts... HTTP
+/// protocol errors" -- not `ApiError`, which is for a status CKAN itself
+/// reported. Before the fix, `call_action`'s non-2xx branch read the body
+/// with `.text().await.unwrap_or_else(|_| "Unknown error".to_string())`,
+/// which discards the real transport error and reports the literal string
+/// "Unknown error" as though CKAN had said so -- indistinguishable, to a
+/// caller retrying on `RequestError`, from an actual permanent 500.
+///
+/// wiremock cannot reproduce this: it always serves a well-formed response.
+/// A raw TCP listener sends `HTTP/1.1 500` with `Content-Length: 1000`,
+/// writes 9 bytes of body, then closes -- the connection drops with 991
+/// bytes still promised and never sent.
+#[tokio::test]
+async fn a_connection_dropped_mid_body_on_a_non_2xx_status_is_a_request_error() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
+
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind ephemeral port");
+    let addr = listener.local_addr().expect("read local addr");
+
+    tokio::spawn(async move {
+        let (mut socket, _) = listener.accept().await.expect("accept connection");
+        // Drain the request so reqwest has genuinely sent it before we
+        // respond; the exact bytes read don't matter.
+        let mut buf = [0u8; 4096];
+        let _ = socket.read(&mut buf).await;
+
+        socket
+            .write_all(b"HTTP/1.1 500 Internal Server Error\r\nContent-Length: 1000\r\n\r\n")
+            .await
+            .expect("write status line and headers");
+        socket
+            .write_all(b"123456789")
+            .await
+            .expect("write partial body");
+        // Dropping `socket` here closes the connection with 991 of the
+        // promised 1000 bytes never sent.
+    });
+
+    let config = Arc::new(Configuration {
+        base_path: format!("http://{addr}"),
+        ..Configuration::default()
+    });
+    let client = CkanClient::new(config);
+
+    let result = client.package_search(None, None, None, None).await;
+
+    match result {
+        Err(CkanError::RequestError(_)) => {}
+        other => panic!(
+            "a connection dropped mid-body on a non-2xx status must be \
+             RequestError, not the API's own error, got: {other:?}"
+        ),
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Error trait and Display
 // ---------------------------------------------------------------------------
