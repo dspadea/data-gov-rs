@@ -2,15 +2,9 @@
 
 ## Project overview
 
-Rust workspace with four crates:
-
-- `data-gov-catalog` - async client for the data.gov Catalog API (current
-  backend; DCAT-US 3, cursor-paginated)
-- `data-gov` - high-level client + CLI binary (built on `data-gov-catalog`)
-- `data-gov-mcp-server` - MCP server for AI integration
-- `data-gov-ckan` - async CKAN Action API client. data.gov retired its CKAN
-  endpoint in 2026; this crate is retained as a general-purpose client for
-  other CKAN-compatible portals (European, state, municipal, university).
+Read [AGENTS.md](./AGENTS.md) first. It states what this project is for, which
+crate owns what, and the invariants a change must not break. This file covers
+how to work here; AGENTS.md covers what the work is for.
 
 Rust 2024 edition, MSRV **1.90**, Apache-2.0 license.
 

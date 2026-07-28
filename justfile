@@ -36,7 +36,7 @@ check-ascii:
     #!/usr/bin/env bash
     set -euo pipefail
     status=0
-    for f in CLAUDE.md justfile; do
+    for f in AGENTS.md CLAUDE.md justfile; do
       if LC_ALL=C grep -nP '[^\x00-\x7F]' "$f"; then
         echo "^ $f: non-ASCII above. Use - for dashes, -> for arrows, ... for ellipsis." >&2
         status=1
