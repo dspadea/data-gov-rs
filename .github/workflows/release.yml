@@ -1,19 +1,117 @@
 name: Release
 
+# Tag scheme: a single workspace-level tag `vX.Y.Z` (for example `v0.5.0`)
+# releases all four crates in lockstep - data-gov-catalog, data-gov-ckan,
+# data-gov, and data-gov-mcp-server. They already share one CHANGELOG.md and
+# one semver policy (CLAUDE.md, "Semver discipline"), so one tag for the
+# whole workspace is the scheme, not four independent per-crate tags.
+#
+# Earlier per-crate tags (data-gov-ckan-v0.3.1 and similar) predate the
+# workspace split and are not produced going forward.
+
 on:
   push:
     tags:
-      - 'v*'
+      - 'v[0-9]+.[0-9]+.[0-9]+'
 
 jobs:
-  create-release:
-    name: Create Release
+  # Everything a release needs to be true before anything is published,
+  # irreversibly, to crates.io.
+  gate:
+    name: Release gate
     runs-on: ubuntu-latest
     outputs:
-      upload_url: ${{ steps.create_release.outputs.upload_url }}
+      version: ${{ steps.version.outputs.version }}
     steps:
     - uses: actions/checkout@v4
-    
+
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        components: rustfmt, clippy
+
+    # The gate calls `just check`, so it needs the same runner CI does.
+    - name: Install just
+      uses: extractions/setup-just@v4
+
+    - name: Cache cargo
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          target
+        key: ${{ runner.os }}-cargo-release-${{ hashFiles('**/Cargo.lock') }}
+
+    - name: Derive the release version from the tag
+      id: version
+      run: |
+        version="${GITHUB_REF_NAME#v}"
+        echo "Release version: $version"
+        echo "version=$version" >> "$GITHUB_OUTPUT"
+
+    # Lockstep versioning is only real if it is checked. A tag that does not
+    # match what is actually in the manifests would otherwise publish
+    # whatever version each Cargo.toml happens to carry, silently.
+    - name: Verify every crate manifest matches the tag
+      run: |
+        set -euo pipefail
+        version="${{ steps.version.outputs.version }}"
+        status=0
+        for pkg in data-gov-catalog data-gov-ckan data-gov data-gov-mcp-server; do
+          actual=$(cargo metadata --no-deps --format-version=1 \
+            | jq -r --arg pkg "$pkg" '.packages[] | select(.name == $pkg) | .version')
+          if [ -z "$actual" ]; then
+            echo "::error::no workspace member named $pkg" >&2
+            status=1
+          elif [ "$actual" != "$version" ]; then
+            echo "::error::$pkg is at version $actual, tag says $version" >&2
+            status=1
+          fi
+        done
+        exit $status
+
+    # Runs the same recipes CI runs - format, plain-ASCII, the two new
+    # hygiene checks, clippy, build, test, the rustls-only build, examples,
+    # and docs - as one call, so the release path and the CI path cannot
+    # drift into two dialects of the same gate. This intentionally does not
+    # re-run CI's beta/MSRV matrix: that already gated every commit that
+    # reached the release branch, so the tag-time gate re-validates on
+    # stable only, the same toolchain the rest of this job uses.
+    - name: Run the full quality gate
+      run: just check
+
+    - name: Install cargo-audit
+      run: cargo install cargo-audit --locked
+
+    - name: Run cargo audit (RustSec advisory database)
+      run: cargo audit
+
+    # Mirrors CI's "Security Audit" job: cargo audit alone misses GHSA-only
+    # advisories, so the OSV scan runs too. Not folded into `just audit`
+    # here for the same reason CI does not - that recipe expects the
+    # osv-scanner CLI on PATH, while this uses the upstream action instead.
+    - name: Scan lockfile against OSV (catches GHSA-only advisories)
+      uses: google/osv-scanner-action/osv-scanner-action@v2.3.8
+      with:
+        scan-args: |-
+          --lockfile=./Cargo.lock
+
+  create-release:
+    name: Create GitHub Release
+    runs-on: ubuntu-latest
+    needs: gate
+    # The repository default for GITHUB_TOKEN is read-only, so creating a
+    # release needs this granted explicitly. Without it the step fails with
+    # "Resource not accessible by integration" - which is exactly how all
+    # three earlier runs of this workflow died, each in under ten seconds,
+    # taking the publish job with them because it needs this one.
+    # Granted on this job alone; nothing else here writes to the repository.
+    permissions:
+      contents: write
+    steps:
+    - uses: actions/checkout@v4
+
     - name: Create Release
       id: create_release
       uses: softprops/action-gh-release@v2
@@ -23,14 +121,15 @@ jobs:
   publish-crates:
     name: Publish to crates.io
     runs-on: ubuntu-latest
-    needs: create-release
-    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [gate, create-release]
+    env:
+      CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
     steps:
     - uses: actions/checkout@v4
-    
+
     - name: Install Rust
       uses: dtolnay/rust-toolchain@stable
-    
+
     - name: Cache cargo
       uses: actions/cache@v4
       with:
@@ -39,17 +138,113 @@ jobs:
           ~/.cargo/git
           target
         key: ${{ runner.os }}-cargo-release-${{ hashFiles('**/Cargo.lock') }}
-    
-    - name: Run tests
-      run: cargo test --verbose --all-features
-    
-    - name: Publish data-gov-ckan
+
+    # Two small helpers, not tracked scripts.
+    #
+    # `index-has` asks the crates.io sparse index - the same index cargo
+    # resolves against - whether a name/version pair is visible yet.
+    #
+    # `publish-crate` uses it to make publishing idempotent. A crates.io
+    # publish cannot be undone, only yanked, and yanking does not free the
+    # version number. So if this job fails partway through, the natural
+    # recovery - GitHub's "Re-run failed jobs" - would re-attempt the
+    # publishes that already succeeded and hard-fail on "crate version
+    # already exists", blocking every crate after the failure point and
+    # leaving the release half-done with no in-workflow way to finish it.
+    # Skipping what is already live makes a re-run resume instead of jam.
+    #
+    # `wait-for-crate` polls rather than sleeping a fixed amount: crates.io
+    # serializes index updates and the real delay varies with load, so a
+    # fixed sleep is either too short under load or wastes minutes when the
+    # index is already current. It fails loudly after a bounded ceiling
+    # instead of hanging.
+    - name: Write the crates.io index helpers
       run: |
-        cd data-gov-ckan
-        cargo publish --token ${{ secrets.CARGO_REGISTRY_TOKEN }}
-    
-    # Add data-gov crate when ready
-    # - name: Publish data-gov
-    #   run: |
-    #     cd data-gov
-    #     cargo publish --token ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        cat > /tmp/index-has.sh <<'SCRIPT'
+        #!/usr/bin/env bash
+        # Exit 0 if <name> <version> is visible in the crates.io sparse index.
+        set -uo pipefail
+        name="$1"
+        version="$2"
+        len=${#name}
+        if [ "$len" -ge 4 ]; then
+          path="${name:0:2}/${name:2:2}/${name}"
+        elif [ "$len" -eq 3 ]; then
+          path="3/${name:0:1}/${name}"
+        elif [ "$len" -eq 2 ]; then
+          path="2/${name}"
+        else
+          path="1/${name}"
+        fi
+        curl -fsS "https://index.crates.io/${path}" 2>/dev/null \
+          | grep -q "\"vers\":\"${version}\""
+        SCRIPT
+
+        cat > /tmp/publish-crate.sh <<'SCRIPT'
+        #!/usr/bin/env bash
+        set -euo pipefail
+        name="$1"
+        version="$2"
+        if /tmp/index-has.sh "$name" "$version"; then
+          echo "${name} ${version} is already on crates.io; skipping."
+          exit 0
+        fi
+        echo "Publishing ${name} ${version}..."
+        cargo publish -p "$name" --locked
+        SCRIPT
+
+        cat > /tmp/wait-for-crate.sh <<'SCRIPT'
+        #!/usr/bin/env bash
+        set -euo pipefail
+        name="$1"
+        version="$2"
+        max_attempts=40
+        delay=15
+        echo "Waiting for ${name} ${version} to reach the crates.io index..."
+        for attempt in $(seq 1 "$max_attempts"); do
+          if /tmp/index-has.sh "$name" "$version"; then
+            echo "${name} ${version} is visible in the crates.io index."
+            exit 0
+          fi
+          echo "Attempt ${attempt}/${max_attempts}: not yet visible, waiting ${delay}s..."
+          sleep "$delay"
+        done
+        echo "::error::${name} ${version} did not appear in the crates.io index within $((max_attempts * delay))s. If crates.io is healthy, the publish may have failed silently - check the publish step above before re-running." >&2
+        exit 1
+        SCRIPT
+        chmod +x /tmp/index-has.sh /tmp/publish-crate.sh /tmp/wait-for-crate.sh
+
+    # cargo reads CARGO_REGISTRY_TOKEN from the environment, so the token
+    # never appears in a command line. An unset secret expands to an empty
+    # string rather than erroring, which would otherwise surface as an
+    # opaque authentication failure from crates.io several steps later.
+    - name: Check the crates.io token is present
+      run: |
+        if [ -z "${CARGO_REGISTRY_TOKEN:-}" ]; then
+          echo "::error::CARGO_REGISTRY_TOKEN is not set. Add it under Settings > Secrets and variables > Actions before tagging a release." >&2
+          exit 1
+        fi
+        echo "crates.io token is present."
+
+    # Publish order follows the dependency graph: data-gov-catalog and
+    # data-gov-ckan have no internal workspace dependencies and can publish
+    # in either order; data-gov depends on data-gov-catalog and must wait
+    # for it to be resolvable; data-gov-mcp-server depends on data-gov and
+    # goes last, after its own wait.
+    - name: Publish data-gov-catalog
+      run: /tmp/publish-crate.sh data-gov-catalog "${{ needs.gate.outputs.version }}"
+
+    - name: Publish data-gov-ckan
+      run: /tmp/publish-crate.sh data-gov-ckan "${{ needs.gate.outputs.version }}"
+
+    - name: Wait for data-gov-catalog to reach the crates.io index
+      run: /tmp/wait-for-crate.sh data-gov-catalog "${{ needs.gate.outputs.version }}"
+
+    - name: Publish data-gov
+      run: /tmp/publish-crate.sh data-gov "${{ needs.gate.outputs.version }}"
+
+    - name: Wait for data-gov to reach the crates.io index
+      run: /tmp/wait-for-crate.sh data-gov "${{ needs.gate.outputs.version }}"
+
+    - name: Publish data-gov-mcp-server
+      run: /tmp/publish-crate.sh data-gov-mcp-server "${{ needs.gate.outputs.version }}"

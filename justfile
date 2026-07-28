@@ -20,7 +20,7 @@ default:
     @just --list
 
 # The full gate. Run this before you push.
-check: fmt-check check-ascii lint build test check-rustls examples docs
+check: fmt-check check-ascii check-home-paths check-deps lint build test check-rustls examples docs
 
 # Format every file in place.
 fmt:
@@ -43,6 +43,31 @@ check-ascii:
       fi
     done
     exit $status
+
+# Fail if a tracked file names somebody's home directory. The matcher checks
+# itself first, so a change that breaks it fails loudly instead of passing
+# everything.
+check-home-paths:
+    python3 scripts/check-home-paths.py --self-test
+    python3 scripts/check-home-paths.py
+
+# Fail if a crate declares a dependency nothing imports.
+#
+# cargo-machete reads source files only; it does not parse the code fences in
+# rustdoc `# Examples` sections. A dependency whose sole use is a doc test is
+# therefore reported as unused. Do not delete it - declare it ignored in that
+# crate's own manifest, with a comment saying which doc test needs it:
+#
+#     [package.metadata.cargo-machete]
+#     ignored = ["once_cell"]   # used only by the doc test on Foo::bar
+check-deps:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if ! command -v cargo-machete >/dev/null 2>&1; then
+      echo "cargo-machete not found; installing..." >&2
+      cargo install cargo-machete --locked
+    fi
+    cargo machete
 
 # Clippy over every target and feature, warnings fatal.
 lint:
