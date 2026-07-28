@@ -100,6 +100,24 @@ pub fn color_bold(text: &str) -> String {
         .unwrap_or_else(|| text.to_string())
 }
 
+/// Red, gated on stderr's terminal state. Use for any text about to be
+/// written with `eprintln!` — see [`colors::ColorHelper::red_err`].
+pub fn color_red_err(text: &str) -> String {
+    COLOR_HELPER
+        .get()
+        .map(|h| h.red_err(text).to_string())
+        .unwrap_or_else(|| text.to_string())
+}
+
+/// Red and bold, gated on stderr's terminal state. Use for any text about
+/// to be written with `eprintln!`.
+pub fn color_red_bold_err(text: &str) -> String {
+    COLOR_HELPER
+        .get()
+        .map(|h| h.style_err().red(text).bold().to_string())
+        .unwrap_or_else(|| text.to_string())
+}
+
 pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     let app = Command::new("data-gov")
         .about("Interactive REPL and CLI for exploring data.gov datasets")
@@ -170,6 +188,10 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
+    // Force `colored`'s own global gate to agree with the resolved mode —
+    // otherwise `--color always` piped to a file is a no-op (#58.1).
+    color_mode.apply_as_global_override();
+
     // Create color helper based on configuration
     let color_helper = ColorHelper::new(color_mode);
 
@@ -222,7 +244,7 @@ fn run_cli_mode(
     let repl_command = match ReplCommand::from_parts(&cmd_parts) {
         Ok(cmd) => cmd,
         Err(e) => {
-            eprintln!("{} {}", color_red_bold("Error:"), e);
+            eprintln!("{} {}", color_red_bold_err("Error:"), e);
             eprintln!("Use --help to see available commands and examples");
             std::process::exit(1);
         }
@@ -235,7 +257,7 @@ fn run_cli_mode(
     match result {
         Ok(()) => {}
         Err(e) => {
-            eprintln!("{} {}", color_red_bold("Error:"), e);
+            eprintln!("{} {}", color_red_bold_err("Error:"), e);
             std::process::exit(1);
         }
     }

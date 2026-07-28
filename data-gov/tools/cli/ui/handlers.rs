@@ -1,13 +1,16 @@
-use data_gov::DataGovClient;
+use std::collections::HashSet;
+use std::path::{Path, PathBuf};
+
 use data_gov::catalog::models::Distribution;
 use data_gov::util::sanitize_path_component;
+use data_gov::{DataGovClient, OperatingMode};
 use tokio::runtime::Runtime;
 
 use super::commands::{ListingCursor, ReplCommand, SessionContext};
 use super::display::{print_cli_help, print_package_details};
 use super::{
     color_blue, color_blue_bold, color_bold, color_cyan, color_dimmed, color_green,
-    color_green_bold, color_red, color_red_bold, color_yellow, color_yellow_bold,
+    color_green_bold, color_red, color_red_err, color_yellow, color_yellow_bold,
 };
 
 /// Resolve a dataset slug from the command or fall back to session context.
@@ -70,10 +73,7 @@ pub fn execute_command(
         }
 
         ReplCommand::SetDir { .. } => {
-            println!(
-                "{} lcd is only available in interactive REPL mode",
-                color_red_bold("Error:")
-            );
+            return Err("lcd is only available in interactive REPL mode".into());
         }
 
         ReplCommand::Help => {
@@ -132,7 +132,7 @@ fn ambiguous_single_segment<'a>(ctx: &SessionContext, path: &'a str) -> Option<&
         return Some(inner);
     }
     let trimmed = path.trim_end_matches('/');
-    if trimmed.is_empty() || trimmed == ".." || trimmed.contains('/') {
+    if trimmed.is_empty() || trimmed == ".." || trimmed == "." || trimmed.contains('/') {
         return None;
     }
     if ctx.org.is_some() {
@@ -259,7 +259,12 @@ fn handle_search(
 
     let page = rt.block_on(client.search(query, Some(effective_limit), None, org.as_deref()))?;
     print_search_hits(&page.results);
-    summarize_listing(page.results.len(), page.after.as_deref(), "results");
+    summarize_listing(
+        page.results.len(),
+        page.after.as_deref(),
+        "results",
+        &client.config().mode,
+    );
 
     ctx.last_listing = page.after.map(|after| ListingCursor::SearchResults {
         query: query.to_string(),
@@ -295,30 +300,44 @@ fn print_search_hits(hits: &[data_gov::catalog::models::SearchHit]) {
     }
 }
 
-/// Print the standard `Found N <unit>` line, with a `next` hint when
-/// more pages are available.
-fn summarize_listing(count: usize, after: Option<&str>, unit: &str) {
-    if after.is_some() {
-        println!(
-            "\n{} {} {} (type 'next' for more)",
-            color_green_bold("Found"),
-            count,
-            unit
-        );
+/// Build the `Found N <unit>` line, with a `next` hint appended when more
+/// pages are available *and* the hint would actually work. `next` only
+/// exists inside the REPL, so the hint is suppressed in one-shot CLI mode
+/// rather than advertising a command that cannot work there.
+fn listing_summary_line(
+    count: usize,
+    after: Option<&str>,
+    unit: &str,
+    mode: &OperatingMode,
+) -> String {
+    let base = format!("{} {} {}", color_green_bold("Found"), count, unit);
+    if after.is_some() && matches!(mode, OperatingMode::Interactive) {
+        format!("{base} (type 'next' for more)")
     } else {
-        println!("\n{} {} {}", color_green_bold("Found"), count, unit);
+        base
     }
+}
+
+/// Print the standard `Found N <unit>` line, with a `next` hint when more
+/// pages are available (REPL only — see [`listing_summary_line`]).
+fn summarize_listing(count: usize, after: Option<&str>, unit: &str, mode: &OperatingMode) {
+    println!("\n{}", listing_summary_line(count, after, unit, mode));
 }
 
 /// Advance the most recent paginated listing by one page. Errors clearly
 /// when nothing has been listed yet (or when the previous listing was
 /// already on its last page).
+///
+/// The cursor is cloned rather than taken, and `ctx.last_listing` is only
+/// overwritten once the request has succeeded — a transient network error
+/// must leave the session exactly where it was, not silently reset the
+/// listing back to page 1.
 fn handle_next(
     client: &DataGovClient,
     rt: &Runtime,
     ctx: &mut SessionContext,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let cursor = ctx.last_listing.take().ok_or(
+    let cursor = ctx.last_listing.clone().ok_or(
         "nothing to continue — run a `search` or `ls` that reports 'more available' first",
     )?;
 
@@ -335,7 +354,12 @@ fn handle_next(
                 Some(org.as_str()),
             ))?;
             print_dataset_hits(&page.results);
-            summarize_listing(page.results.len(), page.after.as_deref(), "more datasets");
+            summarize_listing(
+                page.results.len(),
+                page.after.as_deref(),
+                "more datasets",
+                &client.config().mode,
+            );
             ctx.last_listing = page.after.map(|after| ListingCursor::OrgDatasets {
                 org,
                 after,
@@ -355,7 +379,12 @@ fn handle_next(
                 organization.as_deref(),
             ))?;
             print_search_hits(&page.results);
-            summarize_listing(page.results.len(), page.after.as_deref(), "more results");
+            summarize_listing(
+                page.results.len(),
+                page.after.as_deref(),
+                "more results",
+                &client.config().mode,
+            );
             ctx.last_listing = page.after.map(|after| ListingCursor::SearchResults {
                 query,
                 organization,
@@ -448,7 +477,7 @@ fn handle_download(
     if selectors.is_empty() {
         let results =
             rt.block_on(client.download_distributions(&distributions, Some(&dataset_dir)));
-        print_download_summary(&results);
+        print_download_summary(&results)?;
     } else {
         download_selected(client, rt, selectors, &distributions, &dataset_dir)?;
     }
@@ -459,53 +488,50 @@ fn handle_download(
 /// Resolve selectors and download matching distributions.
 ///
 /// Each selector is either a numeric index or a title (case-insensitive
-/// substring). Unmatched selectors are reported but don't stop other downloads.
+/// substring). Unmatched selectors are reported but don't stop other
+/// selectors from resolving.
+///
+/// All resolved matches are downloaded in a single call to
+/// [`DataGovClient::download_distributions`], the batch API, rather than
+/// one [`DataGovClient::download_distribution`] call per match. The batch
+/// API indexes each filename by its position in the batch specifically to
+/// disambiguate distributions that share a title (the data.gov default
+/// "Comma Separated Values File" is extremely common); calling the
+/// single-item API per match — the previous behavior — gave every same-
+/// titled match the same output path, so each download silently
+/// overwrote the last and the CLI reported all of them as successful (#52).
+///
+/// Returns `Err` if any selector failed to match a distribution, or any
+/// matched distribution failed to download: a partial result must never
+/// be reported as a whole one (see AGENTS.md).
 fn download_selected(
     client: &DataGovClient,
     rt: &Runtime,
     selectors: &[String],
     distributions: &[Distribution],
-    dataset_dir: &std::path::Path,
+    dataset_dir: &Path,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let mut success_count = 0;
-    let mut error_count = 0;
+    let mut matched: Vec<Distribution> = Vec::new();
+    let mut labels: Vec<String> = Vec::new();
+    let mut unmatched_selectors = 0usize;
 
     for selector in selectors {
         if let Ok(index) = selector.parse::<usize>() {
             if index >= distributions.len() {
-                println!(
+                eprintln!(
                     "  {} '{}': index out of range (0-{})",
-                    color_red("✗"),
+                    color_red_err("✗"),
                     selector,
-                    distributions.len() - 1
+                    distributions.len().saturating_sub(1)
                 );
-                error_count += 1;
+                unmatched_selectors += 1;
                 continue;
             }
-            let distribution = &distributions[index];
-            match rt.block_on(client.download_distribution(distribution, Some(dataset_dir))) {
-                Ok(path) => {
-                    success_count += 1;
-                    println!(
-                        "  {} {}: {}",
-                        color_green("✓"),
-                        color_yellow(selector),
-                        color_blue(&path.display().to_string())
-                    );
-                }
-                Err(e) => {
-                    error_count += 1;
-                    println!(
-                        "  {} {}: {}",
-                        color_red("✗"),
-                        selector,
-                        color_red(&e.to_string())
-                    );
-                }
-            }
+            matched.push(distributions[index].clone());
+            labels.push(selector.clone());
         } else {
             let sel_lower = selector.to_lowercase();
-            let matches: Vec<_> = distributions
+            let hits: Vec<&Distribution> = distributions
                 .iter()
                 .filter(|d| {
                     d.title
@@ -514,42 +540,63 @@ fn download_selected(
                 })
                 .collect();
 
-            if matches.is_empty() {
-                println!(
+            if hits.is_empty() {
+                eprintln!(
                     "  {} '{}': no matching distribution",
-                    color_red("✗"),
+                    color_red_err("✗"),
                     selector
                 );
                 print_available_distributions(distributions);
-                error_count += 1;
+                unmatched_selectors += 1;
                 continue;
             }
 
-            for distribution in &matches {
-                let title = distribution.title.as_deref().unwrap_or("untitled");
-                match rt.block_on(client.download_distribution(distribution, Some(dataset_dir))) {
-                    Ok(path) => {
-                        success_count += 1;
-                        println!(
-                            "  {} {}: {}",
-                            color_green("✓"),
-                            color_yellow(title),
-                            color_blue(&path.display().to_string())
-                        );
-                    }
-                    Err(e) => {
-                        error_count += 1;
-                        println!(
-                            "  {} {}: {}",
-                            color_red("✗"),
-                            title,
-                            color_red(&e.to_string())
-                        );
-                    }
+            for distribution in hits {
+                labels.push(
+                    distribution
+                        .title
+                        .clone()
+                        .unwrap_or_else(|| "untitled".to_string()),
+                );
+                matched.push(distribution.clone());
+            }
+        }
+    }
+
+    // Distinct paths actually written, not just a count of `Ok` results —
+    // the reported success count must reflect files that landed on disk,
+    // not download attempts that happened to return success.
+    let mut success_paths: HashSet<PathBuf> = HashSet::new();
+    let mut download_errors = 0usize;
+
+    if !matched.is_empty() {
+        let results = rt.block_on(client.download_distributions(&matched, Some(dataset_dir)));
+        for (label, result) in labels.iter().zip(results.iter()) {
+            match result {
+                Ok(path) => {
+                    success_paths.insert(path.clone());
+                    println!(
+                        "  {} {}: {}",
+                        color_green("✓"),
+                        color_yellow(label),
+                        color_blue(&path.display().to_string())
+                    );
+                }
+                Err(e) => {
+                    download_errors += 1;
+                    eprintln!(
+                        "  {} {}: {}",
+                        color_red_err("✗"),
+                        label,
+                        color_red_err(&e.to_string())
+                    );
                 }
             }
         }
     }
+
+    let success_count = success_paths.len();
+    let error_count = unmatched_selectors + download_errors;
 
     if success_count + error_count > 1 {
         println!(
@@ -560,12 +607,22 @@ fn download_selected(
         );
     }
 
+    if error_count > 0 {
+        return Err(format!(
+            "{error_count} of {} selector(s) failed to resolve or download",
+            selectors.len()
+        )
+        .into());
+    }
+
     Ok(())
 }
 
 /// Print available distributions to help the user find what they want.
+/// Written to stderr: it only ever prints alongside an error line, as
+/// context for diagnosing that error.
 fn print_available_distributions(distributions: &[Distribution]) {
-    println!("    Available distributions:");
+    eprintln!("    Available distributions:");
     for (i, d) in distributions.iter().enumerate() {
         let title = d.title.as_deref().unwrap_or("(untitled)");
         let format = d
@@ -573,12 +630,18 @@ fn print_available_distributions(distributions: &[Distribution]) {
             .as_deref()
             .or(d.media_type.as_deref())
             .unwrap_or("?");
-        println!("      {i} {title} [{format}]");
+        eprintln!("      {i} {title} [{format}]");
     }
 }
 
 /// Print download summary for bulk downloads (no selectors).
-fn print_download_summary(results: &[Result<std::path::PathBuf, data_gov::DataGovError>]) {
+///
+/// Returns `Err` when at least one distribution failed to download, so the
+/// top-level CLI handler exits non-zero instead of reporting a partial
+/// result as a full success (#68).
+fn print_download_summary(
+    results: &[Result<PathBuf, data_gov::DataGovError>],
+) -> Result<(), Box<dyn std::error::Error>> {
     let mut success_count = 0;
     let mut error_count = 0;
 
@@ -595,11 +658,11 @@ fn print_download_summary(results: &[Result<std::path::PathBuf, data_gov::DataGo
             }
             Err(e) => {
                 error_count += 1;
-                println!(
+                eprintln!(
                     "  {} Distribution {}: {}",
-                    color_red("✗"),
+                    color_red_err("✗"),
                     i,
-                    color_red(&e.to_string())
+                    color_red_err(&e.to_string())
                 );
             }
         }
@@ -611,6 +674,12 @@ fn print_download_summary(results: &[Result<std::path::PathBuf, data_gov::DataGo
         color_green(&success_count.to_string()),
         color_red(&error_count.to_string())
     );
+
+    if error_count > 0 {
+        return Err(format!("{error_count} of {} download(s) failed", results.len()).into());
+    }
+
+    Ok(())
 }
 
 /// Handle list command. Behavior depends on the explicit subject and the
@@ -635,9 +704,9 @@ fn handle_list(
                 return list_organizations(client, rt);
             }
             other => {
-                println!("{} Unknown list type: {}", color_red_bold("Error:"), other);
-                println!("Available: {}", color_blue("organizations"));
-                return Ok(());
+                return Err(
+                    format!("unknown list type '{other}' (available: organizations)").into(),
+                );
             }
         }
     }
@@ -697,7 +766,12 @@ fn list_org_datasets(
         return Ok(());
     }
     print_dataset_hits(&page.results);
-    summarize_listing(page.results.len(), page.after.as_deref(), "datasets");
+    summarize_listing(
+        page.results.len(),
+        page.after.as_deref(),
+        "datasets",
+        &client.config().mode,
+    );
 
     ctx.last_listing = page.after.map(|after| ListingCursor::OrgDatasets {
         org: org.to_string(),
@@ -809,14 +883,27 @@ fn handle_info(client: &DataGovClient, ctx: &SessionContext) {
 
 #[cfg(test)]
 mod tests {
-    use data_gov::catalog::models::Distribution;
+    use super::*;
+    use data_gov::DataGovConfig;
+    use wiremock::matchers::{method, path, path_regex};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    /// A client that never makes a network call at construction time, for
+    /// tests that only need to reach an error path before any I/O happens.
+    fn test_client() -> DataGovClient {
+        DataGovClient::with_config(DataGovConfig::default()).expect("test client must build")
+    }
 
     fn dist(title: &str) -> Distribution {
+        dist_with_url(title, &format!("https://example.com/{title}"))
+    }
+
+    fn dist_with_url(title: &str, url: &str) -> Distribution {
         Distribution {
             type_hint: None,
             title: Some(title.to_string()),
             description: None,
-            download_url: Some(format!("https://example.com/{title}")),
+            download_url: Some(url.to_string()),
             access_url: None,
             media_type: None,
             format: None,
@@ -885,5 +972,284 @@ mod tests {
             .collect();
 
         assert!(matches.is_empty());
+    }
+
+    // --- #68: failure paths exit non-zero instead of printing "Error:"
+    // to stdout and returning Ok ---
+
+    #[test]
+    fn setdir_in_cli_mode_returns_err_instead_of_succeeding() {
+        // SetDir is intercepted before execute_command in the REPL
+        // (repl.rs handles it directly), so this arm only fires in
+        // one-shot CLI mode, where "lcd" doesn't make sense. It must fail
+        // loudly: the top-level CLI handler only calls exit(1) when this
+        // returns Err, and a `set -e` script sees exit 0 as success.
+        let client = test_client();
+        let rt = Runtime::new().expect("runtime");
+        let mut ctx = SessionContext::default();
+
+        let result = execute_command(
+            &client,
+            &rt,
+            ReplCommand::SetDir {
+                path: std::path::PathBuf::from("/tmp"),
+            },
+            &mut ctx,
+        );
+
+        assert!(
+            result.is_err(),
+            "lcd in CLI mode must return Err, not silently succeed"
+        );
+    }
+
+    #[test]
+    fn handle_list_unknown_subject_returns_err() {
+        let client = test_client();
+        let rt = Runtime::new().expect("runtime");
+        let mut ctx = SessionContext::default();
+
+        let result = execute_command(
+            &client,
+            &rt,
+            ReplCommand::List {
+                what: Some("bogus".to_string()),
+            },
+            &mut ctx,
+        );
+
+        assert!(
+            result.is_err(),
+            "an unknown `ls` subject must return Err, not print and return Ok"
+        );
+    }
+
+    // --- #69.2: "cd ." is a local no-op, not a wasted lookup ---
+
+    #[test]
+    fn ambiguous_single_segment_excludes_dot() {
+        // "." must not be routed through resolve_single_segment_cd (which
+        // costs a full organization listing, then a dataset lookup, before
+        // failing) — it's the current-directory no-op, handled locally by
+        // SessionContext::apply_navigate.
+        let ctx = SessionContext::default();
+        assert_eq!(ambiguous_single_segment(&ctx, "."), None);
+    }
+
+    // --- #58.4: the 'next' hint only appears where 'next' works ---
+
+    #[test]
+    fn listing_summary_hints_next_in_interactive_mode_when_more_pages_exist() {
+        let line = listing_summary_line(50, Some("cursor"), "results", &OperatingMode::Interactive);
+        assert!(line.contains("next"), "line was: {line}");
+    }
+
+    #[test]
+    fn listing_summary_suppresses_next_hint_outside_repl() {
+        let line = listing_summary_line(50, Some("cursor"), "results", &OperatingMode::CommandLine);
+        assert!(!line.contains("next"), "line was: {line}");
+    }
+
+    #[test]
+    fn listing_summary_omits_hint_when_no_more_pages() {
+        let line = listing_summary_line(50, None, "results", &OperatingMode::Interactive);
+        assert!(!line.contains("next"), "line was: {line}");
+    }
+
+    // --- #58.3: a failed 'next' leaves the cursor unchanged ---
+
+    #[test]
+    fn handle_next_preserves_cursor_on_request_failure() {
+        // One runtime, used first to stand up the mock server, then reused
+        // (sequentially, not nested) by handle_next's own block_on calls.
+        let rt = Runtime::new().expect("runtime");
+        let server = rt.block_on(async {
+            let server = MockServer::start().await;
+            Mock::given(method("GET"))
+                .and(path("/search"))
+                .respond_with(ResponseTemplate::new(500))
+                .mount(&server)
+                .await;
+            server
+        });
+
+        let config = DataGovConfig::default().with_base_url(server.uri());
+        let client = DataGovClient::with_config(config).expect("client");
+
+        let mut ctx = SessionContext {
+            org: None,
+            dataset: None,
+            last_listing: Some(ListingCursor::SearchResults {
+                query: "climate".to_string(),
+                organization: None,
+                after: "cursor-1".to_string(),
+                page_size: 50,
+            }),
+        };
+
+        let result = handle_next(&client, &rt, &mut ctx);
+
+        assert!(
+            result.is_err(),
+            "the mocked search endpoint always 500s, so handle_next must return Err"
+        );
+        match &ctx.last_listing {
+            Some(ListingCursor::SearchResults { after, .. }) => {
+                assert_eq!(
+                    after, "cursor-1",
+                    "a failed request must not advance or clear the stored cursor"
+                );
+            }
+            other => panic!("expected the original SearchResults cursor to survive, got {other:?}"),
+        }
+    }
+
+    // --- #52: same-titled distributions land on distinct paths ---
+
+    #[test]
+    fn download_selected_disambiguates_same_titled_distributions() {
+        let rt = Runtime::new().expect("runtime");
+        let server = rt.block_on(async {
+            let server = MockServer::start().await;
+            Mock::given(method("GET"))
+                .and(path_regex(r"^/files/.*"))
+                .respond_with(ResponseTemplate::new(200).set_body_bytes(b"content".to_vec()))
+                .mount(&server)
+                .await;
+            server
+        });
+
+        let tmp = tempfile::TempDir::new().expect("tempdir");
+        let config = DataGovConfig::default()
+            .with_mode(OperatingMode::Interactive)
+            .with_download_dir(tmp.path().to_path_buf());
+        let client = DataGovClient::with_config(config).expect("client");
+
+        // Two distinct distributions sharing the data.gov-default title,
+        // pointing at two different URLs — the exact #52 reproduction.
+        let same_title = "Comma Separated Values File";
+        let distributions = vec![
+            dist_with_url(same_title, &format!("{}/files/1.csv", server.uri())),
+            dist_with_url(same_title, &format!("{}/files/2.csv", server.uri())),
+        ];
+
+        let selectors = vec!["comma".to_string()];
+        let result = download_selected(&client, &rt, &selectors, &distributions, tmp.path());
+
+        assert!(
+            result.is_ok(),
+            "both matches download successfully: {result:?}"
+        );
+
+        let mut paths: Vec<_> = std::fs::read_dir(tmp.path())
+            .expect("read dir")
+            .map(|e| e.expect("dir entry").path())
+            .collect();
+        paths.sort();
+
+        assert_eq!(
+            paths.len(),
+            2,
+            "two same-titled distributions must land on two distinct paths on disk, found: {paths:?}"
+        );
+    }
+
+    #[test]
+    fn download_selected_returns_ok_when_everything_succeeds() {
+        let rt = Runtime::new().expect("runtime");
+        let server = rt.block_on(async {
+            let server = MockServer::start().await;
+            Mock::given(method("GET"))
+                .and(path_regex(r"^/files/.*"))
+                .respond_with(ResponseTemplate::new(200).set_body_bytes(b"ok".to_vec()))
+                .mount(&server)
+                .await;
+            server
+        });
+
+        let tmp = tempfile::TempDir::new().expect("tempdir");
+        let config = DataGovConfig::default().with_download_dir(tmp.path().to_path_buf());
+        let client = DataGovClient::with_config(config).expect("client");
+
+        let distributions = vec![dist_with_url(
+            "one",
+            &format!("{}/files/1.csv", server.uri()),
+        )];
+        let selectors = vec!["one".to_string()];
+
+        let result = download_selected(&client, &rt, &selectors, &distributions, tmp.path());
+        assert!(result.is_ok(), "{result:?}");
+    }
+
+    #[test]
+    fn download_selected_returns_err_when_a_selector_matches_nothing() {
+        // No network involved: the selector never matches, so this must
+        // fail before any download is attempted.
+        let rt = Runtime::new().expect("runtime");
+        let tmp = tempfile::TempDir::new().expect("tempdir");
+        let config = DataGovConfig::default().with_download_dir(tmp.path().to_path_buf());
+        let client = DataGovClient::with_config(config).expect("client");
+
+        let distributions = vec![dist("report.csv")];
+        let selectors = vec!["does-not-exist".to_string()];
+
+        let result = download_selected(&client, &rt, &selectors, &distributions, tmp.path());
+        assert!(
+            result.is_err(),
+            "an unmatched selector must fail the whole command, not report partial success"
+        );
+    }
+
+    #[test]
+    fn download_selected_returns_err_on_partial_failure() {
+        // One selector resolves and downloads fine; a second names an
+        // out-of-range index. The overall command must still fail — a
+        // partial result is never reported as a whole one.
+        let rt = Runtime::new().expect("runtime");
+        let server = rt.block_on(async {
+            let server = MockServer::start().await;
+            Mock::given(method("GET"))
+                .and(path_regex(r"^/files/.*"))
+                .respond_with(ResponseTemplate::new(200).set_body_bytes(b"ok".to_vec()))
+                .mount(&server)
+                .await;
+            server
+        });
+
+        let tmp = tempfile::TempDir::new().expect("tempdir");
+        let config = DataGovConfig::default().with_download_dir(tmp.path().to_path_buf());
+        let client = DataGovClient::with_config(config).expect("client");
+
+        let distributions = vec![dist_with_url(
+            "one",
+            &format!("{}/files/1.csv", server.uri()),
+        )];
+        let selectors = vec!["0".to_string(), "99".to_string()];
+
+        let result = download_selected(&client, &rt, &selectors, &distributions, tmp.path());
+        assert!(
+            result.is_err(),
+            "one out-of-range selector must fail the command even though the other succeeded"
+        );
+    }
+
+    // --- #68: print_download_summary (the no-selectors bulk path) ---
+
+    #[test]
+    fn print_download_summary_returns_err_when_any_download_failed() {
+        let results: Vec<Result<PathBuf, data_gov::DataGovError>> = vec![
+            Ok(PathBuf::from("/tmp/ok.csv")),
+            Err(data_gov::DataGovError::download_error("boom")),
+        ];
+        assert!(print_download_summary(&results).is_err());
+    }
+
+    #[test]
+    fn print_download_summary_returns_ok_when_all_succeeded() {
+        let results: Vec<Result<PathBuf, data_gov::DataGovError>> = vec![
+            Ok(PathBuf::from("/tmp/a.csv")),
+            Ok(PathBuf::from("/tmp/b.csv")),
+        ];
+        assert!(print_download_summary(&results).is_ok());
     }
 }
