@@ -24,6 +24,16 @@ pub struct ActionResponse {
     /// Types and IDs of entities that were created, updated, or deleted
     #[serde(rename = "changed_entities", skip_serializing_if = "Option::is_none")]
     pub changed_entities: Option<std::collections::HashMap<String, Vec<String>>>,
+    /// Error details, present when `success` is `false`.
+    ///
+    /// Kept as a raw [`serde_json::Value`] rather than
+    /// [`crate::models::ErrorResponseError`]: CKAN's fixed `{ __type,
+    /// message }` shape covers most failures, but a validation error
+    /// replaces `message` with per-field arrays instead
+    /// (`{"name_or_id": ["Missing value"], "__type": "Validation Error"}`),
+    /// which does not fit a struct with a required `message` field.
+    #[serde(rename = "error", skip_serializing_if = "Option::is_none")]
+    pub error: Option<serde_json::Value>,
 }
 
 impl ActionResponse {
@@ -33,6 +43,7 @@ impl ActionResponse {
             success,
             result,
             changed_entities: None,
+            error: None,
         }
     }
 }

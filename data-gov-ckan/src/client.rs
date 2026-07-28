@@ -273,25 +273,44 @@ impl CkanClient {
 
         if !response.status().is_success() {
             let status = response.status().as_u16();
-            let error_text = response
+            // A dropped connection while reading the body is a transport
+            // failure; a body that arrived but is not valid JSON is a decode
+            // failure. Keep those separate rather than folding a `.json()`
+            // call's two failure modes into one RequestError.
+            let body_text = response
                 .text()
                 .await
                 .unwrap_or_else(|_| "Unknown error".to_string());
-            return Err(CkanError::ApiError {
-                status,
-                message: error_text,
-            });
+            let message = serde_json::from_str::<serde_json::Value>(&body_text)
+                .ok()
+                .and_then(|v| v.get("error").cloned())
+                .map(|error| error_envelope_message(&error))
+                .unwrap_or(body_text);
+            return Err(CkanError::ApiError { status, message });
         }
 
-        let wrapper: models::ActionResponse = response
-            .json()
+        // `.text()` failing is a transport problem (RequestError); the text
+        // arriving but not parsing as the expected envelope shape is a
+        // decode problem (ParseError). `response.json()` used to collapse
+        // both into RequestError, which is documented as covering
+        // "connection failures, timeouts, DNS resolution issues" -- not
+        // deserialization, which ParseError is documented as covering (#72.2).
+        let body_text = response
+            .text()
             .await
             .map_err(|e| CkanError::RequestError(Box::new(e)))?;
+        let wrapper: models::ActionResponse =
+            serde_json::from_str(&body_text).map_err(CkanError::ParseError)?;
 
         if !wrapper.success {
+            let message = wrapper
+                .error
+                .as_ref()
+                .map(error_envelope_message)
+                .unwrap_or_else(|| "CKAN API reported failure".to_string());
             return Err(CkanError::ApiError {
                 status: 400,
-                message: "CKAN API reported failure".to_string(),
+                message,
             });
         }
 
@@ -845,4 +864,26 @@ impl CkanClient {
 
         self.call_action("format_autocomplete", &params).await
     }
+}
+
+/// Extract a human-readable message from a CKAN `error` envelope value.
+///
+/// Three tiers, most specific first:
+///
+/// 1. The documented shape, `{ "__type": ..., "message": ... }`
+///    ([`models::ErrorResponseError`]).
+/// 2. A bare `message` key without the rest of the documented shape (some
+///    CKAN-compatible backends may omit `__type`).
+/// 3. CKAN's validation-error shape replaces `message` with per-field arrays
+///    instead (`{"name_or_id": ["Missing value"], "__type": "Validation
+///    Error"}`), which has no message to extract at all -- render the raw
+///    error object as text rather than losing it.
+fn error_envelope_message(error: &serde_json::Value) -> String {
+    if let Ok(envelope) = serde_json::from_value::<models::ErrorResponseError>(error.clone()) {
+        return envelope.message;
+    }
+    if let Some(message) = error.get("message").and_then(serde_json::Value::as_str) {
+        return message.to_string();
+    }
+    error.to_string()
 }
