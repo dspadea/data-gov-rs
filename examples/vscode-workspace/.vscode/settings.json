@@ -1,6 +1,6 @@
 {
     "chat.mcp.serverSampling": {
-        "data-gov-rs/.vscode/mcp.json: data-gov": {
+        "vscode-workspace/.vscode/mcp.json: data-gov": {
             "allowedModels": [
                 "copilot/claude-sonnet-4",
                 "copilot/claude-sonnet-4.5",
