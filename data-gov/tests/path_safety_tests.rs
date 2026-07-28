@@ -39,6 +39,18 @@ const HOSTILE_TITLES: [&str; 12] = [
 /// and comes from the same untrusted record as the title.
 const HOSTILE_FORMATS: [&str; 6] = ["CSV", "../evil", "/etc/passwd", "", "..", "csv/../.."];
 
+/// The alphabet an escape has to be assembled from.
+///
+/// One dot, both separators, a character the reduction strips (`!`), two it
+/// keeps as punctuation (`-` and `_`), one ordinary letter, and a unicode
+/// separator lookalike that is neither alphanumeric nor an approved character.
+const SWEEP_ALPHABET: [char; 8] = ['.', '/', '\\', '!', 'a', '-', '_', '\u{ff0f}'];
+
+/// The longest sweep title. Four characters is enough for `.` `x` `.` plus one
+/// more, which is every shape that can put two dots either side of a character
+/// the reduction removes.
+const SWEEP_MAX_LENGTH: u32 = 4;
+
 fn distribution(url: &str, title: &str, format: &str) -> Distribution {
     Distribution {
         type_hint: None,
@@ -94,6 +106,51 @@ fn a_derived_filename_is_always_one_safe_component() {
             }
         }
     }
+}
+
+/// Every string of exactly `length` characters over `alphabet`.
+fn words(alphabet: &[char], length: u32) -> impl Iterator<Item = String> + '_ {
+    let base = alphabet.len() as u64;
+    let count = base.pow(length);
+    (0..count).map(move |mut n| {
+        (0..length)
+            .map(|_| {
+                let c = alphabet[(n % base) as usize];
+                n /= base;
+                c
+            })
+            .collect()
+    })
+}
+
+/// The invariant over every short title an escape could be built from.
+///
+/// A hand-picked list of hostile titles proves the cases somebody thought of.
+/// This proves the whole space of short ones, so a reduction that recombines
+/// two characters into a separator or a traversal has nowhere left to hide.
+#[test]
+fn every_short_title_over_the_dangerous_alphabet_yields_one_plain_component() {
+    let mut checked = 0usize;
+    for length in 1..=SWEEP_MAX_LENGTH {
+        for title in words(&SWEEP_ALPHABET, length) {
+            for format in HOSTILE_FORMATS {
+                for index in [None, Some(0), Some(7)] {
+                    let dist = distribution("https://example.gov/data", &title, format);
+                    let name = DataGovClient::get_distribution_filename(&dist, None, index);
+                    let case = format!("title={title:?} format={format:?} index={index:?}");
+                    assert_single_safe_component(&name, &case);
+                    checked += 1;
+                }
+            }
+        }
+    }
+
+    // 8 + 64 + 512 + 4096 titles, six formats, three index values. Stated so a
+    // sweep that quietly stops covering the space fails rather than passes.
+    assert_eq!(
+        checked, 84_240,
+        "the sweep must cover every combination it claims to"
+    );
 }
 
 #[test]

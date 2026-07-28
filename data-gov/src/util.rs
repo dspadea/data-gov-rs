@@ -695,9 +695,88 @@ mod tests {
         assert_eq!(sanitize_path_component(""), "");
     }
 
+    /// `.` and `..` are instructions to the filesystem, not names. A caller
+    /// that joins the result onto a directory must never be handed one.
     #[test]
-    fn test_sanitize_single_dot_preserved() {
-        assert_eq!(sanitize_path_component("."), ".");
+    fn test_sanitize_never_returns_a_directory_alias() {
+        for input in [".", "..", ".!.", "./.", ". .", "..!..", "  .  .  ", ".\0."] {
+            let out = sanitize_path_component(input);
+            assert!(
+                out != "." && out != "..",
+                "sanitizing {input:?} produced {out:?}, which names a directory rather than a file"
+            );
+        }
+    }
+
+    /// The character between the two dots is stripped, and stripping it is what
+    /// brings the dots together. Every one of these is a separate way in.
+    #[test]
+    fn test_sanitize_cannot_rebuild_a_traversal_from_stripped_characters() {
+        for stripped in [
+            "!", " ", "\0", "\n", "\r", "\t", "%", "#", "@", "*", "?", ":", ";", "\"", "'", "|",
+            "<", ">", "\u{202e}", "\u{ff0f}", "\u{2215}",
+        ] {
+            let input = format!("report.{stripped}.csv");
+            let out = sanitize_path_component(&input);
+            assert!(
+                !out.contains(".."),
+                "sanitizing {input:?} produced {out:?}, which carries a parent-directory reference"
+            );
+
+            let bare = format!(".{stripped}.");
+            let out = sanitize_path_component(&bare);
+            assert!(
+                !out.contains(".."),
+                "sanitizing {bare:?} produced {out:?}, which carries a parent-directory reference"
+            );
+        }
+    }
+
+    /// A sanitized name is joined onto a directory, so it has to be one plain
+    /// component. This states that over the whole result, not over one shape.
+    #[test]
+    fn test_sanitize_always_yields_at_most_one_plain_component() {
+        for input in [
+            "../../etc/passwd",
+            ".!.",
+            "..!..",
+            "....",
+            "a/../b",
+            "/etc/passwd",
+            "C:\\Windows\\evil",
+            ".\u{ff0f}.",
+        ] {
+            let out = sanitize_path_component(input);
+            if out.is_empty() {
+                continue;
+            }
+            assert!(
+                !out.contains('/') && !out.contains('\\'),
+                "sanitizing {input:?} produced {out:?}, which carries a path separator"
+            );
+            assert!(
+                !out.contains(".."),
+                "sanitizing {input:?} produced {out:?}, which carries a parent-directory reference"
+            );
+            let mut parts = Path::new(&out).components();
+            assert!(
+                matches!(parts.next(), Some(Component::Normal(_))),
+                "sanitizing {input:?} produced {out:?}, which does not start with a plain component"
+            );
+            assert!(
+                parts.next().is_none(),
+                "sanitizing {input:?} produced {out:?}, which is more than one component"
+            );
+        }
+    }
+
+    #[test]
+    fn test_sanitize_single_dot_yields_nothing_usable() {
+        assert_eq!(
+            sanitize_path_component("."),
+            "",
+            "a lone dot names the current directory, so nothing usable survives it"
+        );
     }
 
     #[test]
