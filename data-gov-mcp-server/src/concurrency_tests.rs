@@ -366,3 +366,74 @@ async fn a_protocol_method_that_outruns_the_timeout_is_a_server_error() {
 
     session.finish().await;
 }
+
+// ---------------------------------------------------------------------------
+// Request id reuse
+// ---------------------------------------------------------------------------
+
+/// MCP base protocol: "The request ID MUST NOT have been previously used by
+/// the requestor within the same session."
+///
+/// The cancellation registry is keyed by request id, so a second request
+/// arriving under an id already in flight has nowhere of its own to live. It
+/// must be refused rather than allowed to displace the first, and the first
+/// must still be answered.
+#[tokio::test]
+async fn a_request_id_already_in_flight_is_refused_and_the_first_still_answers() {
+    let mock = MockServer::start().await;
+    let (server, release) = test_server_with_gate(&mock.uri(), SLOW_METHOD);
+    let mut session = Session::start(server);
+
+    // Held, so it is provably still in flight when the duplicate arrives.
+    session.send(&slow_call(1)).await;
+    session
+        .send(&json!({"jsonrpc": "2.0", "id": 1, "method": "tools/list"}))
+        .await;
+
+    let refusal = session.next_response().await;
+    assert_eq!(refusal.get("id"), Some(&json!(1)), "got: {refusal}");
+    assert_eq!(
+        error_code(&refusal),
+        INVALID_REQUEST,
+        "an id already in flight cannot identify a second request: {refusal}"
+    );
+
+    release.notify_one();
+    let answer = session.next_response().await;
+    assert_eq!(
+        answer.get("id"),
+        Some(&json!(1)),
+        "the first request keeps its id and its answer: {answer}"
+    );
+    assert!(
+        answer.get("result").is_some(),
+        "the duplicate must not have cancelled the request it collided with: {answer}"
+    );
+
+    assert!(session.finish().await.is_empty());
+}
+
+/// The other side of it: reusing an id once the first request has been
+/// answered is not a collision, and a client that numbers requests from a
+/// small pool must keep working.
+#[tokio::test]
+async fn a_request_id_is_reusable_once_its_request_has_been_answered() {
+    let mock = MockServer::start().await;
+    let server = std::sync::Arc::new(test_server(&mock.uri()));
+    let mut session = Session::start(server);
+
+    for _ in 0..3 {
+        session
+            .send(&json!({"jsonrpc": "2.0", "id": 7, "method": "ping"}))
+            .await;
+        let response = session.next_response().await;
+        assert_eq!(response.get("id"), Some(&json!(7)), "got: {response}");
+        assert_eq!(
+            response.get("result"),
+            Some(&json!({})),
+            "an id freed by its answer is usable again: {response}"
+        );
+    }
+
+    assert!(session.finish().await.is_empty());
+}

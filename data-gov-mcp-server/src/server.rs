@@ -3,6 +3,7 @@
 use data_gov::{DataGovClient, DataGovConfig, OperatingMode};
 use serde_json::Value;
 use std::collections::HashMap;
+use std::collections::hash_map::Entry;
 use std::env;
 use std::sync::Arc;
 use std::time::Duration;
@@ -218,9 +219,35 @@ impl DataGovMcpServer {
         // Registered before the task is spawned, so a cancellation arriving on
         // the very next line always finds it. The task removes its own entry
         // when it ends, whether it finished or was cancelled.
+        //
+        // A second request under an id already in flight is refused rather
+        // than allowed to take the slot. MCP forbids reusing a request id
+        // within a session, and letting the newcomer overwrite the entry loses
+        // both requests: dropping the displaced sender cancels the first, and
+        // the first then deregisters the key the second is now living under,
+        // cancelling that one too. Neither is ever answered.
         let (cancel, cancelled) = oneshot::channel();
         let key = cancellation_key(&id);
-        in_flight.lock().await.insert(key.clone(), cancel);
+        let already_in_flight = {
+            let mut registry = in_flight.lock().await;
+            match registry.entry(key.clone()) {
+                Entry::Occupied(_) => true,
+                Entry::Vacant(slot) => {
+                    slot.insert(cancel);
+                    false
+                }
+            }
+        };
+
+        if already_in_flight {
+            tracing::warn!(request_id = %id, "request id is already in flight");
+            let error = ServerError::InvalidRequest(format!(
+                "request id {id} is already in flight; a request id must not be reused \
+                 within a session"
+            ));
+            send_response(responses, Response::error(Some(id), error)).await;
+            return;
+        }
 
         let server = Arc::clone(self);
         let responses = responses.clone();
