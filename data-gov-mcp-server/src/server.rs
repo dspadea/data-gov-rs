@@ -1,24 +1,10 @@
 //! MCP server entry point — struct definition, construction, and run loop.
 
 use data_gov::{DataGovClient, DataGovConfig, OperatingMode};
-use serde_json::json;
 use std::env;
 use tokio::io::{self, AsyncBufReadExt, AsyncWriteExt, BufReader, BufWriter};
 
 use crate::types::{Request, Response, ServerError};
-
-/// Supported JSON-RPC methods advertised in the ready message.
-const METHODS: &[&str] = &[
-    "initialize",
-    "initialized",
-    "shutdown",
-    "tools/list",
-    "data_gov.search",
-    "data_gov.dataset",
-    "data_gov.autocompleteDatasets",
-    "data_gov.listOrganizations",
-    "data_gov.downloadResources",
-];
 
 /// The data.gov MCP server.
 ///
@@ -64,7 +50,10 @@ impl DataGovMcpServer {
         let reader = BufReader::new(stdin);
         let mut writer = BufWriter::new(stdout);
 
-        self.send_ready(&mut writer).await?;
+        // Nothing is written to stdout until a request arrives. stdout is the
+        // protocol stream, and MCP expects the server to stay silent until it
+        // answers `initialize`; lifecycle chatter goes to stderr via tracing.
+        tracing::info!("data-gov MCP server ready");
 
         let mut lines = reader.lines();
 
@@ -94,26 +83,6 @@ impl DataGovMcpServer {
             }
         }
 
-        Ok(())
-    }
-
-    /// Emit the server-ready announcement.
-    async fn send_ready(&self, writer: &mut BufWriter<io::Stdout>) -> Result<(), ServerError> {
-        let ready = json!({
-            "jsonrpc": "2.0",
-            "id": null,
-            "result": {
-                "server": "data-gov-mcp-server",
-                "version": env!("CARGO_PKG_VERSION"),
-                "methods": METHODS,
-            }
-        });
-
-        let payload = serde_json::to_string(&ready).map_err(ServerError::Serialization)?;
-        writer.write_all(payload.as_bytes()).await?;
-        writer.write_all(b"\n").await?;
-        writer.flush().await?;
-        tracing::info!("data-gov MCP server ready");
         Ok(())
     }
 

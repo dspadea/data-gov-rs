@@ -53,7 +53,8 @@ impl DataGovMcpServer {
         match method {
             "initialize" => {
                 let params: InitializeParams = parse_optional_params(method, params)?;
-                let result = InitializeResult::new(params.client_info);
+                let result =
+                    InitializeResult::new(params.protocol_version.as_deref(), params.client_info);
                 Ok(serde_json::to_value(result).map_err(ServerError::Serialization)?)
             }
             "initialized" => Ok(Value::Null),
@@ -80,13 +81,16 @@ impl DataGovMcpServer {
                     .data_gov
                     .autocomplete_datasets(&params.partial, params.limit)
                     .await?;
-                Ok(serde_json::to_value(result).map_err(ServerError::Serialization)?)
+                // A named object, not the bare Vec. MCP defines structuredContent
+                // as a JSON object, and a key leaves room to add fields later
+                // without breaking consumers.
+                Ok(json!({ "datasets": result }))
             }
             "data_gov.listOrganizations" => {
                 let params: ListOrganizationsParams = parse_optional_params(method, params)?;
                 validate_limit(method, params.limit, 1, 1000)?;
                 let result = self.data_gov.list_organizations(params.limit).await?;
-                Ok(serde_json::to_value(result).map_err(ServerError::Serialization)?)
+                Ok(json!({ "organizations": result }))
             }
             "data_gov.downloadResources" => self.handle_download_resources(method, params).await,
             other => Err(ServerError::InvalidMethod(other.to_string())),
