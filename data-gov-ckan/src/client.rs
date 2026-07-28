@@ -21,25 +21,17 @@ pub struct Configuration {
     pub user_agent: Option<String>,
     /// HTTP client instance.
     ///
-    /// [`Configuration::default`] (and therefore [`Configuration::new`])
-    /// builds this from [`Self::connect_timeout`] and [`Self::timeout`], so a
-    /// stalled server -- one that accepts the connection but never sends
-    /// response headers -- cannot hang a caller forever. Supplying your own
-    /// `client` here (via struct-update syntax against a value other than
-    /// `Configuration::default()`, or a bare struct literal) bypasses those
-    /// two fields entirely; set your own timeouts on it directly in that
-    /// case.
+    /// A `reqwest::Client` bakes its connect and request timeouts in at
+    /// construction time; nothing can retime it afterward. `Configuration`
+    /// therefore has no public `connect_timeout` / `timeout` fields -- an
+    /// earlier version of this crate had exactly that pair, and
+    /// `Configuration { timeout: Duration::from_millis(50), ..Configuration
+    /// ::default() }` silently kept the client `default()` had already
+    /// built from the old value (#48). Use [`Configuration::with_timeouts`]
+    /// to build a `Configuration` whose client has specific timeouts, or
+    /// build your own [`reqwest::Client`] with the timeouts you want and
+    /// assign it here directly.
     pub client: reqwest::Client,
-    /// Connect timeout used when [`Configuration::default`] builds [`Self::client`].
-    ///
-    /// Changing this field on an already-constructed `Configuration` has no
-    /// effect on `client`, which was already built; see [`Self::client`].
-    pub connect_timeout: Duration,
-    /// Overall request timeout used when [`Configuration::default`] builds [`Self::client`].
-    ///
-    /// Changing this field on an already-constructed `Configuration` has no
-    /// effect on `client`, which was already built; see [`Self::client`].
-    pub timeout: Duration,
     /// Basic authentication credentials (username, optional password)
     pub basic_auth: Option<BasicAuth>,
     /// OAuth access token.
@@ -83,6 +75,30 @@ impl Configuration {
     pub fn new() -> Configuration {
         Configuration::default()
     }
+
+    /// Build a [`Configuration`] whose [`Self::client`] has the given
+    /// connect and overall request timeouts baked in.
+    ///
+    /// This is the only way to change those timeouts: a `reqwest::Client`
+    /// fixes them at construction, so a field set on an already-built
+    /// `Configuration` cannot reach a `client` that was already built (see
+    /// [`Self::client`]). Everything else is taken from
+    /// [`Configuration::default`].
+    ///
+    /// ```rust
+    /// # use data_gov_ckan::Configuration;
+    /// # use std::time::Duration;
+    /// let config = Configuration {
+    ///     base_path: "https://demo.ckan.org/api/3".to_string(),
+    ///     ..Configuration::with_timeouts(Duration::from_secs(5), Duration::from_secs(15))
+    /// };
+    /// ```
+    pub fn with_timeouts(connect_timeout: Duration, timeout: Duration) -> Configuration {
+        Configuration {
+            client: build_client(connect_timeout, timeout),
+            ..Configuration::default()
+        }
+    }
 }
 
 /// Build a [`reqwest::Client`] with an explicit connect and request timeout.
@@ -102,10 +118,6 @@ fn build_client(connect_timeout: Duration, timeout: Duration) -> reqwest::Client
 
 impl Default for Configuration {
     fn default() -> Self {
-        let connect_timeout = DEFAULT_CONNECT_TIMEOUT;
-        let timeout = DEFAULT_TIMEOUT;
-        let client = build_client(connect_timeout, timeout);
-
         Configuration {
             // catalog.data.gov (the old default) is a confirmed 404: data.gov
             // retired its CKAN endpoint in 2026. open.canada.ca is a live,
@@ -115,9 +127,7 @@ impl Default for Configuration {
             // Point this at your own instance for any real use.
             base_path: "https://open.canada.ca/data/en/api/3".to_owned(),
             user_agent: Some(concat!("data-gov-rs/", env!("CARGO_PKG_VERSION")).to_owned()),
-            client,
-            connect_timeout,
-            timeout,
+            client: build_client(DEFAULT_CONNECT_TIMEOUT, DEFAULT_TIMEOUT),
             basic_auth: None,
             oauth_access_token: None,
             bearer_access_token: None,
@@ -147,8 +157,6 @@ impl std::fmt::Debug for Configuration {
             .field("base_path", &self.base_path)
             .field("user_agent", &self.user_agent)
             .field("client", &self.client)
-            .field("connect_timeout", &self.connect_timeout)
-            .field("timeout", &self.timeout)
             .field("basic_auth", &basic_auth)
             .field("oauth_access_token", &redacted(&self.oauth_access_token))
             .field("bearer_access_token", &redacted(&self.bearer_access_token))

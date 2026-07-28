@@ -1170,23 +1170,15 @@ async fn a_request_against_a_non_responding_endpoint_errors_within_the_configure
     );
 }
 
-#[test]
-fn default_configuration_sets_explicit_connect_and_request_timeouts() {
-    let config = Configuration::default();
-    assert_eq!(config.connect_timeout, std::time::Duration::from_secs(10));
-    assert_eq!(config.timeout, std::time::Duration::from_secs(30));
-}
-
-/// The idiomatic way to shorten a timeout is exactly what a consumer reaches
-/// for: `Configuration { timeout: ..., ..Configuration::default() }`. But
-/// `Configuration::default()` already built `client` from its own 10s/30s
-/// values before the struct literal's `connect_timeout`/`timeout` fields are
-/// applied, so this pattern silently keeps the old client -- the two new
-/// fields sit in the struct doing nothing. A mock delays 300ms; both
-/// timeouts are set to 50ms via struct-update syntax, so a client that
-/// actually honoured them would error well under 300ms.
+/// `Configuration` has no public `connect_timeout` / `timeout` fields (#48):
+/// a `reqwest::Client` bakes its timeouts in at construction, so a field
+/// that did not rebuild `client` would silently stop applying, the same way
+/// the two now-removed fields did. `with_timeouts` is the replacement, and
+/// this is its behavioural proof -- a mock delays 300ms; the client is built
+/// with a 50ms timeout, so a client that actually honours it errors well
+/// under 300ms.
 #[tokio::test]
-async fn setting_timeout_via_struct_update_syntax_has_no_effect_on_the_built_client() {
+async fn with_timeouts_bounds_a_call_to_the_given_duration() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path("/action/package_search"))
@@ -1200,9 +1192,10 @@ async fn setting_timeout_via_struct_update_syntax_has_no_effect_on_the_built_cli
 
     let config = Arc::new(Configuration {
         base_path: server.uri(),
-        connect_timeout: std::time::Duration::from_millis(50),
-        timeout: std::time::Duration::from_millis(50),
-        ..Configuration::default()
+        ..Configuration::with_timeouts(
+            std::time::Duration::from_millis(50),
+            std::time::Duration::from_millis(50),
+        )
     });
 
     let started = std::time::Instant::now();
@@ -1213,7 +1206,7 @@ async fn setting_timeout_via_struct_update_syntax_has_no_effect_on_the_built_cli
 
     assert!(
         result.is_err(),
-        "a 50ms timeout set via struct-update syntax must bound a 300ms \
-         delayed response, but the call returned {result:?} after {elapsed:?}"
+        "a 50ms with_timeouts client must bound a 300ms delayed response, \
+         but the call returned {result:?} after {elapsed:?}"
     );
 }
