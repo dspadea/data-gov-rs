@@ -797,3 +797,62 @@ fn client_debug_shows_base_path() {
     let debug = format!("{:?}", client);
     assert!(debug.contains("example.com"));
 }
+
+// A `Configuration` is plausibly logged whole (`tracing::debug!(?config)`),
+// not just wrapped in `CkanClient`, so `Debug` on `Configuration` itself must
+// never print a credential in the clear.
+
+#[test]
+fn configuration_debug_redacts_api_key() {
+    let config = Configuration {
+        api_key: Some(ApiKey {
+            prefix: None,
+            key: "super-secret-api-key".to_string(),
+        }),
+        ..Configuration::default()
+    };
+    let debug = format!("{:?}", config);
+    assert!(
+        !debug.contains("super-secret-api-key"),
+        "API key leaked in Configuration Debug output: {debug}"
+    );
+}
+
+#[test]
+fn configuration_debug_redacts_bearer_token() {
+    let config = Configuration {
+        bearer_access_token: Some("super-secret-bearer-token".to_string()),
+        ..Configuration::default()
+    };
+    let debug = format!("{:?}", config);
+    assert!(
+        !debug.contains("super-secret-bearer-token"),
+        "bearer token leaked in Configuration Debug output: {debug}"
+    );
+}
+
+#[test]
+fn configuration_debug_redacts_oauth_access_token() {
+    let config = Configuration {
+        oauth_access_token: Some("super-secret-oauth-token".to_string()),
+        ..Configuration::default()
+    };
+    let debug = format!("{:?}", config);
+    assert!(
+        !debug.contains("super-secret-oauth-token"),
+        "OAuth token leaked in Configuration Debug output: {debug}"
+    );
+}
+
+#[test]
+fn configuration_debug_redacts_basic_auth_password() {
+    let config = Configuration {
+        basic_auth: Some(("alice".to_string(), Some("super-secret-password".to_string()))),
+        ..Configuration::default()
+    };
+    let debug = format!("{:?}", config);
+    assert!(
+        !debug.contains("super-secret-password"),
+        "basic auth password leaked in Configuration Debug output: {debug}"
+    );
+}
