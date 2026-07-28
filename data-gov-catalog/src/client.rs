@@ -176,6 +176,15 @@ pub enum CatalogError {
     /// dot-segments. Such a value would silently retarget the request at a
     /// different endpoint, so it is refused before any request is made.
     InvalidPathSegment(String),
+    /// A caller-supplied [`SearchParams::per_page`] is outside the range the
+    /// Catalog API accepts.
+    ///
+    /// The API's own OpenAPI schema (`https://catalog.data.gov/openapi.json`,
+    /// `/search`'s `per_page` parameter) declares `minimum: 1, maximum:
+    /// 1000` and rejects anything else with a bare `400`. Checked here so a
+    /// bad value fails locally, with a message naming the valid range,
+    /// instead of a round trip to the network.
+    InvalidPerPage(i32),
 }
 
 impl std::fmt::Display for CatalogError {
@@ -190,6 +199,9 @@ impl std::fmt::Display for CatalogError {
                 f,
                 "invalid identifier {value:?}: it cannot be carried in a URL path segment"
             ),
+            CatalogError::InvalidPerPage(value) => {
+                write!(f, "invalid per_page {value}: must be between 1 and 1000")
+            }
         }
     }
 }
@@ -222,6 +234,16 @@ impl SpatialFilter {
     }
 }
 
+/// Valid range for [`SearchParams::per_page`].
+///
+/// Declared by the Catalog API's own OpenAPI schema
+/// (`https://catalog.data.gov/openapi.json`, `/search`'s `per_page`
+/// parameter: `minimum: 1, maximum: 1000`) and confirmed live: `per_page=0`,
+/// `per_page=1001`, and `per_page=-5` each return `400
+/// {"error":"Search failed","message":"per_page must be between 1 and
+/// 1000"}`, while `per_page=1000` returns `200`.
+const VALID_PER_PAGE: std::ops::RangeInclusive<i32> = 1..=1000;
+
 /// Parameters for [`CatalogClient::search`].
 ///
 /// Constructed with a builder: start from [`SearchParams::new`] and chain
@@ -233,7 +255,9 @@ pub struct SearchParams {
     pub q: Option<String>,
     /// Sort order (`relevance`, `popularity`, `distance`, `last_harvested_date`).
     pub sort: Option<String>,
-    /// Results per page.
+    /// Results per page. Must be in `1..=1000`; [`CatalogClient::search`]
+    /// rejects anything outside that range with
+    /// [`CatalogError::InvalidPerPage`] before making a request.
     pub per_page: Option<i32>,
     /// Filter by organization slug (e.g. `nasa`).
     pub org_slug: Option<String>,
@@ -283,6 +307,10 @@ impl SearchParams {
     }
 
     /// Set page size.
+    ///
+    /// Not validated here -- [`CatalogClient::search`] rejects a value
+    /// outside `1..=1000` before making a request. See
+    /// [`CatalogError::InvalidPerPage`].
     pub fn per_page(mut self, per_page: i32) -> Self {
         self.per_page = Some(per_page);
         self
@@ -377,6 +405,22 @@ impl SearchParams {
         }
         q
     }
+
+    /// Check the parameters this crate can validate locally, before any of
+    /// them reach the network.
+    ///
+    /// # Errors
+    ///
+    /// [`CatalogError::InvalidPerPage`] when
+    /// [`per_page`](Self::per_page) is set outside `1..=1000`.
+    fn validate(&self) -> Result<(), CatalogError> {
+        if let Some(per_page) = self.per_page
+            && !VALID_PER_PAGE.contains(&per_page)
+        {
+            return Err(CatalogError::InvalidPerPage(per_page));
+        }
+        Ok(())
+    }
 }
 
 impl CatalogClient {
@@ -465,7 +509,10 @@ impl CatalogClient {
     ///
     /// # Errors
     ///
-    /// Returns [`CatalogError::ApiError`] if the server returns non-2xx,
+    /// Returns [`CatalogError::InvalidPerPage`] if
+    /// [`params.per_page`](SearchParams::per_page) is set outside `1..=1000`
+    /// -- checked locally, before any request is made. Returns
+    /// [`CatalogError::ApiError`] if the server returns non-2xx,
     /// [`CatalogError::RequestError`] for network/TLS failure, and
     /// [`CatalogError::ParseError`] if the response isn't a valid
     /// [`SearchResponse`](models::SearchResponse).
@@ -473,6 +520,7 @@ impl CatalogClient {
         &self,
         params: SearchParams,
     ) -> Result<models::SearchResponse, CatalogError> {
+        params.validate()?;
         let query = params.to_query();
         self.get_json("/search", &query).await
     }
