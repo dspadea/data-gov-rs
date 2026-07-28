@@ -317,11 +317,7 @@ pub(crate) async fn ensure_inside(root: &Path, candidate: &Path) -> Result<()> {
         ))
     };
 
-    let relative = candidate.strip_prefix(root).map_err(|_| outside())?;
-    let mut parts = relative.components();
-    if !matches!(parts.next(), Some(Component::Normal(_))) || parts.next().is_some() {
-        return Err(outside());
-    }
+    direct_child(root, candidate)?;
 
     let resolved_root = tokio::fs::canonicalize(root).await?;
     let resolved_parent = match tokio::fs::canonicalize(candidate).await {
@@ -387,6 +383,57 @@ pub fn sanitize_path_component(s: &str) -> String {
         return String::new();
     }
     reduced
+}
+
+/// Join `component` onto `root` and confirm the result stays directly inside it.
+///
+/// This is the check that has to run at every place a derived name is joined
+/// onto a directory the caller chose. [`sanitize_path_component`] is what makes
+/// the join safe; this is what makes it *checked*, so a change to the reduction
+/// cannot silently move a download somewhere else.
+///
+/// # Errors
+///
+/// Returns [`DataGovError::ValidationError`] when `component` is empty,
+/// absolute, or resolves anywhere other than a direct child of `root`.
+///
+/// # Examples
+///
+/// ```rust
+/// # use std::path::{Path, PathBuf};
+/// # use data_gov::util::join_inside;
+/// let chosen = Path::new("/tmp/downloads");
+/// assert_eq!(
+///     join_inside(chosen, "climate-data").unwrap(),
+///     PathBuf::from("/tmp/downloads/climate-data")
+/// );
+/// assert!(join_inside(chosen, "..").is_err());
+/// ```
+pub fn join_inside(root: &Path, component: &str) -> Result<std::path::PathBuf> {
+    let candidate = root.join(component);
+    direct_child(root, &candidate)?;
+    Ok(candidate)
+}
+
+/// Fail unless `candidate` is `root` plus exactly one plain component.
+///
+/// Lexical only: it needs neither path to exist, which is what lets it run
+/// before a directory is created for the name it is judging.
+fn direct_child(root: &Path, candidate: &Path) -> Result<()> {
+    let outside = || {
+        DataGovError::validation_error(format!(
+            "download path `{}` is outside the chosen directory `{}`",
+            candidate.display(),
+            root.display()
+        ))
+    };
+
+    let relative = candidate.strip_prefix(root).map_err(|_| outside())?;
+    let mut parts = relative.components();
+    if !matches!(parts.next(), Some(Component::Normal(_))) || parts.next().is_some() {
+        return Err(outside());
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -579,6 +626,47 @@ mod tests {
             addresses.count() > 0,
             "the resolver must hand back the addresses it approved"
         );
+    }
+
+    #[test]
+    fn join_inside_accepts_a_plain_component() {
+        let joined = join_inside(Path::new("/tmp/downloads"), "climate-data")
+            .expect("a plain component names a directory inside the chosen one");
+        assert_eq!(
+            joined,
+            std::path::PathBuf::from("/tmp/downloads/climate-data")
+        );
+    }
+
+    /// Every one of these is a way a component leaves the directory it is
+    /// joined onto, including the two the reduction is supposed to remove.
+    /// The check does not depend on the reduction having removed them.
+    #[test]
+    fn join_inside_rejects_every_component_that_leaves_the_directory() {
+        for component in [
+            "..",
+            "../escaped",
+            "a/../..",
+            "sub/dir",
+            "/etc/cron.d",
+            "",
+            ".",
+            "./.",
+        ] {
+            let outcome = join_inside(Path::new("/tmp/downloads"), component);
+            assert!(
+                matches!(outcome, Err(DataGovError::ValidationError { .. })),
+                "component {component:?} must be refused, got: {outcome:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn join_inside_names_both_paths_when_it_refuses() {
+        let error = join_inside(Path::new("/tmp/downloads"), "..")
+            .expect_err("a parent-directory step must be refused");
+        let message = error.to_string();
+        assert!(message.contains("/tmp/downloads"), "got: {message}");
     }
 
     #[tokio::test]
