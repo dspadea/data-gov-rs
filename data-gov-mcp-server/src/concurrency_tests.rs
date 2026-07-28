@@ -1,4 +1,5 @@
-//! Tests for concurrent dispatch, cancellation, and the keepalive.
+//! Tests for concurrent dispatch, cancellation, the keepalive, and the limits
+//! the read loop admits work under.
 //!
 //! Nothing here waits on a clock to decide whether it passed. The slow request
 //! is held at a gate the test owns, so "the second request was answered while
@@ -6,17 +7,31 @@
 //! measurement. The only time bound is the one inside
 //! [`crate::test_support::Session`], which turns a run loop that has stopped
 //! answering into a named failure instead of a hung suite.
+//!
+//! The two limits are stated here as literals rather than read out of the
+//! server, so that changing a constant fails a test instead of silently
+//! agreeing with it.
 
 use serde_json::{Value, json};
 use std::collections::HashSet;
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::AsyncWriteExt;
 use wiremock::MockServer;
 
 use crate::test_support::{
     INVALID_PARAMS, INVALID_REQUEST, METHOD_NOT_FOUND, PARSE_ERROR, Session, drive, error_code,
-    gated_server, gated_twice, test_server, test_server_with_gate,
+    error_message, gated_server, gated_twice, test_server, test_server_with_gate,
 };
+
+/// The largest message the server accepts, in bytes, newline included.
+///
+/// See the server's `MAX_LINE_BYTES` for how the number was chosen against a
+/// real payload.
+const ACCEPTED_LINE_BYTES: usize = 1024 * 1024;
+
+/// How many requests the server dispatches at once before it stops accepting.
+const DISPATCH_SLOTS: usize = 256;
 
 /// The tool method the gate holds in these tests. Held at the dispatch, so no
 /// download, no network, and no timing is involved.
@@ -617,5 +632,213 @@ async fn a_closed_output_ends_the_session() {
     assert!(
         outcome.is_err(),
         "a transport that cannot be written to is a failure, not a clean end: {outcome:?}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// The limits the read loop admits work under
+// ---------------------------------------------------------------------------
+
+/// A `ping` request padded to exactly `bytes`, newline included.
+///
+/// `ping` ignores its params, so the padding changes the size of the message
+/// and nothing else about what the server has to do with it.
+fn padded_ping(id: i64, bytes: usize) -> Vec<u8> {
+    let empty = json!({
+        "jsonrpc": "2.0", "id": id, "method": "ping", "params": {"pad": ""}
+    })
+    .to_string();
+    let pad = bytes
+        .checked_sub(empty.len() + 1)
+        .expect("the requested size must leave room for the envelope");
+    let line = format!(
+        "{}\n",
+        json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "method": "ping",
+            "params": {"pad": "x".repeat(pad)}
+        })
+    );
+    assert_eq!(line.len(), bytes, "the padded line must be exactly {bytes}");
+    line.into_bytes()
+}
+
+/// One JSON-RPC line, newline included.
+fn line_of(message: &Value) -> Vec<u8> {
+    format!("{message}\n").into_bytes()
+}
+
+/// A line past the cap is refused, and the session carries on.
+///
+/// Refusing matters more than the size: the server must not buffer a message
+/// it has already decided not to serve. Measured before the cap existed, a
+/// 1 GiB line peaked at 1046 MiB of resident memory, and a 256 MiB line that
+/// was a *valid* request peaked at 4.09x its own size, because the raw buffer,
+/// the parsed `Value`, the cloned id, and the serialised response all coexist.
+#[tokio::test]
+async fn a_line_over_the_cap_is_refused_and_the_session_survives() {
+    let mock = MockServer::start().await;
+    let server = Arc::new(test_server(&mock.uri()));
+
+    let mut input = padded_ping(1, ACCEPTED_LINE_BYTES + 1);
+    input.extend_from_slice(&line_of(
+        &json!({"jsonrpc": "2.0", "id": 2, "method": "ping"}),
+    ));
+
+    let responses = drive(&server, &input).await;
+
+    assert_eq!(
+        responses.len(),
+        2,
+        "one refusal and one answer: {responses:?}"
+    );
+    assert_eq!(
+        responses[0].get("id"),
+        Some(&json!(null)),
+        "a line the server refused to read carries no recoverable id: {}",
+        responses[0]
+    );
+    assert_eq!(
+        error_code(&responses[0]),
+        INVALID_REQUEST,
+        "an over-long message is not a valid Request object: {}",
+        responses[0]
+    );
+    assert!(
+        error_message(&responses[0]).contains(&ACCEPTED_LINE_BYTES.to_string()),
+        "the message must name the limit, or a client cannot act on it: {}",
+        responses[0]
+    );
+    assert_eq!(
+        responses[1].get("id"),
+        Some(&json!(2)),
+        "the session survives, and the tail of the refused line is discarded \
+         rather than read as the next message: {}",
+        responses[1]
+    );
+}
+
+/// The boundary itself. A cap that rejected the largest accepted size, or
+/// accepted one byte past it, would pass a test written only against extremes.
+#[tokio::test]
+async fn a_line_at_exactly_the_cap_is_accepted() {
+    let mock = MockServer::start().await;
+    let server = Arc::new(test_server(&mock.uri()));
+
+    let responses = drive(&server, &padded_ping(1, ACCEPTED_LINE_BYTES)).await;
+
+    assert_eq!(responses.len(), 1, "got: {responses:?}");
+    assert_eq!(responses[0].get("id"), Some(&json!(1)));
+    assert_eq!(
+        responses[0].get("result"),
+        Some(&json!({})),
+        "a message at the cap is served, not refused: {}",
+        responses[0]
+    );
+}
+
+/// The cap has to clear the largest message a real client sends, which is a
+/// `downloadResources` call naming every distribution of a large dataset.
+/// 10,000 indexes is far past anything data.gov carries, and it must still be
+/// served rather than refused.
+#[tokio::test]
+async fn the_largest_realistic_tool_call_is_still_accepted() {
+    let mock = MockServer::start().await;
+    let server = Arc::new(test_server(&mock.uri()));
+
+    let indexes: Vec<usize> = (0..10_000).collect();
+    let call = json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+            "name": "data_gov_download_resources",
+            "arguments": {
+                "datasetId": "a-dataset-slug-at-the-catalog-truncation-cap-of-ninety-characters-000000000000000000",
+                "distributionIndexes": indexes,
+                "formats": ["CSV", "JSON", "XML", "GeoJSON", "SHP"],
+                "outputDir": "/tmp/a/deliberately/long/output/path"
+            }
+        }
+    });
+    let input = line_of(&call);
+    assert!(
+        input.len() < ACCEPTED_LINE_BYTES,
+        "the largest realistic call is {} bytes, and must sit under the cap",
+        input.len()
+    );
+
+    let responses = drive(&server, &input).await;
+
+    assert_eq!(responses.len(), 1, "got: {responses:?}");
+    assert_eq!(
+        responses[0].get("id"),
+        Some(&json!(1)),
+        "it reached a handler; a refused line would answer with a null id: {}",
+        responses[0]
+    );
+}
+
+/// The read loop must stop accepting once every dispatch slot is taken.
+///
+/// Without a bound, reading is cheap and dispatching is not, so a client that
+/// pipelines faster than the server answers queues unbounded work: the
+/// response channel throttles the writing, but only after the work is already
+/// done, so it does not limit the work. Measured before the bound, with stdout
+/// never drained, resident memory reached 27.5 GB in 30 seconds and was still
+/// climbing.
+///
+/// The ordering is the assertion, not a timing. Every slot is held, so an
+/// unbounded loop answers the ping immediately while nothing else can; a
+/// bounded one cannot answer it until a slot comes free.
+#[tokio::test]
+async fn the_read_loop_stops_accepting_once_every_dispatch_slot_is_taken() {
+    const PING_ID: i64 = 1000;
+
+    let mock = MockServer::start().await;
+    let (server, release) = test_server_with_gate(&mock.uri(), SLOW_METHOD);
+    let mut session = Session::start(server);
+
+    // Fill every slot. None of these can finish: all are held.
+    for id in 1..=DISPATCH_SLOTS as i64 {
+        session.send(&slow_method_call(id)).await;
+    }
+    // One line past the bound.
+    session
+        .send(&json!({"jsonrpc": "2.0", "id": PING_ID, "method": "ping"}))
+        .await;
+
+    // Free exactly one slot.
+    release.notify_one();
+
+    let first = session.next_response().await;
+    let answered = first.get("id").and_then(Value::as_i64).unwrap_or_default();
+    assert!(
+        (1..=DISPATCH_SLOTS as i64).contains(&answered),
+        "the ping arrived while every dispatch slot was held, so it cannot be \
+         answered first; an unbounded read loop dispatches it straight away \
+         and answers it while all {DISPATCH_SLOTS} held requests wait: {first}"
+    );
+
+    // And it resumes: the slot freed above is what lets the ping through.
+    let second = session.next_response().await;
+    assert_eq!(
+        second.get("id"),
+        Some(&json!(PING_ID)),
+        "the loop must accept again once a slot comes free: {second}"
+    );
+
+    // Release the rest. A `Notify` holds one permit at a time, so each held
+    // request needs its own wake, and reading the answer it produces is what
+    // proves the wake landed.
+    for _ in 1..DISPATCH_SLOTS {
+        release.notify_one();
+        session.next_response().await;
+    }
+
+    assert!(
+        session.finish().await.is_empty(),
+        "every request is answered exactly once"
     );
 }
