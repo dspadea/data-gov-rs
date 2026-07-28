@@ -19,12 +19,17 @@ use wiremock::matchers::{method, path_regex};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 /// Build a client configured for predictable test behavior.
+///
+/// The mock server listens on loopback, which downloads refuse by default
+/// (#51), so these tests take the private-network opt-in. `url_safety_tests`
+/// covers the refusal itself.
 fn test_client(download_dir: std::path::PathBuf, max_concurrent: usize) -> DataGovClient {
     let config = DataGovConfig::default()
         .with_mode(OperatingMode::Interactive)
         .with_download_dir(download_dir)
         .with_max_concurrent_downloads(max_concurrent)
-        .with_download_timeout(10);
+        .with_download_timeout(10)
+        .with_private_network_downloads(true);
     DataGovClient::with_config(config).expect("test client must build")
 }
 
@@ -234,6 +239,48 @@ async fn disambiguates_duplicate_filenames_by_index() {
 
     for (i, p) in paths.iter().enumerate() {
         assert!(p.exists(), "path {i} ({p:?}) must exist on disk");
+    }
+}
+
+/// #73: `max_concurrent_downloads` is a `pub` field on a struct that is not
+/// `#[non_exhaustive]`, so a struct literal bypasses the clamp in
+/// `with_max_concurrent_downloads`. A zero-permit semaphore is never closed, so
+/// `acquire()` stays pending and `join_all` never resolves.
+#[tokio::test]
+async fn zero_max_concurrent_downloads_set_by_struct_literal_still_completes() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path_regex(r"^/files/.*"))
+        .respond_with(ResponseTemplate::new(200).set_body_bytes(b"payload".to_vec()))
+        .mount(&server)
+        .await;
+
+    let tmp = TempDir::new().expect("tempdir");
+    let config = DataGovConfig {
+        max_concurrent_downloads: 0,
+        base_download_dir: tmp.path().to_path_buf(),
+        allow_private_network_downloads: true,
+        ..DataGovConfig::default()
+    };
+    let client = DataGovClient::with_config(config).expect("test client must build");
+
+    // Two distributions, because the single-distribution fast path skips the
+    // semaphore entirely and would pass whatever the permit count is.
+    let distributions = vec![
+        mock_distribution(&server.uri(), "/files/a.csv", "a", "CSV"),
+        mock_distribution(&server.uri(), "/files/b.csv", "b", "CSV"),
+    ];
+
+    let results = tokio::time::timeout(
+        Duration::from_secs(5),
+        client.download_distributions(&distributions, Some(tmp.path())),
+    )
+    .await
+    .expect("a zero permit count must not stall download_distributions");
+
+    assert_eq!(results.len(), 2);
+    for (i, r) in results.iter().enumerate() {
+        assert!(r.is_ok(), "distribution {i} should have succeeded: {r:?}");
     }
 }
 

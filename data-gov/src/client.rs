@@ -1,6 +1,7 @@
 use futures::StreamExt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::fs::File;
 use tokio::io::AsyncWriteExt;
 use url::Url;
@@ -11,6 +12,7 @@ use crate::ui::{
     DownloadBatch, DownloadFailed, DownloadFinished, DownloadProgress, DownloadStarted,
     StatusReporter,
 };
+use crate::util;
 use data_gov_catalog::{
     CatalogClient, SearchParams,
     models::{Dataset, Distribution, Organization, SearchHit, SearchResponse},
@@ -29,6 +31,20 @@ pub struct DataGovClient {
     http_client: reqwest::Client,
 }
 
+/// One file to fetch, and the directory it is required to land in.
+///
+/// `output_dir` travels with `output_path` so the transfer can confirm the
+/// destination is still inside the directory the user chose, whatever the
+/// filename was derived from.
+struct DownloadJob<'a> {
+    url: &'a str,
+    output_dir: &'a Path,
+    output_path: &'a Path,
+    resource_name: Option<String>,
+    dataset_name: Option<String>,
+    allow_private_network: bool,
+}
+
 impl DataGovClient {
     /// Create a new DataGov client with default configuration.
     pub fn new() -> Result<Self> {
@@ -44,9 +60,20 @@ impl DataGovClient {
     pub fn with_config(config: DataGovConfig) -> Result<Self> {
         let catalog = CatalogClient::new(config.catalog_config.clone());
 
+        let allow_private = config.allow_private_network_downloads;
+        // A stall timeout, not a deadline on the transfer. `timeout` runs from
+        // the start of the connect until the body has finished, which caps how
+        // large a file can be fetched rather than how long it may hang.
+        let stall = std::time::Duration::from_secs(config.download_timeout_secs);
         let http_client = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(config.download_timeout_secs))
+            .connect_timeout(stall)
+            .read_timeout(stall)
             .user_agent(&config.user_agent)
+            .dns_resolver(util::GuardedResolver::new(allow_private))
+            // Redirects are followed by `util::fetch_checked`, not here. A
+            // reqwest policy runs synchronously, so it cannot resolve a name
+            // and cannot judge a hop whose host is one.
+            .redirect(reqwest::redirect::Policy::none())
             .build()?;
 
         Ok(Self {
@@ -197,33 +224,92 @@ impl DataGovClient {
 
     /// Pick a filesystem-friendly filename for a distribution.
     ///
+    /// The result is always a single path component. `title`, `format`, and the
+    /// URL all arrive in a harvested third-party record, so the derived name is
+    /// reduced by [`sanitize_path_component`](crate::util::sanitize_path_component)
+    /// before it is returned. A name that survives none of that reduction falls
+    /// back to `data.<extension>`, carrying `index` when one was given.
+    ///
     /// # Arguments
     /// * `distribution` - The distribution to generate a filename for.
     /// * `fallback_name` - Used when the distribution has no title and no URL
     ///   segment we can derive a name from.
     /// * `index` - Appended before the extension to disambiguate multi-file
     ///   batches with duplicate titles.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # use data_gov::DataGovClient;
+    /// # use data_gov::catalog::models::Distribution;
+    /// # let distribution = Distribution {
+    /// #     type_hint: None,
+    /// #     title: Some("../../etc/passwd".to_string()),
+    /// #     description: None,
+    /// #     download_url: Some("https://example.gov/data".to_string()),
+    /// #     access_url: None,
+    /// #     media_type: None,
+    /// #     format: Some("CSV".to_string()),
+    /// #     license: None,
+    /// #     described_by: None,
+    /// #     described_by_type: None,
+    /// # };
+    /// // The title is "../../etc/passwd" and the format is "CSV".
+    /// let name = DataGovClient::get_distribution_filename(&distribution, None, None);
+    /// assert_eq!(name, "____etc_passwd.csv");
+    /// ```
     pub fn get_distribution_filename(
         distribution: &Distribution,
         fallback_name: Option<&str>,
         index: Option<usize>,
     ) -> String {
-        let (base, has_ext) = Self::base_filename(distribution, fallback_name);
-        match index {
-            Some(i) if has_ext => {
-                if let Some(dot) = base.rfind('.') {
-                    let (stem, ext) = base.split_at(dot);
-                    format!("{stem}-{i}{ext}")
-                } else {
-                    format!("{base}-{i}")
-                }
+        // Reduced here rather than at each call site, so the public helper
+        // cannot hand a caller a name that escapes the directory it is joined
+        // onto. Reduced before the index is applied, so a name that survives
+        // none of the reduction falls back to a usable default rather than to
+        // a bare index.
+        let base = Self::base_filename(distribution, fallback_name);
+        let mut safe = util::sanitize_path_component(&base);
+        // The reduction already turns `.` into an empty string, so that arm
+        // cannot fire today. It is kept because the reduction is a separate
+        // public function: this is the caller stating what it will accept, not
+        // an inference about what the reduction currently returns.
+        if safe.is_empty() || safe == "." {
+            safe = Self::default_filename(distribution);
+        }
+
+        let Some(i) = index else { return safe };
+        match safe.rfind('.') {
+            Some(dot) => {
+                let (stem, extension) = safe.split_at(dot);
+                format!("{stem}-{i}{extension}")
             }
-            Some(i) => format!("{base}-{i}"),
-            None => base,
+            None => format!("{safe}-{i}"),
         }
     }
 
-    fn base_filename(distribution: &Distribution, fallback_name: Option<&str>) -> (String, bool) {
+    /// Name a distribution whose own metadata reduces away to nothing.
+    fn default_filename(distribution: &Distribution) -> String {
+        let extension = Self::format_extension(distribution.format.as_deref())
+            .unwrap_or_else(|| "dat".to_string());
+        format!("data.{extension}")
+    }
+
+    /// Reduce `format` to an extension, or `None` when nothing usable is left.
+    ///
+    /// `format` is metadata from the same untrusted record as the title, and it
+    /// is appended to a path, so it is a second way in.
+    fn format_extension(format: Option<&str>) -> Option<String> {
+        let extension = util::sanitize_path_component(&format?.to_lowercase());
+        // As above: `.` cannot reach here, and the arm stays so this function
+        // does not depend on that remaining true.
+        if extension.is_empty() || extension == "." {
+            return None;
+        }
+        Some(extension)
+    }
+
+    fn base_filename(distribution: &Distribution, fallback_name: Option<&str>) -> String {
         if let Some(title) = &distribution.title {
             return Self::apply_format_extension(title, distribution.format.as_deref());
         }
@@ -237,27 +323,25 @@ impl DataGovClient {
             && !last.is_empty()
             && last.contains('.')
         {
-            return (last.to_string(), true);
+            return last.to_string();
         }
         let stem = fallback_name.unwrap_or("data");
-        if let Some(fmt) = &distribution.format {
-            (format!("{stem}.{}", fmt.to_lowercase()), true)
-        } else {
-            (format!("{stem}.dat"), true)
+        match Self::format_extension(distribution.format.as_deref()) {
+            Some(extension) => format!("{stem}.{extension}"),
+            None => format!("{stem}.dat"),
         }
     }
 
-    fn apply_format_extension(name: &str, format: Option<&str>) -> (String, bool) {
-        match format {
-            Some(fmt) => {
-                let lower = fmt.to_lowercase();
-                if name.to_lowercase().ends_with(&format!(".{lower}")) {
-                    (name.to_string(), true)
+    fn apply_format_extension(name: &str, format: Option<&str>) -> String {
+        match Self::format_extension(format) {
+            Some(extension) => {
+                if name.to_lowercase().ends_with(&format!(".{extension}")) {
+                    name.to_string()
                 } else {
-                    (format!("{name}.{lower}"), true)
+                    format!("{name}.{extension}")
                 }
             }
-            None => (name.to_string(), name.contains('.')),
+            None => name.to_string(),
         }
     }
 
@@ -302,10 +386,14 @@ impl DataGovClient {
 
         Self::perform_download(
             &self.http_client,
-            url,
-            &output_path,
-            distribution.title.clone(),
-            None,
+            DownloadJob {
+                url,
+                output_dir: &output_dir,
+                output_path: &output_path,
+                resource_name: distribution.title.clone(),
+                dataset_name: None,
+                allow_private_network: self.config.allow_private_network_downloads,
+            },
             self.reporter(),
         )
         .await?;
@@ -345,11 +433,16 @@ impl DataGovClient {
             .map(|p| p.to_path_buf())
             .unwrap_or_else(|| self.config.get_base_download_dir());
 
+        // Clamped here rather than only in `with_max_concurrent_downloads`,
+        // because the field is `pub` and a struct literal reaches it without
+        // passing through the builder. A zero-permit semaphore is never
+        // closed, so `acquire()` would stay pending forever.
         let semaphore = Arc::new(tokio::sync::Semaphore::new(
-            self.config.max_concurrent_downloads,
+            self.config.max_concurrent_downloads.max(1),
         ));
 
         let status_reporter = self.reporter();
+        let allow_private_network = self.config.allow_private_network_downloads;
         let mut futures = Vec::with_capacity(distributions.len());
 
         for (index, distribution) in distributions.iter().enumerate() {
@@ -402,10 +495,14 @@ impl DataGovClient {
 
                 DataGovClient::perform_download(
                     &http_client,
-                    url,
-                    &output_path,
-                    distribution.title.clone(),
-                    None,
+                    DownloadJob {
+                        url,
+                        output_dir: &output_dir,
+                        output_path: &output_path,
+                        resource_name: distribution.title.clone(),
+                        dataset_name: None,
+                        allow_private_network,
+                    },
                     status_reporter,
                 )
                 .await?;
@@ -425,12 +522,18 @@ impl DataGovClient {
 
     async fn perform_download(
         http_client: &reqwest::Client,
-        url: &str,
-        output_path: &Path,
-        resource_name: Option<String>,
-        dataset_name: Option<String>,
+        job: DownloadJob<'_>,
         status_reporter: Option<Arc<dyn StatusReporter + Send + Sync>>,
     ) -> Result<()> {
+        let DownloadJob {
+            url,
+            output_dir,
+            output_path,
+            resource_name,
+            dataset_name,
+            allow_private_network,
+        } = job;
+
         let notify_failure =
             |message: String, status_reporter: &Option<Arc<dyn StatusReporter + Send + Sync>>| {
                 if let Some(reporter) = status_reporter.as_ref() {
@@ -444,18 +547,36 @@ impl DataGovClient {
                 }
             };
 
-        if let Some(parent) = output_path.parent()
-            && let Err(err) = tokio::fs::create_dir_all(parent).await
-        {
+        // The destination is judged before anything is created on disk and
+        // before the request leaves, so a refused URL costs nothing and leaves
+        // nothing behind. `fetch_checked` judges it again, which is one extra
+        // lookup and deliberate: it has to be safe called on its own, rather
+        // than safe because this caller happened to check first.
+        if let Err(err) = util::check_download_url(url, allow_private_network).await {
+            notify_failure(err.to_string(), &status_reporter);
+            return Err(err);
+        }
+
+        // Only the directory the user chose is created. Nothing a derived
+        // filename asks for is created before that filename has been judged.
+        if let Err(err) = tokio::fs::create_dir_all(output_dir).await {
             notify_failure(err.to_string(), &status_reporter);
             return Err(err.into());
         }
 
-        let response = match http_client.get(url).send().await {
+        if let Err(err) = util::ensure_inside(output_dir, output_path).await {
+            notify_failure(err.to_string(), &status_reporter);
+            return Err(err);
+        }
+
+        // Every hop of the redirect chain goes through the same check the URL
+        // above did, including the last one, and no request is made for a hop
+        // that has not passed it.
+        let response = match util::fetch_checked(http_client, url, allow_private_network).await {
             Ok(resp) => resp,
             Err(err) => {
                 notify_failure(err.to_string(), &status_reporter);
-                return Err(err.into());
+                return Err(err);
             }
         };
 
@@ -478,7 +599,11 @@ impl DataGovClient {
             reporter.on_download_started(&event);
         }
 
-        let mut file = match File::create(output_path).await {
+        // The transfer goes to a temporary file beside the destination, so the
+        // destination only ever holds a complete file. The two share a
+        // directory because `rename` is atomic only within one filesystem.
+        let temp_path = Self::partial_path(output_dir);
+        let mut file = match File::create(&temp_path).await {
             Ok(file) => file,
             Err(err) => {
                 notify_failure(err.to_string(), &status_reporter);
@@ -499,12 +624,14 @@ impl DataGovClient {
             let chunk = match chunk_result {
                 Ok(chunk) => chunk,
                 Err(err) => {
+                    Self::discard_partial(&temp_path).await;
                     notify_failure(err.to_string(), &status_reporter);
                     return Err(err.into());
                 }
             };
 
             if let Err(err) = file.write_all(&chunk).await {
+                Self::discard_partial(&temp_path).await;
                 notify_failure(err.to_string(), &status_reporter);
                 return Err(err.into());
             }
@@ -514,6 +641,27 @@ impl DataGovClient {
             if let Some(reporter) = status_reporter.as_ref() {
                 reporter.on_download_progress(&progress);
             }
+        }
+
+        // Dropping a `tokio::fs::File` does not flush it, so without this the
+        // last chunk can be lost and the transfer still reported as complete.
+        if let Err(err) = file.flush().await {
+            Self::discard_partial(&temp_path).await;
+            notify_failure(err.to_string(), &status_reporter);
+            return Err(err.into());
+        }
+        drop(file);
+
+        if let Some(message) = Self::short_transfer(url, total_size, progress.downloaded_bytes) {
+            Self::discard_partial(&temp_path).await;
+            notify_failure(message.clone(), &status_reporter);
+            return Err(DataGovError::download_error(message));
+        }
+
+        if let Err(err) = tokio::fs::rename(&temp_path, output_path).await {
+            Self::discard_partial(&temp_path).await;
+            notify_failure(err.to_string(), &status_reporter);
+            return Err(err.into());
         }
 
         if let Some(reporter) = status_reporter.as_ref() {
@@ -526,6 +674,60 @@ impl DataGovClient {
         }
 
         Ok(())
+    }
+
+    /// Say why `received` bytes do not satisfy a declared `expected` length.
+    ///
+    /// Returns `None` when the counts agree, or when the response declared no
+    /// length at all - a chunked body has nothing to be measured against.
+    ///
+    /// # A backstop, not the primary check
+    ///
+    /// HTTP/1.1 and HTTP/2 both frame a body by its declared length, so hyper
+    /// rejects a truncated body as an incomplete message before the transfer
+    /// reaches this comparison. That is why it holds for every transport this
+    /// client currently speaks and is still worth keeping: it is what catches a
+    /// body that arrives in full but does not match what was promised, on any
+    /// transport that does not frame by length. It is covered by unit tests
+    /// rather than by an end-to-end one, because no HTTP version this client
+    /// speaks can be made to reach it.
+    fn short_transfer(url: &str, expected: Option<u64>, received: u64) -> Option<String> {
+        let expected = expected?;
+        if received == expected {
+            return None;
+        }
+        Some(format!(
+            "download of {url} ended after {received} of {expected} bytes"
+        ))
+    }
+
+    /// A temporary path in `output_dir` for a transfer still in progress.
+    ///
+    /// The name is unique per process and per call, so two transfers heading
+    /// for the same destination cannot write over each other, and it is hidden
+    /// and suffixed `.part` so anything left behind by a killed process reads
+    /// as unfinished rather than as data.
+    fn partial_path(output_dir: &Path) -> PathBuf {
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        let serial = NEXT.fetch_add(1, Ordering::Relaxed);
+        output_dir.join(format!(".data-gov-{}-{serial}.part", std::process::id()))
+    }
+
+    /// Remove a transfer that did not finish, and say so if that fails.
+    ///
+    /// Best effort by design: the transfer has already failed, and being
+    /// unable to tidy up is not a second failure to report to the caller. It
+    /// is still worth saying out loud, because the alternative is a `.part`
+    /// file nobody can account for.
+    async fn discard_partial(temp_path: &Path) {
+        match tokio::fs::remove_file(temp_path).await {
+            Ok(()) => {}
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+            Err(err) => eprintln!(
+                "data-gov: could not remove the unfinished download {}: {err}",
+                temp_path.display()
+            ),
+        }
     }
 
     /// Check that the base download directory exists and is writable.
@@ -708,6 +910,50 @@ mod tests {
         let out = DataGovClient::get_downloadable_distributions(&ds);
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].title.as_deref(), Some("csv"));
+    }
+
+    #[test]
+    fn a_transfer_matching_its_declared_length_is_accepted() {
+        assert_eq!(
+            DataGovClient::short_transfer("https://example.gov/data.csv", Some(4096), 4096),
+            None,
+            "a body that arrived in full is not short"
+        );
+    }
+
+    #[test]
+    fn a_transfer_short_of_its_declared_length_is_reported_with_both_counts() {
+        let message = DataGovClient::short_transfer("https://example.gov/data.csv", Some(4096), 37)
+            .expect("37 of 4096 bytes is not a completed download");
+        assert!(message.contains("37"), "got: {message}");
+        assert!(message.contains("4096"), "got: {message}");
+        assert!(
+            message.contains("https://example.gov/data.csv"),
+            "the failure must name what was being fetched, got: {message}"
+        );
+    }
+
+    /// More than was promised is as much a mismatch as less. A body that
+    /// overruns its declared length is not the file the server described.
+    #[test]
+    fn a_transfer_longer_than_its_declared_length_is_reported() {
+        assert!(
+            DataGovClient::short_transfer("https://example.gov/data.csv", Some(10), 11).is_some(),
+            "11 bytes under a declared 10 is a mismatch"
+        );
+    }
+
+    #[test]
+    fn a_transfer_with_no_declared_length_has_nothing_to_fall_short_of() {
+        assert_eq!(
+            DataGovClient::short_transfer("https://example.gov/data.csv", None, 0),
+            None,
+            "a chunked body declares no length, so no count can contradict it"
+        );
+        assert_eq!(
+            DataGovClient::short_transfer("https://example.gov/data.csv", None, 9_000),
+            None
+        );
     }
 
     fn client_with_download_dir(dir: std::path::PathBuf) -> DataGovClient {

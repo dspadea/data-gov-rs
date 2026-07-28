@@ -1,6 +1,6 @@
 use data_gov::DataGovClient;
 use data_gov::catalog::models::Distribution;
-use data_gov::util::sanitize_path_component;
+use data_gov::util::{join_inside, sanitize_path_component};
 use tokio::runtime::Runtime;
 
 use super::commands::{ListingCursor, ReplCommand, SessionContext};
@@ -442,8 +442,7 @@ fn handle_download(
         return Ok(());
     }
 
-    let safe_dataset_slug = sanitize_path_component(dataset_slug);
-    let dataset_dir = client.download_dir().join(&safe_dataset_slug);
+    let dataset_dir = dataset_download_dir(&client.download_dir(), dataset_slug)?;
 
     if selectors.is_empty() {
         let results =
@@ -454,6 +453,20 @@ fn handle_download(
     }
 
     Ok(())
+}
+
+/// Name the per-dataset subdirectory of `base` that a download lands in.
+///
+/// The slug reaches this as a command argument or as catalog metadata, neither
+/// of which is ours. The reduction is what makes the join safe and the check is
+/// what makes it checked, so a change to either one on its own cannot move a
+/// download out of the directory the user chose.
+fn dataset_download_dir(
+    base: &std::path::Path,
+    dataset_slug: &str,
+) -> Result<std::path::PathBuf, Box<dyn std::error::Error>> {
+    let safe_dataset_slug = sanitize_path_component(dataset_slug);
+    Ok(join_inside(base, &safe_dataset_slug)?)
 }
 
 /// Resolve selectors and download matching distributions.
@@ -809,7 +822,65 @@ fn handle_info(client: &DataGovClient, ctx: &SessionContext) {
 
 #[cfg(test)]
 mod tests {
+    use super::dataset_download_dir;
     use data_gov::catalog::models::Distribution;
+    use std::path::{Path, PathBuf};
+
+    #[test]
+    fn dataset_download_dir_names_a_subdirectory_of_the_download_directory() {
+        let dir = dataset_download_dir(Path::new("/tmp/downloads"), "climate-data")
+            .expect("an ordinary slug names a subdirectory");
+        assert_eq!(dir, PathBuf::from("/tmp/downloads/climate-data"));
+    }
+
+    /// A slug that reduces to nothing would otherwise make the download
+    /// directory itself the destination, which is not the per-dataset
+    /// directory the command promised. This is the case the reduction cannot
+    /// answer on its own, so it is the check that has to.
+    #[test]
+    fn dataset_download_dir_refuses_a_slug_that_reduces_to_nothing() {
+        for slug in [".", "", "!@#$%", "\u{202e}"] {
+            let outcome = dataset_download_dir(Path::new("/tmp/downloads"), slug);
+            assert!(
+                outcome.is_err(),
+                "slug {slug:?} reduces to nothing and must be refused, got: {outcome:?}"
+            );
+        }
+    }
+
+    /// Every one of these carries something usable once the separators and the
+    /// traversals are reduced away, so each must yield a directory - and that
+    /// directory must be a direct child of the download directory.
+    ///
+    /// Asserting the success rather than tolerating a refusal is the point.
+    /// `.!.` and `..!..` are the shapes a reduction that collapses before it
+    /// filters turns back into `..`; if that regressed, the join would refuse
+    /// them and a test that merely skipped a refusal would stay green.
+    #[test]
+    fn dataset_download_dir_keeps_a_reducible_slug_inside_the_download_directory() {
+        for slug in [
+            "..",
+            "../escaped",
+            "/etc/cron.d",
+            "sub/dir",
+            ".!.",
+            "..!..",
+            "C:\\Windows\\evil",
+            "ordinary-slug",
+        ] {
+            let dir =
+                dataset_download_dir(Path::new("/tmp/downloads"), slug).unwrap_or_else(|err| {
+                    panic!(
+                        "slug {slug:?} reduces to a usable name and must yield a directory: {err}"
+                    )
+                });
+            assert_eq!(
+                dir.parent(),
+                Some(Path::new("/tmp/downloads")),
+                "slug {slug:?} resolved to {dir:?}, which is not directly inside /tmp/downloads"
+            );
+        }
+    }
 
     fn dist(title: &str) -> Distribution {
         Distribution {

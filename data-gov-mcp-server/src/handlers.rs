@@ -4,7 +4,7 @@ use data_gov::DataGovClient;
 use data_gov::catalog::models::{Distribution, SearchHit};
 use serde_json::{Value, json};
 use std::collections::HashSet;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::server::DataGovMcpServer;
 use crate::tools::{
@@ -261,14 +261,12 @@ impl DataGovMcpServer {
         let use_dataset_subdir = params.dataset_subdirectory.unwrap_or(true);
         let safe_dataset_slug = data_gov::util::sanitize_path_component(&slug);
 
-        let resolved_output_dir = resolve_output_dir(
+        let output_dir = download_directory(
             params.output_dir.as_deref(),
             use_dataset_subdir,
             &safe_dataset_slug,
+            &self.data_gov.download_dir(),
         )?;
-
-        let output_dir = resolved_output_dir
-            .unwrap_or_else(|| self.data_gov.download_dir().join(&safe_dataset_slug));
 
         let download_results = self
             .data_gov
@@ -426,6 +424,35 @@ impl DataGovMcpServer {
     }
 }
 
+/// Decide the directory a download lands in.
+///
+/// `requested` is the caller's `outputDir` and `default_base` the configured
+/// download directory used when the caller named none. A caller-supplied
+/// directory gets the per-dataset subdirectory only when the caller asked for
+/// one; the configured default always gets it.
+///
+/// Both branches join the slug through the same check, because the configured
+/// download directory is no more entitled to be escaped than a caller-supplied
+/// one.
+///
+/// # Errors
+///
+/// Returns [`ServerError::InvalidParams`] when `requested` carries a `..`
+/// component, or when `safe_dataset_slug` does not name a directory directly
+/// inside the chosen one, and [`ServerError::Io`] when a relative `requested`
+/// path cannot be anchored to the current directory.
+fn download_directory(
+    requested: Option<&str>,
+    use_dataset_subdir: bool,
+    safe_dataset_slug: &str,
+    default_base: &Path,
+) -> Result<PathBuf, ServerError> {
+    match resolve_output_dir(requested, use_dataset_subdir, safe_dataset_slug)? {
+        Some(dir) => Ok(dir),
+        None => dataset_subdirectory(default_base, safe_dataset_slug),
+    }
+}
+
 /// Resolve a client-requested download directory into an absolute path.
 ///
 /// - Returns `Ok(None)` when no directory was requested (caller picks a
@@ -433,10 +460,14 @@ impl DataGovMcpServer {
 /// - Rejects any path containing `..` components with
 ///   [`ServerError::InvalidParams`].
 /// - Anchors relative paths to the current working directory.
-/// - Appends `safe_dataset_slug` when `use_dataset_subdir` is true.
+/// - Appends `safe_dataset_slug` when `use_dataset_subdir` is true, and refuses
+///   when the result would not be directly inside the requested directory.
 ///
 /// `safe_dataset_slug` is expected to have already been run through
-/// [`data_gov::util::sanitize_path_component`].
+/// [`data_gov::util::sanitize_path_component`], but the join is checked
+/// regardless: the slug comes from the catalog, which is untrusted input, and
+/// a guard that assumes what a reduction can produce is a guard that stops
+/// working the day the reduction changes.
 pub(crate) fn resolve_output_dir(
     requested: Option<&str>,
     use_dataset_subdir: bool,
@@ -457,9 +488,23 @@ pub(crate) fn resolve_output_dir(
         path = std::env::current_dir().map_err(ServerError::Io)?.join(path);
     }
     if use_dataset_subdir {
-        path = path.join(safe_dataset_slug);
+        path = dataset_subdirectory(&path, safe_dataset_slug)?;
     }
     Ok(Some(path))
+}
+
+/// Name the per-dataset subdirectory of `base`, refusing anything that leaves it.
+///
+/// # Errors
+///
+/// Returns [`ServerError::InvalidParams`] when `safe_dataset_slug` does not
+/// name a directory directly inside `base`.
+fn dataset_subdirectory(base: &Path, safe_dataset_slug: &str) -> Result<PathBuf, ServerError> {
+    data_gov::util::join_inside(base, safe_dataset_slug).map_err(|err| {
+        ServerError::InvalidParams(format!(
+            "dataset slug does not name a directory inside the chosen download directory: {err}"
+        ))
+    })
 }
 
 #[cfg(test)]
@@ -515,6 +560,71 @@ mod tests {
             .expect("should succeed")
             .expect("should produce path");
         assert_eq!(resolved, PathBuf::from("/tmp/downloads"));
+    }
+
+    /// The `..` check covers the string the caller supplied. The slug is joined
+    /// on afterwards and comes from the catalog, which is untrusted input, so
+    /// the join needs its own check rather than an assumption about what the
+    /// reduction can produce.
+    #[test]
+    fn resolve_output_dir_rejects_a_slug_that_leaves_the_chosen_directory() {
+        for slug in ["..", "../escaped", "/etc/cron.d", "sub/dir"] {
+            let outcome = resolve_output_dir(Some("/tmp/downloads"), true, slug);
+            match outcome {
+                Err(ServerError::InvalidParams(_)) => {}
+                Err(other) => panic!("expected InvalidParams for slug {slug:?}, got: {other:?}"),
+                Ok(path) => panic!(
+                    "slug {slug:?} resolved to {path:?}, which is not inside the chosen directory"
+                ),
+            }
+        }
+    }
+
+    /// A slug that reduces to nothing would silently make the chosen directory
+    /// itself the destination, which is not the directory the caller asked for.
+    #[test]
+    fn resolve_output_dir_rejects_a_slug_that_reduces_to_nothing() {
+        let outcome = resolve_output_dir(Some("/tmp/downloads"), true, "");
+        assert!(
+            matches!(outcome, Err(ServerError::InvalidParams(_))),
+            "an empty slug must be refused, got: {outcome:?}"
+        );
+    }
+
+    #[test]
+    fn download_directory_appends_the_slug_to_the_configured_default() {
+        let resolved = download_directory(None, true, "climate-data", Path::new("/tmp/downloads"))
+            .expect("the configured default takes the dataset subdirectory");
+        assert_eq!(resolved, PathBuf::from("/tmp/downloads/climate-data"));
+    }
+
+    /// The default directory is checked on the same terms as one the caller
+    /// named. Without this, an escaping slug lands in the parent of the user's
+    /// Downloads directory instead.
+    #[test]
+    fn download_directory_refuses_a_slug_that_leaves_the_configured_default() {
+        for slug in ["..", "../escaped", "/etc/cron.d", "sub/dir", ""] {
+            let outcome = download_directory(None, true, slug, Path::new("/tmp/downloads"));
+            match outcome {
+                Err(ServerError::InvalidParams(_)) => {}
+                Err(other) => panic!("expected InvalidParams for slug {slug:?}, got: {other:?}"),
+                Ok(path) => panic!(
+                    "slug {slug:?} resolved to {path:?}, which is not inside the default directory"
+                ),
+            }
+        }
+    }
+
+    #[test]
+    fn download_directory_prefers_the_directory_the_caller_named() {
+        let resolved = download_directory(
+            Some("/tmp/chosen"),
+            true,
+            "climate-data",
+            Path::new("/tmp/downloads"),
+        )
+        .expect("a caller-supplied directory wins over the configured default");
+        assert_eq!(resolved, PathBuf::from("/tmp/chosen/climate-data"));
     }
 
     #[test]
