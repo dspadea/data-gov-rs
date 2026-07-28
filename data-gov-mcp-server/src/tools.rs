@@ -50,11 +50,19 @@ impl ToolResponse {
     /// The spec puts machine-readable output in `structuredContent`, and says a
     /// tool that does so SHOULD also return the serialized JSON as a text block
     /// for clients that do not read the structured field — hence both.
+    /// `structuredContent` is populated only for JSON **objects**, because that
+    /// is what the spec defines it as: structured content "is returned as a
+    /// JSON object in the `structuredContent` field". A bare array or scalar is
+    /// omitted from the structured field rather than emitted in a shape no
+    /// client is obliged to accept; the text block still carries it. Handlers
+    /// should pass a named object so this never triggers, and
+    /// `every_tool_returns_object_shaped_structured_content` holds them to it.
     pub fn from_value(value: Value) -> Self {
         let text = serde_json::to_string_pretty(&value).unwrap_or_else(|_| value.to_string());
+        let structured_content = value.is_object().then_some(value);
         Self {
             content: vec![ToolContent::Text { text }],
-            structured_content: Some(value),
+            structured_content,
             is_error: None,
         }
     }
@@ -298,47 +306,95 @@ mod tests {
         assert!(find_tool_spec_by_method("nonexistent.method").is_none());
     }
 
-    /// The spec says a tool returning structured content SHOULD also return the
-    /// serialized JSON in a text block, so both are expected -- but the
-    /// structured half belongs in `structuredContent`, not in `content`.
+    /// MCP 2025-11-25, server/tools: structured content "is returned as a JSON
+    /// object in the structuredContent field", and a tool returning it SHOULD
+    /// "also return the serialized JSON in a TextContent block". Both halves
+    /// must be present and must agree.
+    ///
+    /// The value has several keys on purpose: with one key, an implementation
+    /// that serialized only the first field would be byte-identical to a
+    /// correct one.
     #[test]
-    fn tool_response_from_value_has_one_text_block_and_structured_content() {
-        let val = json!({"count": 5});
+    fn tool_response_text_block_round_trips_to_the_structured_content() {
+        let val = json!({"count": 5, "name": "second", "nested": {"a": [1, 2]}});
         let resp = ToolResponse::from_value(val.clone());
 
-        assert_eq!(
-            resp.content.len(),
-            1,
-            "content must hold only the text block"
-        );
-        let ToolContent::Text { text } = &resp.content[0];
-        assert!(text.contains("\"count\": 5"));
-        assert_eq!(
-            resp.structured_content.as_ref(),
-            Some(&val),
-            "the raw value belongs in structuredContent"
-        );
+        assert_eq!(resp.content.len(), 1, "content holds only the text block");
+        assert_eq!(resp.structured_content.as_ref(), Some(&val));
         assert!(resp.is_error.is_none());
+
+        // Reparse rather than substring-match: a substring check passes for a
+        // truncated or reordered serialization, and would also fail spuriously
+        // if pretty-printing were swapped for compact output, which the spec
+        // does not care about.
+        let v = serde_json::to_value(&resp).expect("serializes");
+        let text = v["content"][0]["text"].as_str().expect("text block");
+        let reparsed: Value = serde_json::from_str(text).expect("text block is valid JSON");
+        assert_eq!(reparsed, val, "the text block must carry the whole value");
     }
 
     /// `content` is a closed union of text, image, audio, resource_link and
-    /// resource. A `{"type":"json"}` block is not a member, and every result
-    /// carrying one fails schema validation on a strict client.
+    /// resource. Conformance needs two things: the `type` must name a member,
+    /// and the block must carry that member's required fields. A block tagged
+    /// `resource` that actually holds `text` is as non-conformant as one tagged
+    /// `json`, and checking only the discriminator misses it — renaming the
+    /// serde tag is a one-word mutation.
     #[test]
     fn tool_response_serializes_only_spec_valid_content_types() {
-        const VALID: [&str; 5] = ["text", "image", "audio", "resource_link", "resource"];
-
         let v = serde_json::to_value(ToolResponse::from_value(json!({"count": 5})))
             .expect("serializes");
 
         let content = v["content"].as_array().expect("content is an array");
+        assert!(
+            !content.is_empty(),
+            "an empty array satisfies a per-block loop vacuously"
+        );
+
         for block in content {
             let ty = block["type"].as_str().expect("every block has a type");
+            let required: &[&str] = match ty {
+                "text" => &["text"],
+                "image" | "audio" => &["data", "mimeType"],
+                "resource_link" => &["uri", "name"],
+                "resource" => &["resource"],
+                other => panic!(
+                    "`{other}` is not an MCP content type; valid: text, image, audio, \
+                     resource_link, resource"
+                ),
+            };
+            for field in required {
+                assert!(
+                    block.get(*field).is_some(),
+                    "`{ty}` block missing required field `{field}`: {block}"
+                );
+            }
+        }
+
+        assert_eq!(v["structuredContent"], json!({"count": 5}));
+    }
+
+    /// A bare array is not a JSON object, so it must never reach
+    /// structuredContent. Regression guard for two tools that passed
+    /// `Vec<String>` straight through.
+    #[test]
+    fn non_object_payloads_stay_out_of_structured_content() {
+        for payload in [json!(["a", "b"]), json!("scalar"), json!(7), json!(null)] {
+            let resp = ToolResponse::from_value(payload.clone());
             assert!(
-                VALID.contains(&ty),
-                "`{ty}` is not an MCP content type; valid: {VALID:?}"
+                resp.structured_content.is_none(),
+                "{payload} is not an object and must not be structuredContent"
+            );
+            let v = serde_json::to_value(&resp).expect("serializes");
+            assert!(
+                v.get("structuredContent").is_none(),
+                "structuredContent must be omitted entirely, not null"
+            );
+            // The data still has to reach the client somehow.
+            let text = v["content"][0]["text"].as_str().expect("text block");
+            assert_eq!(
+                serde_json::from_str::<Value>(text).expect("valid JSON"),
+                payload
             );
         }
-        assert_eq!(v["structuredContent"], json!({"count": 5}));
     }
 }

@@ -11,6 +11,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Breaking
 
+- **`structuredContent` is now always a JSON object** (#60). Two tools —
+  `data_gov.listOrganizations` and `data_gov.autocompleteDatasets` — returned a
+  bare JSON array, which the spec does not permit: structured content "is
+  returned as a JSON object". They now return `{"organizations": [...]}` and
+  `{"datasets": [...]}` respectively. If you were reading the array directly,
+  read the named key instead.
+
 - **Tool results no longer contain a `{"type":"json"}` content block** (#60).
   MCP's `content` is a closed union of `text`, `image`, `audio`,
   `resource_link` and `resource`; `json` is not a member, so every tool result
