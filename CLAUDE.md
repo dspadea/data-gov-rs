@@ -29,7 +29,34 @@ cargo doc --all-features --no-deps                        # Rustdoc builds clean
 
 The workspace treats all compiler and clippy warnings as errors (`-D warnings`).
 Do not suppress warnings with `#[allow(...)]` unless there is a documented reason
-in a comment on the same line. Fix the root cause instead.
+in a comment on the same line. Fix the root cause instead. A pre-existing warning
+in a file you touch is yours to clear, not to build on.
+
+Enforcement is currently a command-line flag, which means it holds only where
+someone remembered to pass it. Preferred is a `[workspace.lints]` table in the
+root manifest with `rust.warnings = "deny"` and `clippy.all = "deny"`, inherited
+by every member via `[lints] workspace = true`, so a plain `cargo build` or
+`cargo test` hard-fails without anyone having to remember. Mechanical beats
+vigilant.
+
+Never `--no-verify` past a hook. If a hook is genuinely broken, fix it in its own
+change and say why.
+
+### `--all-features` does not test every configuration
+
+**A feature that is mutually exclusive in practice is not covered by
+`--all-features`, and needs its own gate step naming the feature.**
+
+Concretely: `data-gov-catalog` and `data-gov-ckan` each expose `native-tls` and
+`rustls-tls`. `--all-features` enables both at once, linking `native-tls` *and*
+`rustls` simultaneously — a configuration no consumer ever selects. The
+rustls-only build, which consumers do select, is never compiled or tested by the
+gate at all. A single-feature build can fail on a missing import, a `cfg` typo,
+or a dependency that only one backend pulls in, and nothing here would notice.
+
+So when adding a feature, ask whether `--all-features` genuinely exercises it or
+merely compiles a superset, and add the explicit step when the answer is the
+latter.
 
 ### Code formatting
 
@@ -80,6 +107,18 @@ Every change — bug fix, new feature, refactor — starts with a failing test:
 3. **Refactor** — Clean up while keeping all tests green.
 
 If you are fixing a bug, the first commit should be a test that reproduces it.
+**Commit the failing tests before the implementation — that commit is the
+spec.**
+
+Two habits that separate a real test from a hopeful one:
+
+- **Assert the desired outcome, not that a call returned `Ok`.** A test that
+  only checks the absence of an error passes for an implementation that does
+  nothing.
+- **Enumerate the unhappy paths deliberately**: empty and missing input,
+  boundary and maximum values, concurrent or racy access, partial reads and
+  dropped streams, malformed input, and the not-found case. A test list with
+  none of these is testing wishes.
 
 ### Test conditions come from the real world, never from the code
 
@@ -101,11 +140,44 @@ This is not hypothetical. Two examples from this workspace:
 So: open the spec, or capture a real response, and assert what *that* says. If
 the implementation disagrees, the test is doing its job.
 
-### Every test must be able to fail
+### Every test must be able to fail — prove it, don't reason about it
 
-Before adding a test, answer one question: **what is the simplest wrong
-implementation that still passes it?** If you cannot name one, the test is
-vacuous and is worse than no test, because it creates false confidence.
+**Revert the fix and watch the suite go red. Record the mutations in the commit
+message.** Do not settle for asking yourself what a wrong implementation would
+look like.
+
+That distinction is the whole rule, and it is written from failure. An earlier
+version of this section asked you to name "the simplest wrong implementation
+that still passes." Ten tests were written against that rule on the day it was
+added, and an adversarial review defeated all ten. Introspection does not work
+here: having just written the correct implementation, your model of *wrong* is
+anchored to it. You imagine the mistakes you nearly made, not the ones you
+cannot see.
+
+Running the mutation takes about thirty seconds and does not care what you
+imagined.
+
+```
+1. Commit the fix and its tests.
+2. Revert the fix in the working tree, leaving the tests.
+3. Run the suite. It MUST fail, and the failure MUST name the right test.
+4. git reset --hard and move on.
+```
+
+Three ways this goes wrong, each of which happened:
+
+- **Mutating a dirty tree destroys work.** Reverting a mutation with
+  `git checkout -- file` also reverts uncommitted edits in that file. Commit
+  first. Step 1 is not optional.
+- **A mutation that silently fails to apply is indistinguishable from a test
+  that fails to catch it.** A `sed` whose pattern spanned a newline matched
+  nothing, and "202 passed" read exactly like an uncaught mutation. Confirm the
+  mutation is present in the file before trusting a green run.
+- **A defensive guard can mask the bug its own test targets.** `from_value`
+  quietly dropped a non-object `structuredContent`, so a handler emitting a bare
+  array produced valid output and the test that existed to catch it stayed
+  green. If a guard makes bad input safe, a test downstream of the guard cannot
+  see the upstream defect — assert on what the *producer* emitted.
 
 Vacuity patterns that have all appeared here:
 
@@ -121,6 +193,30 @@ The wiremock case is worth calling out because the whole `client_tests.rs`
 suite has it: those tests verify request shaping, and cannot catch a model that
 drops a field. That is why `fixture_parity_tests.rs` exists separately — it
 deserializes captured responses and asserts the fields actually arrive.
+
+### Verify across the whole set, never one instance
+
+**Drive assertions from the registry, not from a hand-picked example**, so that
+a new member fails the test rather than being silently skipped. Where a list
+exists in code — `TOOL_SPECS`, `SUPPORTED_PROTOCOL_VERSIONS` — iterate it.
+
+One-instance verification failed three separate times in a single review, and it
+looks like diligence every time:
+
+| What was checked | What was actually true |
+|---|---|
+| `data_gov_search` returns an object, so tool results are conformant | 2 of the 5 tools returned a bare array |
+| `org_slug=noaa-gov` returns nothing, so the filter is broken | The real slug is `noaa`; the filter works perfectly |
+| `LATEST == SUPPORTED.last()`, so the newest is advertised | `.last()` is positional; a reordered list passes while downgrading every client |
+
+The second is its own rule: **source test values from the API, never invent
+them.** A guessed identifier that returns nothing proves nothing about the code.
+
+Iterating the registry is not sufficient on its own, either. Asserting
+`for x in LIST { f(x) == x }` proves only `find(x in LIST) == x`, which holds for
+any contents of `LIST` — including one that has never heard of the value you
+care about. Anchor at least one assertion to a literal drawn from outside the
+code, as `PUBLISHED_MCP_REVISIONS` does against `SUPPORTED_PROTOCOL_VERSIONS`.
 
 ### Prefer real captured data to synthetic fixtures
 
@@ -174,6 +270,27 @@ crate/
 
 The API's actual behaviour outranks this guide, the rustdoc, the READMEs, and
 the tests. Each of those has been wrong about it.
+
+### Read the machine-readable spec before the prose docs
+
+**`https://catalog.data.gov/openapi.json`** is the Catalog API's own OpenAPI
+document, and it is authoritative in a way the human-readable pages are not.
+Check it — and the equivalent `/openapi.json`, `/swagger.json` or
+`/.well-known/` for any other service — before concluding what an API does or
+does not offer.
+
+This is not a stylistic preference. `/api/dataset/{slug_or_id}`, the exact
+dataset-lookup endpoint, is declared there with its parameter and its 200/404
+responses. It appears nowhere in the prose documentation at
+`resources.data.gov/catalog-api`. Working from the prose alone, the endpoint was
+written off as undocumented and the crate shipped a full-text-search workaround
+in its place for an entire release — a workaround that failed for 15% of
+datasets. The same document also shows `/search` has no `slug` parameter at all,
+which is the direct explanation for why `SearchParams::slug` was silently
+ignored.
+
+Prose documentation for this API is incomplete and, in places, stale. Treat it
+as a starting point, not as the contract.
 
 ### Never assert a parameter works without probing it
 
@@ -393,6 +510,26 @@ to `main`:
 `main` therefore always reflects a released state, and a partially-landed release
 never sits on the default branch.
 
+**Never stack a pull request on another work branch.** Every work branch targets
+the release branch directly, even when one change logically builds on another —
+merge the first, then merge the release branch into the second.
+
+CI triggers on `main` and `release/**` only, so a PR whose base is another
+feature branch receives **no checks at all** and says so quietly:
+`no checks reported`. Retargeting an existing PR does not fix it either, because
+`pull_request` fires on `opened`, `synchronize` and `reopened` — not `edited`.
+It takes a fresh push. A stacked PR that looks reviewable while having been
+tested by nothing is the failure mode here, and it is silent.
+
+**`Closes #N` does not fire on a release-branch merge.** GitHub only auto-closes
+from the default branch, so issues stay open until the release reaches `main`.
+That is correct — the fix is not released yet — but it looks broken. Note on
+the issue where the work landed rather than closing it by hand.
+
+Expect `CHANGELOG.md` to conflict on every parallel PR, since they all append
+under the same headings. The conflicts are additive and resolve by keeping both
+sides; if it becomes tiresome, changelog fragments would remove the class.
+
 ### Changelog
 
 `CHANGELOG.md` follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
@@ -432,6 +569,12 @@ actionable.
 Reference the issue number where one exists. On release, replace `- Unreleased`
 with the release date and open a fresh `## [X.Y.Z] - Unreleased` heading above it.
 
+The ordering above is worth enforcing mechanically rather than trusting. It was
+violated in the next PR after it was written, by its own author, who put `Fixed`
+ahead of `Security` without noticing. A short CI step comparing the `###`
+headings under the current version against the canonical sequence would catch
+that in seconds; a written rule did not.
+
 ### Dependency freshness and advisories
 
 Every release must ship with dependencies current and free of significant
@@ -448,6 +591,27 @@ in the 2026-07 review it reported two advisories while OSV surfaced seven furthe
 `openssl` CVEs (five High) that are GHSA-only and absent from the RustSec
 database. Re-run at release time, not just at the start of the work — advisories
 land after the fact, so a clean run expires.
+
+**Scan between the lockfile changing and the first build, not after.** Build
+scripts (`build.rs`) execute arbitrary code at compile time — under `clippy` as
+much as under `build` — so a scan run after the first compile has already run
+whatever it was meant to warn you about.
+
+**The scan must be unable to pass by accident.** A green result has to mean the
+advisory database was consulted, not that the check quietly degraded:
+
+| Condition | Required behaviour |
+|-------------------------------------|--------------------------------|
+| `cargo-audit` not installed | Hard failure, printing the install command |
+| Advisory database unfetchable | Hard failure. Never fall back to a cached database silently; if a possibly stale database is acceptable, that is an explicit opt-in that prints the database age loudly |
+| Vulnerability reported | Hard failure |
+| Informational advisory (unmaintained, unsound, yanked) | Reported loudly, does not fail the gate; treat as a review item |
+| Advisory suppressed by an ignore list | Named in the output. Suppression is a reviewed decision, but the run must never present itself as a clean scan |
+
+**High and critical advisories are hard blockers.** Patch in the same change,
+prove the path unreachable and document why, or file a tracked follow-up
+referenced from the change. Never ship past one silently, and never pin around
+one without a comment naming the advisory.
 
 ## Configuration and file locations
 
@@ -520,6 +684,17 @@ that are easy to read and reason about in isolation.
 5. **Flat over deep.** Prefer `mod foo; mod bar;` siblings over deep nesting.
    One level of `submodule/` is fine; two levels is a smell.
 
+### Earn abstractions
+
+Do not introduce a new abstraction until roughly three call sites prove the
+pattern; premature indirection is harder to remove than to add. When one new
+type would unify several existing needs, justify the unification explicitly
+rather than assuming generality is free. Reuse the existing layering and traits
+before inventing parallel ones, and extend an existing module over adding one
+unless the seam is obvious.
+
+Keep each change small enough to land on its own with a clear deliverable.
+
 ### File layout convention
 
 Within a single `.rs` file, order items as:
@@ -570,6 +745,17 @@ The `Cargo.lock` is committed and tested in CI against stable, beta, and MSRV.
 
 ## Security checklist
 
+### Read your own diff adversarially before asking for review
+
+Before requesting review, reread the change looking for: untrusted input
+crossing a trust boundary (network responses, MCP tool arguments, CLI
+arguments, filenames from remote metadata), secrets reaching logs or error
+messages, panics reachable from input, and paths or shell strings built by
+concatenation. Every one of those classes has produced a real defect in this
+workspace.
+
+Scan dependencies whenever the lockfile changed, before the first build.
+
 Before any release:
 
 - [ ] `cargo audit` passes
@@ -608,3 +794,80 @@ still compiles the rest so nothing looks wrong. Do not narrow this back.
    red.
 
 All gating checks must pass before merging.
+
+## Working practice
+
+### Worktrees
+
+Do code work in a git worktree on its own branch off the release branch, never
+in the primary checkout, so concurrent sessions never collide on the working
+tree, the checked-out branch, or build artefacts. Convention:
+`<repo>/.worktrees/<slug>/`. Remove it after the branch merges.
+
+**Anything that edits files gets its own tree.** A background agent pointed at a
+live worktree will write into it, and the result is a working copy of unknown
+provenance — during the 2026-07 review two agent runs added three files and
+modified five while a change was being built in the same directory, and the test
+failures could no longer be attributed. Give parallel work isolated worktrees,
+brief each on its scope, and check first for shared files: a manifest edit or a
+changelog entry in two trees at once serialises whether you planned it or not.
+
+### Issue and pull request hygiene
+
+- Claim an issue when you start it, so parallel work does not collide.
+- Link the change to the issue: `Closes #N` to auto-close, `Refs #N` when it
+  only partially addresses it. Note that `Closes` does not fire on a
+  release-branch merge — see **Release branches**.
+- Anything deferred, discovered, or out of scope becomes a tracker entry, not a
+  code comment. Entries assume fresh eyes: what the work is, why it is needed,
+  and acceptance criteria, enough for someone who was not there to pick it up.
+- A large multi-part effort gets an epic with the work items linked from it.
+- On multi-session work, leave a short status note before stopping — what
+  landed, what is in progress, what is blocked — so state is reconstructable
+  without replaying the git log.
+
+## Reference: where the authoritative sources are
+
+Prose documentation for these services is incomplete and in places stale. These
+are the sources that settled questions during the 2026-07 review, with the
+caveats that made them worth recording.
+
+### data.gov Catalog API
+
+| Source | Use it for | Caveat |
+|---|---|---|
+| `https://catalog.data.gov/openapi.json` | **The contract.** Endpoint paths, parameters, responses | Authoritative. Check here first |
+| `https://resources.data.gov/catalog-api/` | Narrative guide, examples | Incomplete — omits `/api/dataset/{slug_or_id}` entirely |
+| `https://api.data.gov/docs/developer-manual/` | Gateway architecture, API-key rate limits | DEMO_KEY is 30/hour and 50/day; a signed-up key is 1,000/hour |
+| `https://open.gsa.gov/api/` | GSA's API catalogue | **Stale.** Lists only the retired CKAN v3 API, with no deprecation notice, and does not mention the current Catalog API at all |
+
+Two hosts serve the same backend: `catalog.data.gov` (keyless, `/api`-prefixed
+paths) and `api.gsa.gov/technology/datagov/v4` (documented, requires
+`X-Api-Key`, no `/api` prefix). `/search` returns identical results from both.
+
+### Model Context Protocol
+
+| Source | Use it for |
+|---|---|
+| `https://modelcontextprotocol.io/specification/versioning` | **Which revision is current.** Check this before writing a version string |
+| `.../specification/<revision>/basic/lifecycle` | initialize, version negotiation, notifications, shutdown |
+| `.../specification/<revision>/server/tools` | Tool results, the closed `content` union, `structuredContent`, `isError` |
+
+Revisions are dates and the details differ between them. `2025-11-25` was
+current at the time of writing, and was two revisions ahead of what would have
+been written from memory.
+
+### Advisories
+
+`cargo audit` consults the RustSec database only. **OSV.dev aggregates RustSec
+and GHSA**, and the difference is not academic: seven `openssl` advisories, five
+of them High, were GHSA-only and invisible to `cargo audit`. Run both.
+
+### Reference implementations
+
+`~/Projects/adelie-ai/mcp-core` is a hand-rolled MCP server core used by around
+a dozen servers, and a useful cross-check on protocol questions — it
+independently arrives at the same negotiate-or-fall-back design and the same
+`listChanged` capability shape. It is **not usable as a dependency here**: it is
+git-only and unpublished, and `cargo publish` rejects git dependencies. The
+`mcp-core` crate on crates.io is an unrelated project by a different author.
