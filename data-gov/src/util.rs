@@ -340,20 +340,53 @@ pub(crate) async fn ensure_inside(root: &Path, candidate: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Sanitize a string for use as a single filesystem path component.
+/// Reduce a string to a single filesystem path component.
 ///
-/// Removes path traversal sequences (`..`, `/`, `\`) and filters to
-/// alphanumeric characters plus `-`, `_`, and `.`.
-// Three distinct patterns (".." then two separators); collapsing into a
-// single `replace` would change behavior since `..` must be handled first.
-#[allow(clippy::collapsible_str_replace)]
+/// Path separators become `_`, every character outside alphanumerics, `-`, `_`
+/// and `.` is dropped, and every parent-directory sequence is collapsed to `_`.
+///
+/// The result is never `.` or `..`, and never carries a separator or a `..`, so
+/// joining it onto a directory can only ever name a file inside that directory.
+/// It may be empty, when nothing usable survived: a caller that needs a name
+/// has to supply its own default.
+///
+/// # Examples
+///
+/// ```rust
+/// # use data_gov::util::sanitize_path_component;
+/// assert_eq!(sanitize_path_component("my-dataset_2024.csv"), "my-dataset_2024.csv");
+/// assert_eq!(sanitize_path_component("../../etc/passwd"), "____etc_passwd");
+/// // The `!` is dropped, and the dots it separated must not become `..`.
+/// assert_eq!(sanitize_path_component(".!."), "_");
+/// assert_eq!(sanitize_path_component("!@#$%"), "");
+/// ```
 pub fn sanitize_path_component(s: &str) -> String {
-    s.replace("..", "_")
-        .replace('/', "_")
-        .replace('\\', "_")
+    // Filter first. Dropping a character can bring the characters either side
+    // of it together, so a collapse that runs before the filter is undone by
+    // it: `.!.` lost its `!` after `..` had already been dealt with, and came
+    // back out as `..`.
+    let mut reduced: String = s
+        // A separator becomes `_` rather than vanishing, so `a/b` stays two
+        // readable parts instead of collapsing into one word.
         .chars()
+        .map(|c| if c == '/' || c == '\\' { '_' } else { c })
         .filter(|c| c.is_alphanumeric() || *c == '-' || *c == '_' || *c == '.')
-        .collect()
+        .collect();
+
+    // Collapse until the result stops changing. `..` cannot reappear while the
+    // replacement is `_`, but the loop is the guarantee rather than the
+    // replacement text being what it happens to be today.
+    while reduced.contains("..") {
+        reduced = reduced.replace("..", "_");
+    }
+
+    // `.` and `..` are instructions to the filesystem, not names. `..` cannot
+    // reach here after the collapse; both are stated so the postcondition
+    // holds at the boundary rather than by inference from the loop above.
+    if reduced == "." || reduced == ".." {
+        return String::new();
+    }
+    reduced
 }
 
 #[cfg(test)]
