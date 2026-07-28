@@ -128,7 +128,7 @@ if let Some(hit) = hit {
 | Method                        | Endpoint                              | Returns                       |
 |-------------------------------|---------------------------------------|-------------------------------|
 | `search(params)`              | `GET /search`                         | `SearchResponse`              |
-| `dataset_by_slug(slug)`       | `GET /search?slug=…&per_page=1`       | `Option<SearchHit>`           |
+| `dataset_by_slug(slug)`       | `GET /api/dataset/{slug}`             | `Option<SearchHit>`           |
 | `organizations()`             | `GET /api/organizations`              | `OrganizationsResponse`       |
 | `keywords(size, min_count)`   | `GET /api/keywords`                   | `KeywordsResponse`            |
 | `locations_search(q, size)`   | `GET /api/locations/search`           | `LocationsResponse`           |

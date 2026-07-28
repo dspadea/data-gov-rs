@@ -83,3 +83,66 @@ async fn live_pagination_advances_with_after_cursor() {
         "pages should not overlap"
     );
 }
+
+/// Live contract test: a slug that exists resolves, including slugs that
+/// full-text search cannot recall.
+///
+/// Each case below is a real data.gov slug that the previous `q=<slug>`
+/// implementation returned `None` for, chosen to span three distinct causes:
+/// 90-character mid-word truncation, punctuation collapse during slugification,
+/// and simple rank overflow past the page cutoff. Measured 1/6 before the fix,
+/// 6/6 after.
+///
+/// Network-bound, so `#[ignore]`d and run by the opt-in Live API Tests job.
+#[tokio::test]
+#[ignore = "hits the live data.gov Catalog API"]
+async fn live_dataset_by_slug_resolves_slugs_full_text_search_cannot_recall() {
+    let client = CatalogClient::new(Arc::new(Configuration::default()));
+
+    for (cause, slug) in [
+        (
+            "90-char truncation mid-word",
+            "advancing-the-automation-of-plant-nucleic-acid-extraction-for-rapid-diagnosis-of-plant-dis",
+        ),
+        (
+            "90-char truncation mid-word",
+            "artemis-p2-ephemeris-heliocentric-trajectories-heliographic-heliographic-inertial-and-sola",
+        ),
+        ("punctuation collapse (Drugs@FDA)", "drugsfda-database"),
+        ("rank overflow past the cutoff", "horizons"),
+        ("rank overflow past the cutoff", "water-quality-data"),
+        ("plain slug, control", "crime-data-from-2020-to-present"),
+    ] {
+        let hit = client
+            .dataset_by_slug(slug)
+            .await
+            .unwrap_or_else(|e| panic!("{cause}: lookup errored for {slug}: {e}"))
+            .unwrap_or_else(|| panic!("{cause}: {slug} exists on data.gov but did not resolve"));
+
+        assert_eq!(
+            hit.slug.as_deref(),
+            Some(slug),
+            "{cause}: resolved a different dataset than requested"
+        );
+    }
+}
+
+/// A slug that does not exist must be `Ok(None)`, and the endpoint must not
+/// prefix-match: `nasa-pat` is a prefix of real slugs and must still miss.
+#[tokio::test]
+#[ignore = "hits the live data.gov Catalog API"]
+async fn live_dataset_by_slug_does_not_prefix_match() {
+    let client = CatalogClient::new(Arc::new(Configuration::default()));
+
+    for absent in ["nasa-pat", "no-such-dataset-anywhere-12345"] {
+        let result = client
+            .dataset_by_slug(absent)
+            .await
+            .unwrap_or_else(|e| panic!("{absent}: lookup errored: {e}"));
+        assert!(
+            result.is_none(),
+            "{absent} does not exist; got {:?}",
+            result.and_then(|h| h.slug)
+        );
+    }
+}
