@@ -298,6 +298,14 @@ pub(crate) async fn check_download_url(raw: &str, allow_private: bool) -> Result
 /// the same on every hop. A `Location` is resolved against the URL it arrived
 /// on, so a relative reference reaches the host it actually names.
 ///
+/// # The client must not follow redirects itself
+///
+/// `http_client` has to be built with [`reqwest::redirect::Policy::none`]. A
+/// client that follows redirects internally reaches the next hop without this
+/// loop seeing it, which is the whole hole this exists to close - and
+/// [`GuardedResolver`] does not cover for it, because reqwest skips the
+/// resolver entirely when the hop names a literal address.
+///
 /// # Errors
 ///
 /// Returns [`DataGovError::ValidationError`] when a hop is refused, when a
@@ -723,13 +731,54 @@ mod tests {
     async fn the_guarded_resolver_honours_the_opt_in() {
         let resolver = GuardedResolver::new(true);
         let name = Name::from_str("localhost").expect("localhost is a valid name");
-        let addresses = resolver
+        let addresses: Vec<SocketAddr> = resolver
             .resolve(name)
             .await
-            .expect("the opt-in must let a local mirror resolve");
+            .expect("the opt-in must let a local mirror resolve")
+            .collect();
         assert!(
-            addresses.count() > 0,
+            !addresses.is_empty(),
             "the resolver must hand back the addresses it approved"
+        );
+        // Not merely "some addresses": the ones it hands back have to be the
+        // ones it was asked about, or the opt-in would be indistinguishable
+        // from a resolver that answers with anything at all.
+        for address in &addresses {
+            assert!(
+                address.ip().is_loopback(),
+                "localhost must resolve to loopback, got {address}"
+            );
+        }
+    }
+
+    /// The resolver's refusal has to survive the trip out through reqwest.
+    ///
+    /// It is decided in a callback that cannot return a [`DataGovError`], so it
+    /// travels as the cause of a transport error and [`refusal_in`] is what
+    /// turns it back into a reason a caller can read. Nothing else proves that
+    /// shape end to end: [`check_download_url`] judges every name a test can
+    /// construct before the resolver is ever consulted, so the resolver only
+    /// decides a case - an answer that changes between the check and the
+    /// connection - that a test cannot stage.
+    #[tokio::test]
+    async fn a_resolver_refusal_travels_out_through_reqwest() {
+        let client = reqwest::Client::builder()
+            .dns_resolver(GuardedResolver::new(false))
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .expect("test client must build");
+
+        let error = client
+            .get("http://localhost/data.csv")
+            .send()
+            .await
+            .expect_err("a name resolving to loopback must be refused by the resolver");
+
+        let recovered = refusal_in(&error)
+            .unwrap_or_else(|| panic!("the refusal must survive as a cause, got: {error:?}"));
+        assert!(
+            recovered.contains("localhost") && recovered.contains("loopback"),
+            "the recovered refusal must name the host and the range, got: {recovered}"
         );
     }
 

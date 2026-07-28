@@ -200,6 +200,17 @@ async fn a_redirect_to_a_link_local_address_is_refused() {
     );
 }
 
+/// A host that cannot be resolved anywhere, by construction.
+///
+/// The first label is 70 octets. A DNS label carries its length in six bits, so
+/// anything past 63 cannot be encoded in a query at all and the resolver
+/// refuses it locally without asking the network. That matters here: a name
+/// merely reserved as unresolvable (RFC 6761's `.invalid`) still depends on the
+/// resolver honouring the reservation, and a resolver that answers every name
+/// would turn this test into a live outbound connection.
+const UNRESOLVABLE_HOST: &str =
+    "this-label-is-too-long-to-be-encoded-in-a-dns-query-and-cannot-resolve.example";
+
 /// A redirect target that is a *name* has to be resolved before it can be
 /// judged, which a synchronous redirect callback cannot do. This states that
 /// the hop goes through the same check the first URL does - the check that
@@ -211,21 +222,21 @@ async fn a_redirect_to_a_name_is_judged_by_the_destination_check() {
         .and(path("/data.csv"))
         .respond_with(
             ResponseTemplate::new(302)
-                // Reserved by RFC 6761 and guaranteed not to resolve, so the
-                // verdict comes from the check and not from a live lookup.
-                .insert_header("location", "http://data-gov-rs.invalid/secret"),
+                .insert_header("location", format!("http://{UNRESOLVABLE_HOST}/secret")),
         )
         .mount(&server)
         .await;
 
     let tmp = TempDir::new().expect("tempdir");
+    // The opt-in is what lets the first hop reach the mock on loopback, so the
+    // verdict under test can only come from judging the second.
     let client = client_for(tmp.path(), true);
     let dist = distribution(&format!("{}/data.csv", server.uri()), "data", "csv");
 
     let message = refusal_for(&client, &dist, tmp.path()).await;
 
     assert!(
-        message.contains("data-gov-rs.invalid"),
+        message.contains(UNRESOLVABLE_HOST),
         "the refusal must name the host the hop pointed at, got: {message}"
     );
 }
@@ -371,8 +382,15 @@ async fn an_endless_redirect_chain_is_refused() {
 
     let message = refusal_for(&client, &dist, tmp.path()).await;
 
+    // Not merely "redirect": every other refusal this handling can produce
+    // carries that word too, so matching it would also pass if the cap were
+    // replaced by a resolution failure.
     assert!(
-        message.contains("redirect"),
-        "a hop cap must survive the move to a custom redirect policy, got: {message}"
+        message.contains("abandoned after"),
+        "the refusal must be the hop cap, not some other redirect failure, got: {message}"
+    );
+    assert!(
+        message.contains("10"),
+        "the refusal must say how many hops were allowed, got: {message}"
     );
 }

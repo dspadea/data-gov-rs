@@ -270,6 +270,10 @@ impl DataGovClient {
         // a bare index.
         let base = Self::base_filename(distribution, fallback_name);
         let mut safe = util::sanitize_path_component(&base);
+        // The reduction already turns `.` into an empty string, so that arm
+        // cannot fire today. It is kept because the reduction is a separate
+        // public function: this is the caller stating what it will accept, not
+        // an inference about what the reduction currently returns.
         if safe.is_empty() || safe == "." {
             safe = Self::default_filename(distribution);
         }
@@ -297,6 +301,8 @@ impl DataGovClient {
     /// is appended to a path, so it is a second way in.
     fn format_extension(format: Option<&str>) -> Option<String> {
         let extension = util::sanitize_path_component(&format?.to_lowercase());
+        // As above: `.` cannot reach here, and the arm stays so this function
+        // does not depend on that remaining true.
         if extension.is_empty() || extension == "." {
             return None;
         }

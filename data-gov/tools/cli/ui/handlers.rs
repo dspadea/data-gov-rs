@@ -848,11 +848,16 @@ mod tests {
         }
     }
 
-    /// The slug is reduced before it is joined, and the join is checked
-    /// afterwards. Neither layer is trusted to be the only one, so whichever
-    /// one acts, the result is a direct child of the download directory.
+    /// Every one of these carries something usable once the separators and the
+    /// traversals are reduced away, so each must yield a directory - and that
+    /// directory must be a direct child of the download directory.
+    ///
+    /// Asserting the success rather than tolerating a refusal is the point.
+    /// `.!.` and `..!..` are the shapes a reduction that collapses before it
+    /// filters turns back into `..`; if that regressed, the join would refuse
+    /// them and a test that merely skipped a refusal would stay green.
     #[test]
-    fn dataset_download_dir_never_leaves_the_download_directory() {
+    fn dataset_download_dir_keeps_a_reducible_slug_inside_the_download_directory() {
         for slug in [
             "..",
             "../escaped",
@@ -863,9 +868,12 @@ mod tests {
             "C:\\Windows\\evil",
             "ordinary-slug",
         ] {
-            let Ok(dir) = dataset_download_dir(Path::new("/tmp/downloads"), slug) else {
-                continue;
-            };
+            let dir =
+                dataset_download_dir(Path::new("/tmp/downloads"), slug).unwrap_or_else(|err| {
+                    panic!(
+                        "slug {slug:?} reduces to a usable name and must yield a directory: {err}"
+                    )
+                });
             assert_eq!(
                 dir.parent(),
                 Some(Path::new("/tmp/downloads")),
