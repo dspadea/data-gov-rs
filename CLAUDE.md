@@ -81,6 +81,69 @@ Every change — bug fix, new feature, refactor — starts with a failing test:
 
 If you are fixing a bug, the first commit should be a test that reproduces it.
 
+### Test conditions come from the real world, never from the code
+
+**Derive every assertion from the specification or from real API data. Never from
+what the implementation currently does.** A test written by reading the code
+cannot detect a wrong implementation, because it was copied from one — it
+converts a bug into a guarantee and makes the fix look like the regression.
+
+This is not hypothetical. Two examples from this workspace:
+
+- The MCP server emitted a `{"type":"json"}` content block, which is not a
+  member of MCP's closed content union. Two tests asserted that exact shape, so
+  a non-conformant server passed its own suite for as long as it existed.
+- `initialize` omitted the required `protocolVersion`, making the server
+  unusable from any spec-compliant client. Its test asserted
+  `serverInfo.is_some() || protocolVersion.is_some()` — and `serverInfo` is
+  always present.
+
+So: open the spec, or capture a real response, and assert what *that* says. If
+the implementation disagrees, the test is doing its job.
+
+### Every test must be able to fail
+
+Before adding a test, answer one question: **what is the simplest wrong
+implementation that still passes it?** If you cannot name one, the test is
+vacuous and is worse than no test, because it creates false confidence.
+
+Vacuity patterns that have all appeared here:
+
+| Pattern | Why it cannot fail |
+|---|---|
+| `assert!(a.is_some() \|\| b.is_some())` | Short-circuits on an always-present `a`; `b` is never checked |
+| Asserting presence rather than value | Satisfied by any hardcoded constant |
+| wiremock asserting a request was *sent* | Says nothing about whether the response was *understood* — a field that silently deserializes to `None` passes |
+| A mock body with only the fields the code reads | Too minimal for a deserialization bug to surface |
+| Asserting a count or a shape the code just produced | Restates the implementation |
+
+The wiremock case is worth calling out because the whole `client_tests.rs`
+suite has it: those tests verify request shaping, and cannot catch a model that
+drops a field. That is why `fixture_parity_tests.rs` exists separately — it
+deserializes captured responses and asserts the fields actually arrive.
+
+### Prefer real captured data to synthetic fixtures
+
+Synthetic bodies contain exactly the fields the author thought of, so they
+cannot surface the problems real payloads cause: nulls where a `Vec` is
+expected, absent optional fields that vary by publisher, 90-character truncated
+slugs, unicode in titles, numbers exceeding `i32`. Capture with
+`scripts/capture-fixtures.sh` and serve the real thing.
+
+Reserve hand-written bodies for cases you cannot capture — a malformed
+response, a specific error status, a value the live API does not currently
+produce.
+
+### Cover the edges, and backfill
+
+Happy path alone is close to worthless; the defects live at the boundaries.
+Every behaviour needs wrong types, nulls, empty strings, absent fields,
+duplicates, boundary values, malformed input, and unusual orderings.
+
+Backfilling tests for behaviour that predates the current change is expected
+work, not scope creep — particularly when touching an area whose existing
+coverage turns out to be vacuous.
+
 ### Specification-driven tests
 
 - **Name tests after the behavior they verify:**

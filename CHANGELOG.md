@@ -9,6 +9,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.5.0] - Unreleased
 
+### Breaking
+
+- **`structuredContent` is now always a JSON object** (#60). Two tools —
+  `data_gov.listOrganizations` and `data_gov.autocompleteDatasets` — returned a
+  bare JSON array, which the spec does not permit: structured content "is
+  returned as a JSON object". They now return `{"organizations": [...]}` and
+  `{"datasets": [...]}` respectively. If you were reading the array directly,
+  read the named key instead.
+
+- **Tool results no longer contain a `{"type":"json"}` content block** (#60).
+  MCP's `content` is a closed union of `text`, `image`, `audio`,
+  `resource_link` and `resource`; `json` is not a member, so every tool result
+  this server produced failed schema validation on a strict client. The
+  machine-readable payload moves to the sibling `structuredContent` field, and
+  the pretty-printed text block stays, as the spec recommends for clients that
+  do not read structured output. If you were reading
+  `content[1].json`, read `structuredContent` instead.
+
+- **MCP `initialize` now returns the required `protocolVersion`** and negotiates
+  it (#44). The server advertises `2024-11-05`, `2025-03-26`, `2025-06-18`, and
+  `2025-11-25`: a version it supports is echoed verbatim, anything else (or an
+  omitted field) gets `2025-11-25`. Previously the field was absent entirely, so
+  any client validating the result against the MCP schema aborted the handshake
+  and no tool was ever reachable.
+- **`capabilities.tools` now uses `listChanged`, not `list`** (#44). `list` is
+  not a key in the MCP schema. If you were reading `capabilities.tools.list`,
+  read `capabilities.tools.listChanged` instead — it is `false`, since the tool
+  list is static.
+- **The unsolicited `ready` line on stdout is gone** (#29). The server previously
+  wrote `{"jsonrpc":"2.0","id":null,"result":{...}}` before any request, which
+  matches no MCP message shape and is not valid JSON-RPC either — a `result`
+  response with a null id corresponds to no request. stdout is now silent until
+  the server answers a request. If you were parsing that line for the method
+  list, call `tools/list` after `initialize` instead. The same information still
+  goes to stderr via `tracing` at startup.
+
 ### Changed
 
 - All dependencies refreshed to their latest semver-compatible releases.
@@ -37,6 +73,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Infrastructure
 
+- Documented the testing standard in `CLAUDE.md`: test conditions derive from
+  the specification or real API data and never from the current implementation;
+  every test must name the wrong implementation it would catch; real captured
+  payloads are preferred to synthetic bodies; edge cases and backfilling are
+  expected. Written up from two live examples in this codebase where a test
+  asserted the buggy behaviour and so guaranteed it.
 - Documented the configuration and file-location policy in `CLAUDE.md`: config,
   cache, and state go in the XDG base directories via the `dirs` crate, never as
   dotfiles in `$HOME`; precedence is flag > environment > config file > default;
