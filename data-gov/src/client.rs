@@ -1046,7 +1046,46 @@ mod tests {
             .validate_download_dir()
             .await
             .expect("should succeed");
-        assert!(!tmp.path().join(".write_test").exists());
+        let mut entries = tokio::fs::read_dir(tmp.path()).await.expect("read tempdir");
+        assert!(
+            entries.next_entry().await.expect("read entry").is_none(),
+            "no probe file of any name should remain in the directory"
+        );
+    }
+
+    /// #112: `validate_download_dir` used to probe with a fixed name,
+    /// `.write_test`. `handle_download_resources` in the MCP server calls it
+    /// on every download where `outputDir` is omitted -- the common case for
+    /// an agent -- and the MCP run loop dispatches those concurrently since
+    /// #65. Two overlapping calls on the same directory used to write the
+    /// same file, then race to remove it: whichever call's `remove_file`
+    /// lost the race saw `ENOENT` for a directory that was perfectly
+    /// writable, and reported `isError: true` for no real reason.
+    ///
+    /// This spawns many concurrent calls against one directory and asserts
+    /// every one succeeds -- a test that calls `validate_download_dir` once
+    /// cannot observe this, because the race needs two probes racing on the
+    /// same path at the same time.
+    #[tokio::test]
+    async fn concurrent_validate_download_dir_calls_never_collide_on_the_probe_file() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let client = Arc::new(client_with_download_dir(tmp.path().to_path_buf()));
+
+        let mut tasks = Vec::new();
+        for _ in 0..64 {
+            let client = Arc::clone(&client);
+            tasks.push(tokio::spawn(
+                async move { client.validate_download_dir().await },
+            ));
+        }
+
+        for (i, task) in tasks.into_iter().enumerate() {
+            let result = task.await.expect("task must not panic");
+            assert!(
+                result.is_ok(),
+                "concurrent call {i} must not fail on another call's probe file: {result:?}"
+            );
+        }
     }
 
     // === #107: with_config rejects the zero values a struct literal or a
