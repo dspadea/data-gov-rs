@@ -177,7 +177,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     // The mode has to be settled before the configuration is resolved: it is
     // what the download directory falls back to when no layer chose one. A
     // positional command means a one-shot invocation, anything else the REPL.
-    let mode = if matches.contains_id("command") && matches.get_one::<String>("command").is_some() {
+    let mode = if matches.get_one::<String>("command").is_some() {
         OperatingMode::CommandLine
     } else {
         OperatingMode::Interactive

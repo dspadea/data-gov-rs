@@ -300,7 +300,10 @@ impl ConfigResolver {
         let download_timeout_secs = self.resolve_download_timeout_secs(file, &defaults)?;
         let user_agent = self.resolve_user_agent(file, &defaults)?;
 
-        let config = DataGovConfig::default()
+        // `defaults` is the built-in layer, so it is also the right base to
+        // build on: reusing it means one `CatalogConfiguration` - and one
+        // `reqwest::Client` inside it - rather than two.
+        let config = defaults
             .with_mode(self.mode.clone())
             .with_download_dir(download_dir.0.clone())
             .with_base_url(base_url.0.clone())
