@@ -4,12 +4,49 @@ use crate::models;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 use std::sync::Arc;
+use std::time::Duration;
+
+/// Default TCP/TLS connect timeout applied by [`Configuration::default`].
+///
+/// Kept generous relative to [`DEFAULT_TIMEOUT`]: a slow handshake on a
+/// loaded host is common and is not itself the failure this bounds. What it
+/// rules out is a connection that never completes at all.
+pub const DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Default overall request timeout applied by [`Configuration::default`].
+///
+/// Matches the value in this crate's README configuration example, so the
+/// documented posture and the shipped default agree.
+pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Build a [`reqwest::Client`] with an explicit connect and overall timeout.
+///
+/// Falls back to [`reqwest::Client::new`] (no timeout at all) only if the
+/// builder itself fails. In practice that happens for a TLS backend
+/// misconfiguration, never for a timeout value -- but [`Default::default`]
+/// has no `Result` to propagate through, so a fallback is the only option
+/// that does not turn a working call into a panic.
+fn build_client(connect_timeout: Duration, timeout: Duration) -> reqwest::Client {
+    reqwest::Client::builder()
+        .connect_timeout(connect_timeout)
+        .timeout(timeout)
+        .build()
+        .unwrap_or_default()
+}
 
 /// Configuration for the Catalog API client.
 ///
 /// The defaults target the public data.gov endpoint. Override `base_path`
 /// to point at a staging instance or at `https://api.data.gov/catalog`
 /// once the announced migration lands.
+///
+/// There is deliberately no `timeout` field here: a [`reqwest::Client`]
+/// bakes its timeouts in at construction and cannot be reconfigured
+/// afterward, so a field that did not also rebuild `client` would silently
+/// stop applying the moment someone set it. Use
+/// [`Configuration::with_timeouts`] to get a client with different bounds,
+/// or build `client` yourself for anything beyond timeouts (a proxy, custom
+/// headers, connection pooling).
 #[derive(Debug, Clone)]
 pub struct Configuration {
     /// Base URL for the Catalog API (e.g. `https://catalog.data.gov`).
@@ -25,6 +62,30 @@ impl Configuration {
     pub fn new() -> Self {
         Self::default()
     }
+
+    /// Build a [`Configuration`] whose client uses the given timeouts
+    /// instead of [`DEFAULT_CONNECT_TIMEOUT`] and [`DEFAULT_TIMEOUT`].
+    ///
+    /// `base_path` and `user_agent` are left at their defaults; set them
+    /// afterward (both fields are `pub`) if they need to change too.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use data_gov_catalog::Configuration;
+    /// use std::time::Duration;
+    ///
+    /// let config = Configuration::with_timeouts(
+    ///     Duration::from_secs(5),
+    ///     Duration::from_secs(15),
+    /// );
+    /// ```
+    pub fn with_timeouts(connect_timeout: Duration, timeout: Duration) -> Self {
+        Self {
+            client: build_client(connect_timeout, timeout),
+            ..Self::default()
+        }
+    }
 }
 
 impl Default for Configuration {
@@ -32,7 +93,7 @@ impl Default for Configuration {
         Self {
             base_path: "https://catalog.data.gov".to_owned(),
             user_agent: Some(concat!("data-gov-rs/", env!("CARGO_PKG_VERSION")).to_owned()),
-            client: reqwest::Client::new(),
+            client: build_client(DEFAULT_CONNECT_TIMEOUT, DEFAULT_TIMEOUT),
         }
     }
 }
@@ -447,5 +508,43 @@ impl CatalogClient {
     ) -> Result<models::Dataset, CatalogError> {
         let path = format!("/harvest_record/{}/transformed", encode_path_segment(id));
         self.get_json(&path, &[(); 0]).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Pins the values the README's configuration section documents (#48):
+    /// a request against an unresponsive host must fail well inside the
+    /// overall timeout, and the connect timeout is comfortably shorter than
+    /// the overall one so a stalled handshake is distinguishable from a
+    /// stalled response. `reqwest::Client` exposes no getter for the
+    /// timeouts it was built with, so the enforcement itself is proven by
+    /// `client_tests::a_short_configured_timeout_bounds_a_stalled_request`,
+    /// which exercises the same `build_client` path through
+    /// `Configuration::with_timeouts`; this test guards the constants that
+    /// path feeds `Configuration::default` with.
+    #[test]
+    fn default_timeouts_are_finite_and_match_the_documented_values() {
+        assert_eq!(DEFAULT_CONNECT_TIMEOUT, Duration::from_secs(10));
+        assert_eq!(DEFAULT_TIMEOUT, Duration::from_secs(30));
+        assert!(
+            DEFAULT_CONNECT_TIMEOUT < DEFAULT_TIMEOUT,
+            "connect timeout must be shorter than the overall request timeout"
+        );
+    }
+
+    /// `Configuration::default()` and `Configuration::new()` must build a
+    /// client without panicking or requiring a runtime. Cheap, and the only
+    /// exercise of `Default::default()` in the offline suite -- the live
+    /// integration tests construct one too, but only `#[ignore]`d.
+    #[test]
+    fn configuration_default_and_new_build_without_panicking() {
+        let default_config = Configuration::default();
+        assert_eq!(default_config.base_path, "https://catalog.data.gov");
+
+        let new_config = Configuration::new();
+        assert_eq!(new_config.base_path, default_config.base_path);
     }
 }
