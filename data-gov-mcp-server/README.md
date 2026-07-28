@@ -133,6 +133,20 @@ Environment variables:
 These settings are optional; when omitted the defaults from the underlying
 library are used. The Catalog API does not require an API key.
 
+## Cargo features
+
+| Feature       | Default | Effect                                             |
+|---------------|---------|-----------------------------------------------------|
+| `native-tls`  | yes     | Use the platform TLS stack (`reqwest/native-tls`), forwarded through `data-gov` to `data-gov-catalog`. |
+| `rustls-tls`  | no      | Use rustls instead (`reqwest/rustls`), forwarded through `data-gov` to `data-gov-catalog`.             |
+
+To use rustls:
+
+```toml
+[dependencies]
+data-gov-mcp-server = { version = "0.5", default-features = false, features = ["rustls-tls"] }
+```
+
 ## Development
 
 ```bash

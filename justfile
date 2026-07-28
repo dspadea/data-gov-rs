@@ -72,6 +72,8 @@ test-live:
 check-rustls:
     cargo check -p data-gov-catalog --no-default-features --features rustls-tls
     cargo check -p data-gov-ckan --no-default-features --features rustls-tls
+    cargo check -p data-gov --no-default-features --features rustls-tls
+    cargo check -p data-gov-mcp-server --no-default-features --features rustls-tls
 
 # Rustdoc must build clean.
 docs:
