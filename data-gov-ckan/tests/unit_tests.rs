@@ -925,7 +925,13 @@ async fn configured_user_agent_is_sent_on_every_request() {
 #[test]
 fn default_configuration_has_expected_values() {
     let config = Configuration::default();
-    assert_eq!(config.base_path, "https://catalog.data.gov/api/3");
+    // catalog.data.gov is a confirmed 404 (data.gov retired its CKAN
+    // endpoint in 2026); open.canada.ca is a live, government-run CKAN
+    // portal, verified responding, used as the default so a caller who runs
+    // the crate's own quick-start example unmodified sees it actually work
+    // (#72.3). Point Configuration::base_path at your own instance for any
+    // real use.
+    assert_eq!(config.base_path, "https://open.canada.ca/data/en/api/3");
     let expected_ua = concat!("data-gov-rs/", env!("CARGO_PKG_VERSION"));
     assert_eq!(config.user_agent.as_deref(), Some(expected_ua));
     assert!(config.api_key.is_none());
