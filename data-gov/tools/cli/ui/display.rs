@@ -6,6 +6,30 @@ use super::{
     color_yellow, color_yellow_bold,
 };
 
+/// Right-pad `text` to `width` visible characters, *then* apply `colorize`.
+///
+/// Padding must happen before colorizing. `colored`'s ANSI escape bytes
+/// count toward Rust's `{:width$}` field width, so formatting an
+/// already-colored string is always short of its target column by the
+/// escape length — coloring `cmd` and then padding it to 30 lands its
+/// description at column 10 for a short command and 22-34 for a longer
+/// one, four different left edges depending on the command's own length.
+///
+/// Split out from [`padded_green_bold`] so the ordering can be tested
+/// directly: `color_green_bold` no-ops unless the process-global
+/// `COLOR_HELPER` has been set (which only happens once, in production
+/// `run()`, and can't be set from a test in another module), so a test
+/// calling `padded_green_bold` itself can never observe real ANSI bytes
+/// and can never catch this specific bug. A test can still supply its own
+/// `colorize` closure that really colorizes.
+fn pad_then_colorize(text: &str, width: usize, colorize: impl FnOnce(&str) -> String) -> String {
+    colorize(&format!("{text:<width$}"))
+}
+
+fn padded_green_bold(text: &str, width: usize) -> String {
+    pad_then_colorize(text, width, color_green_bold)
+}
+
 /// Print dataset details (shared between REPL and CLI modes).
 pub fn print_package_details(hit: &SearchHit) {
     println!("\n{}", color_blue_bold("📦 Dataset Details"));
@@ -139,7 +163,7 @@ pub fn print_cli_help() {
     ];
 
     for (cmd, desc, example) in commands {
-        println!("{:30} {}", color_green_bold(cmd), desc);
+        println!("{} {}", padded_green_bold(cmd, 30), desc);
         println!(
             "{:30} {}: data-gov {}",
             "",
@@ -204,7 +228,7 @@ pub fn print_repl_help() {
     ];
 
     for (cmd, desc, example) in commands {
-        println!("{:25} {}", color_green_bold(cmd), desc);
+        println!("{} {}", padded_green_bold(cmd, 25), desc);
         println!(
             "{:25} {}: {}",
             "",
@@ -256,4 +280,79 @@ pub fn print_repl_help() {
         color_blue("#!/usr/bin/env data-gov")
     );
     println!();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use colored::Colorize;
+
+    /// Strip `colored`'s SGR escape sequences (`\x1b[...m`) so a test can
+    /// assert on the text a terminal would actually display.
+    fn strip_ansi(s: &str) -> String {
+        let mut out = String::new();
+        let mut chars = s.chars();
+        while let Some(c) = chars.next() {
+            if c == '\u{1b}' {
+                for c2 in chars.by_ref() {
+                    if c2 == 'm' {
+                        break;
+                    }
+                }
+            } else {
+                out.push(c);
+            }
+        }
+        out
+    }
+
+    /// `colored::control::SHOULD_COLORIZE` is process-global; serialize on
+    /// this lock so concurrently-running tests can't see each other's
+    /// override, and clean up afterward.
+    static COLOR_OVERRIDE_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    #[test]
+    fn pad_then_colorize_pads_to_the_requested_visible_width_when_actually_colorized() {
+        let _guard = COLOR_OVERRIDE_TEST_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        colored::control::set_override(true);
+
+        let result = pad_then_colorize("cd", 10, |s| s.to_string().green().bold().to_string());
+
+        colored::control::unset_override();
+
+        assert_ne!(
+            result.chars().count(),
+            10,
+            "sanity check: the colorized string must actually carry escape bytes"
+        );
+        let visible = strip_ansi(&result);
+        assert_eq!(
+            visible.chars().count(),
+            10,
+            "visible (escapes stripped) text was {visible:?}, raw was {result:?} \
+             — padding must happen before colorizing, not after"
+        );
+        assert_eq!(visible.trim_end(), "cd");
+    }
+
+    #[test]
+    fn pad_then_colorize_does_not_truncate_text_longer_than_width() {
+        let result = pad_then_colorize("a-very-long-command-name", 5, |s| s.to_string());
+        assert!(
+            result.starts_with("a-very-long-command-name"),
+            "result was: {result:?}"
+        );
+    }
+
+    #[test]
+    fn padded_green_bold_pads_to_the_requested_width_when_uncolorized() {
+        // Under `cargo test`, COLOR_HELPER is never set, so
+        // color_green_bold is a pass-through — this exercises the
+        // production wrapper end to end for the plain-text case; the
+        // colorized case is covered above via pad_then_colorize directly.
+        let s = padded_green_bold("cd", 10);
+        assert_eq!(s.chars().count(), 10, "padded string was: {s:?}");
+    }
 }
