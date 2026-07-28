@@ -10,6 +10,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.5.0] - Unreleased
 
 ### Breaking
+- **`SearchParams::slug` is removed** (#71). The field, the `.slug()` builder,
+  and its query arm all promised exact-slug filtering that the Catalog API does
+  not implement: `GET /search?slug=electric-vehicle-population-data` returns
+  HTTP 200 with a full unfiltered page, so a caller got arbitrary results and no
+  indication anything was wrong. The API's own OpenAPI document confirms
+  `/search` has no `slug` parameter. Call `CatalogClient::dataset_by_slug`
+  instead, which uses the real exact-lookup endpoint.
+- **`SearchParams::spatial_filter` takes a `SpatialFilter` enum** (#77), not a
+  string. The API silently ignores an invalid filter value rather than rejecting
+  it - `spatial_filter=BOGUS` returns a full unfiltered page - so a bare string
+  could not be validated anywhere. Replace `.spatial_filter("geospatial")` with
+  `.spatial_filter(SpatialFilter::Geospatial)`. The two variants match the wire
+  values in the published OpenAPI document exactly.
+- **`CatalogError` has a new `InvalidPathSegment` variant** (#71). Code matching
+  the enum exhaustively must add an arm.
 - **`structuredContent` is now always a JSON object** (#60). Two tools —
   `data_gov.listOrganizations` and `data_gov.autocompleteDatasets` — returned a
   bare JSON array, which the spec does not permit: structured content "is
@@ -45,6 +60,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   goes to stderr via `tracing` at startup.
 
 ### Changed
+- **The Catalog client now has timeouts** (#48). `Configuration::default()` built
+  a bare `reqwest::Client`, which applies no connect timeout and no request
+  timeout, so a host that accepted the connection and never sent headers hung
+  the caller forever. Because the MCP run loop was serial, one stalled metadata
+  request blocked every later request including `shutdown`, and the process had
+  to be killed. The default is now a 10-second connect timeout and a 30-second
+  request timeout, matching what this crate's README already documented. Use
+  `Configuration::with_timeouts` for different bounds.
 - **One TLS stack, and you can now choose which** (#47). `data-gov` declared
   `reqwest` without `default-features = false`, so reqwest's own default
   backend was always enabled on top of whatever `data-gov-catalog` and
@@ -94,7 +117,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `anyhow` 1.0.102 → 1.0.104 — RUSTSEC-2026-0190, unsoundness in
     `Error::downcast_mut()`.
 
+### Added
+- `SpatialFilter`, `Configuration::with_timeouts`, `DEFAULT_CONNECT_TIMEOUT`, and
+  `DEFAULT_TIMEOUT` in `data-gov-catalog`, all re-exported from the crate root.
+
 ### Fixed
+- **The DCAT contact name is no longer silently dropped** (#61).
+  `ContactPoint::fn_` keyed on the literal JSON name `fn_`, because serde does
+  not strip trailing underscores and the `rename` its own comment and rustdoc
+  both claimed was never written. Real payloads send `fn`, so every contact name
+  parsed as `None` and re-serializing emitted the schema-invalid key `fn_`. The
+  Contact line in the CLI's dataset view was unreachable for all real data.
+- **Path ids cannot retarget a request** (#71). `harvest_record`,
+  `harvest_record_raw`, `harvest_record_transformed`, and `location_geometry`
+  interpolated caller-supplied ids into the URL unencoded, so an id containing
+  `..`, `%2e`, `#`, or `?` could redirect the GET at a different endpoint - and
+  the `#` case stranded the suffix in the fragment, letting an unrelated JSON
+  object deserialize into an all-`None` model with no error at all. All four now
+  percent-encode the segment.
+
+  Encoding alone is not sufficient, and this is the part worth knowing: a
+  segment that is *entirely* dots cannot be carried at all. The URL standard
+  looks for dot-segments after decoding and treats `%2E` as a dot, so an id of
+  `..` collapses `/harvest_record/{id}/transformed` to `/transformed` no matter
+  how it is escaped. `""`, `"."`, and `".."` are therefore refused before any
+  request, with the new `CatalogError::InvalidPathSegment`. `dataset_by_slug`
+  had the same hole and is fixed too.
 - **A build with no TLS backend is rejected instead of shipped** (#47). Turning
   reqwest's defaults off made a new configuration reachable:
   `default-features = false` with neither `native-tls` nor `rustls-tls`
