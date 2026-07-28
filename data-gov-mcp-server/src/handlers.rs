@@ -408,7 +408,8 @@ impl DataGovMcpServer {
         if success_count == 0 && error_count > 0 {
             return Err(ServerError::ToolFailedWith {
                 message: format!(
-                    "{method}: every download failed ({error_count} of {error_count});                      target directory {}",
+                    "{method}: all {error_count} downloads failed; target directory {}. \
+                     See `downloads` for the reason each one gave.",
                     output_dir.to_string_lossy()
                 ),
                 payload: Box::new(summary),
