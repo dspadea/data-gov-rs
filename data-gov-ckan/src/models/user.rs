@@ -15,7 +15,7 @@ pub struct User {
     /// Unique identifier for the user.
     ///
     /// CKAN's `id` column is unconstrained text; see [`crate::models::Package::id`]
-    /// for why this is a `String` rather than a [`uuid::Uuid`].
+    /// for why this is a `String` rather than a `uuid::Uuid`.
     #[serde(rename = "id", skip_serializing_if = "Option::is_none")]
     pub id: Option<String>,
     /// Username (unique identifier)

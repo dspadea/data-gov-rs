@@ -18,7 +18,7 @@ pub struct Package {
     /// CKAN's `id` column is unconstrained text: `make_uuid()` is only the
     /// default generator, and harvesters, migrations, and an explicit
     /// `package_create` call can all set a slug-style id instead. Parse to
-    /// [`uuid::Uuid`] yourself if your deployment guarantees UUIDs.
+    /// `uuid::Uuid` yourself if your deployment guarantees UUIDs.
     #[serde(rename = "id", skip_serializing_if = "Option::is_none")]
     pub id: Option<String>,
     /// URL-friendly name (slug)
