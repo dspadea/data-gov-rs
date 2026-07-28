@@ -16,7 +16,7 @@ name = "data-gov"
 path = "tools/cli/main.rs"
 
 [dependencies]
-data-gov-catalog = { version = "0.5.0", default-features = false }
+data-gov-catalog = { version = "0.5.0", path = "../data-gov-catalog", default-features = false }
 reqwest = { version = "0.13.2", default-features = false, features = ["json", "query", "stream"] }
 tokio = { version = "1.47.1", features = ["full"] }
 # REPL and CLI dependencies
