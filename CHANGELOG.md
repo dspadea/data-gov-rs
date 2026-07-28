@@ -93,6 +93,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Infrastructure
 
+- **Fixtures now record where they came from** (#101). `tests/fixtures/MANIFEST.json`
+  holds the endpoint, HTTP status, source host, and capture date for every
+  fixture; `just fixtures` writes it and `fixture_parity_tests` enforces it, so a
+  fixture added without provenance fails the build. A fixture that cannot be
+  captured is listed under `unverified` with a reason — currently only
+  `harvest_record_transformed.json`, whose endpoint 404s for every sampled record
+  (#83).
+- **Captured the negative responses, not only the success cases** (#101). The
+  404 body from `/api/dataset/{absent}` and the empty-result body from `/search`
+  are now fixtures. They are different envelopes — the empty search omits `total`
+  and the cursor entirely — and tests assert both deserialize, which is what
+  keeps every envelope field optional.
+- **`dataset_by_slug.json` and `dataset_by_slug_truncated.json` are refreshable
+  again** (#101). Both existed as captures the script never regenerated. The
+  truncated one is pinned to a dataset at the 90-character slug cap.
+- **Adopted the newest shared engineering standards in `CLAUDE.md`**: fixtures
+  mocked from captured responses rather than hand-written bodies, with
+  `data-gov-ckan`'s UUID-shaped test ids as the worked example of why; adversarial
+  review run from a fresh context with distinct lenses; findings carrying the
+  burden of proof, illustrated by four confidently wrong findings from this
+  review; reporting the limits of what was checked; searching several independent
+  axes until two rounds come up empty; deciding at the top and briefing each
+  branch; and weighing candidate designs before committing.
+
 - **Warnings are now denied by the manifest, not by a flag** (#97). A
   `[workspace.lints]` table in the root `Cargo.toml`, inherited by all four
   members, makes a plain `cargo build` fail on any compiler or clippy warning.

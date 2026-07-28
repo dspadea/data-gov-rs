@@ -1,0 +1,90 @@
+{
+  "fixtures": {
+    "dataset_by_slug.json": {
+      "endpoint": "/api/dataset/crime-data-from-2020-to-present",
+      "status": 200,
+      "source": "https://catalog.data.gov",
+      "captured": "2026-07-28"
+    },
+    "dataset_by_slug_truncated.json": {
+      "endpoint": "/api/dataset/advancing-the-automation-of-plant-nucleic-acid-extraction-for-rapid-diagnosis-of-plant-dis",
+      "status": 200,
+      "source": "https://catalog.data.gov",
+      "captured": "2026-07-28"
+    },
+    "dataset_not_found.json": {
+      "endpoint": "/api/dataset/this-dataset-does-not-exist-abc123xyz",
+      "status": 404,
+      "source": "https://catalog.data.gov",
+      "captured": "2026-07-28"
+    },
+    "harvest_record.json": {
+      "endpoint": "/harvest_record/c4d2afc2-0d60-4a75-9a68-46c6a3dec87f",
+      "status": 200,
+      "source": "https://catalog.data.gov",
+      "captured": "2026-07-28"
+    },
+    "harvest_record_raw.json": {
+      "endpoint": "/harvest_record/c4d2afc2-0d60-4a75-9a68-46c6a3dec87f/raw",
+      "status": 200,
+      "source": "https://catalog.data.gov",
+      "captured": "2026-07-28"
+    },
+    "keywords.json": {
+      "endpoint": "/api/keywords?size=10&min_count=5",
+      "status": 200,
+      "source": "https://catalog.data.gov",
+      "captured": "2026-07-28"
+    },
+    "location.json": {
+      "endpoint": "/api/location/5",
+      "status": 200,
+      "source": "https://catalog.data.gov",
+      "captured": "2026-07-28"
+    },
+    "locations_search.json": {
+      "endpoint": "/api/locations/search?q=california",
+      "status": 200,
+      "source": "https://catalog.data.gov",
+      "captured": "2026-07-28"
+    },
+    "organizations.json": {
+      "endpoint": "/api/organizations",
+      "status": 200,
+      "source": "https://catalog.data.gov",
+      "captured": "2026-07-28"
+    },
+    "search.json": {
+      "endpoint": "/search?per_page=3",
+      "status": 200,
+      "source": "https://catalog.data.gov",
+      "captured": "2026-07-28"
+    },
+    "search_by_slug.json": {
+      "endpoint": "/search?per_page=3&q=crime-data-from-2020-to-present",
+      "status": 200,
+      "source": "https://catalog.data.gov",
+      "captured": "2026-07-28"
+    },
+    "search_filtered.json": {
+      "endpoint": "/search?per_page=3&org_slug=nasa",
+      "status": 200,
+      "source": "https://catalog.data.gov",
+      "captured": "2026-07-28"
+    },
+    "search_no_matches.json": {
+      "endpoint": "/search?per_page=3&q=zzzzqqqxxnomatchwhatsoever12345",
+      "status": 200,
+      "source": "https://catalog.data.gov",
+      "captured": "2026-07-28"
+    }
+  },
+  "unverified": {
+    "harvest_record_transformed.json": {
+      "endpoint": "/harvest_record/{id}/transformed",
+      "reason": "The endpoint returns 404 for every sampled harvest record (#83). This fixture is the last capture from when it still responded; it cannot be refreshed until #83 is resolved.",
+      "captured": "2026-07-27"
+    }
+  },
+  "note": "Provenance for every file in this directory. Written by scripts/capture-fixtures.sh; asserted by fixture_parity_tests.rs. A fixture with no entry here has unverified provenance and fails the test."
+}
