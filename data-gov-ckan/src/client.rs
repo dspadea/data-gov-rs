@@ -931,3 +931,47 @@ fn error_envelope_message(error: &serde_json::Value) -> String {
     }
     error.to_string()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use wiremock::matchers::method;
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    /// `Configuration::default()`'s own timeout fields
+    /// (`default_configuration_sets_explicit_connect_and_request_timeouts` in
+    /// `tests/unit_tests.rs`) do not prove `build_client` actually wires them
+    /// into the `reqwest::Client` it returns -- a client field set to the
+    /// right `Duration` and a client that was never told about it are
+    /// indistinguishable by inspecting the fields alone. This calls
+    /// `build_client` directly, the same function `Configuration::default()`
+    /// calls with the production 10s/30s values, with a timeout short enough
+    /// to prove within milliseconds rather than by waiting out 30 real
+    /// seconds in the test suite.
+    #[tokio::test]
+    async fn build_client_applies_the_given_request_timeout() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(
+                ResponseTemplate::new(200).set_delay(Duration::from_secs(10)),
+            )
+            .mount(&server)
+            .await;
+
+        let client = build_client(Duration::from_secs(10), Duration::from_millis(100));
+
+        let started = std::time::Instant::now();
+        let result = client.get(server.uri()).send().await;
+        let elapsed = started.elapsed();
+
+        assert!(
+            result.is_err(),
+            "a request past the configured timeout must error"
+        );
+        assert!(
+            elapsed < Duration::from_secs(2),
+            "expected the 100ms timeout to fire well before the mock's 10s \
+             delay; took {elapsed:?}"
+        );
+    }
+}
