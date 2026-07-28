@@ -68,7 +68,7 @@ impl DataGovClient {
         let http_client = reqwest::Client::builder()
             .connect_timeout(stall)
             .read_timeout(stall)
-            .user_agent(&config.user_agent)
+            .user_agent(config.user_agent())
             .dns_resolver(util::GuardedResolver::new(allow_private))
             // Redirects are followed by `util::fetch_checked`, not here. A
             // reqwest policy runs synchronously, so it cannot resolve a name
