@@ -19,12 +19,17 @@ use wiremock::matchers::{method, path_regex};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 /// Build a client configured for predictable test behavior.
+///
+/// The mock server listens on loopback, which downloads refuse by default
+/// (#51), so these tests take the private-network opt-in. `url_safety_tests`
+/// covers the refusal itself.
 fn test_client(download_dir: std::path::PathBuf, max_concurrent: usize) -> DataGovClient {
     let config = DataGovConfig::default()
         .with_mode(OperatingMode::Interactive)
         .with_download_dir(download_dir)
         .with_max_concurrent_downloads(max_concurrent)
-        .with_download_timeout(10);
+        .with_download_timeout(10)
+        .with_private_network_downloads(true);
     DataGovClient::with_config(config).expect("test client must build")
 }
 
@@ -254,6 +259,7 @@ async fn zero_max_concurrent_downloads_set_by_struct_literal_still_completes() {
     let config = DataGovConfig {
         max_concurrent_downloads: 0,
         base_download_dir: tmp.path().to_path_buf(),
+        allow_private_network_downloads: true,
         ..DataGovConfig::default()
     };
     let client = DataGovClient::with_config(config).expect("test client must build");

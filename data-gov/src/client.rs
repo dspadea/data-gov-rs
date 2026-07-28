@@ -11,6 +11,7 @@ use crate::ui::{
     DownloadBatch, DownloadFailed, DownloadFinished, DownloadProgress, DownloadStarted,
     StatusReporter,
 };
+use crate::util;
 use data_gov_catalog::{
     CatalogClient, SearchParams,
     models::{Dataset, Distribution, Organization, SearchHit, SearchResponse},
@@ -44,9 +45,26 @@ impl DataGovClient {
     pub fn with_config(config: DataGovConfig) -> Result<Self> {
         let catalog = CatalogClient::new(config.catalog_config.clone());
 
+        let allow_private = config.allow_private_network_downloads;
         let http_client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(config.download_timeout_secs))
             .user_agent(&config.user_agent)
+            .dns_resolver(util::GuardedResolver::new(allow_private))
+            .redirect(reqwest::redirect::Policy::custom(move |attempt| {
+                let target = attempt.url().clone();
+                if attempt.previous().len() > util::MAX_REDIRECT_HOPS {
+                    return attempt.error(util::RefusedDestination::new(format!(
+                        "download abandoned after {} redirects",
+                        util::MAX_REDIRECT_HOPS
+                    )));
+                }
+                match util::check_url_without_dns(&target, allow_private) {
+                    Ok(_) => attempt.follow(),
+                    Err(message) => attempt.error(util::RefusedDestination::new(format!(
+                        "redirect to `{target}` refused: {message}"
+                    ))),
+                }
+            }))
             .build()?;
 
         Ok(Self {
@@ -306,6 +324,7 @@ impl DataGovClient {
             &output_path,
             distribution.title.clone(),
             None,
+            self.config.allow_private_network_downloads,
             self.reporter(),
         )
         .await?;
@@ -354,6 +373,7 @@ impl DataGovClient {
         ));
 
         let status_reporter = self.reporter();
+        let allow_private_network = self.config.allow_private_network_downloads;
         let mut futures = Vec::with_capacity(distributions.len());
 
         for (index, distribution) in distributions.iter().enumerate() {
@@ -410,6 +430,7 @@ impl DataGovClient {
                     &output_path,
                     distribution.title.clone(),
                     None,
+                    allow_private_network,
                     status_reporter,
                 )
                 .await?;
@@ -433,6 +454,7 @@ impl DataGovClient {
         output_path: &Path,
         resource_name: Option<String>,
         dataset_name: Option<String>,
+        allow_private_network: bool,
         status_reporter: Option<Arc<dyn StatusReporter + Send + Sync>>,
     ) -> Result<()> {
         let notify_failure =
@@ -448,6 +470,14 @@ impl DataGovClient {
                 }
             };
 
+        // The destination is judged before anything is created on disk and
+        // before the request leaves, so a refused URL costs nothing and leaves
+        // nothing behind.
+        if let Err(err) = util::check_download_url(url, allow_private_network).await {
+            notify_failure(err.to_string(), &status_reporter);
+            return Err(err);
+        }
+
         if let Some(parent) = output_path.parent()
             && let Err(err) = tokio::fs::create_dir_all(parent).await
         {
@@ -458,8 +488,15 @@ impl DataGovClient {
         let response = match http_client.get(url).send().await {
             Ok(resp) => resp,
             Err(err) => {
+                // A refusal decided by the redirect policy or by the DNS
+                // resolver arrives as the cause of a transport error. Report
+                // the reason, not "error sending request".
+                let err = match util::refusal_in(&err) {
+                    Some(message) => DataGovError::validation_error(message),
+                    None => DataGovError::from(err),
+                };
                 notify_failure(err.to_string(), &status_reporter);
-                return Err(err.into());
+                return Err(err);
             }
         };
 
