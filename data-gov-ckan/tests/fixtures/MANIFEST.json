@@ -1,0 +1,54 @@
+{
+  "fixtures": {
+    "organization_list.json": {
+      "endpoint": "/data/en/api/3/action/organization_list?sort=name&limit=5",
+      "status": 200,
+      "source": "https://open.canada.ca",
+      "captured": "2026-07-28"
+    },
+    "organization_list_slug_ids.json": {
+      "endpoint": "/api/3/action/organization_list?all_fields=true&sort=name&limit=10",
+      "status": 200,
+      "source": "https://data.gov.ie",
+      "captured": "2026-07-28"
+    },
+    "package_search.json": {
+      "endpoint": "/data/en/api/3/action/package_search?fq=id:432527ab-7aac-45b5-81d6-7597107a7013&rows=3",
+      "status": 200,
+      "source": "https://open.canada.ca",
+      "captured": "2026-07-28"
+    },
+    "package_search_non_uuid_org_id.json": {
+      "endpoint": "/api/3/action/package_search?fq=organization:central-statistics-office&rows=3",
+      "status": 200,
+      "source": "https://data.gov.ie",
+      "captured": "2026-07-28"
+    },
+    "package_show.json": {
+      "endpoint": "/data/en/api/3/action/package_show?id=432527ab-7aac-45b5-81d6-7597107a7013",
+      "status": 200,
+      "source": "https://open.canada.ca",
+      "captured": "2026-07-28"
+    },
+    "package_show_not_found.json": {
+      "endpoint": "/data/en/api/3/action/package_show?id=this-dataset-does-not-exist-abc123xyz",
+      "status": 404,
+      "source": "https://open.canada.ca",
+      "captured": "2026-07-28"
+    },
+    "package_show_validation_error.json": {
+      "endpoint": "/data/en/api/3/action/package_show",
+      "status": 409,
+      "source": "https://open.canada.ca",
+      "captured": "2026-07-28"
+    },
+    "resource_size_as_string.json": {
+      "endpoint": "/api/3/action/package_show?id=coastal-data-system-near-real-time-wave-data",
+      "status": 200,
+      "source": "https://www.data.qld.gov.au",
+      "captured": "2026-07-28"
+    }
+  },
+  "unverified": {},
+  "note": "Provenance for every file in this directory. Written by scripts/capture-ckan-fixtures.sh; asserted by fixture_parity_tests.rs. A fixture with no entry here has unverified provenance and fails the test. Unlike data-gov-catalog, these fixtures come from several independent public CKAN portals -- see `source` on each entry, and the comment block at the top of the capture script for why each was chosen."
+}

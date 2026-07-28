@@ -1,0 +1,342 @@
+{
+  "help": "https://open.canada.ca/data/en/api/3/action/help_show?name=package_show",
+  "success": true,
+  "result": {
+    "association_type": [],
+    "audience": [],
+    "author": null,
+    "author_email": "open-ouvert@tbs-sct.gc.ca",
+    "collection": "primary",
+    "contributor": {
+      "fr": "",
+      "en": ""
+    },
+    "creator": "",
+    "creator_user_id": "aa584ab4-544c-4c5c-81da-d1cff9bd96fa",
+    "data_series_issue_identification": {
+      "fr": "",
+      "en": ""
+    },
+    "data_series_name": {
+      "fr": "",
+      "en": ""
+    },
+    "date_published": "2016-01-28 00:00:00",
+    "digital_object_identifier": "",
+    "display_flags": [],
+    "frequency": "P3M",
+    "geographic_region": [],
+    "id": "432527ab-7aac-45b5-81d6-7597107a7013",
+    "imso_approval": "true",
+    "isopen": false,
+    "jurisdiction": "federal",
+    "keywords": {
+      "fr": [
+        "Divulgation proactive",
+        "de subventions et de contributions"
+      ],
+      "en": [
+        "Proactive Disclosure",
+        "PD",
+        "Grants and Contributions"
+      ]
+    },
+    "license_id": "ca-ogl-lgo",
+    "license_title": "Open Government Licence - Canada",
+    "license_url": "https://open.canada.ca/en/open-government-licence-canada",
+    "maintainer": null,
+    "maintainer_contact_form": {},
+    "metadata_contact": {},
+    "metadata_created": "2017-02-20T20:30:44.989526",
+    "metadata_modified": "2026-07-28T09:31:00.516100",
+    "name": "432527ab-7aac-45b5-81d6-7597107a7013",
+    "notes": "Grants and Contributions: All institutions subject to the Policy on Transfer Payments are required to publish reports on Grants and Contributions within the Government of Canada. This dataset consolidates all the Grants and Contributions reports submitted by federal institutions.",
+    "notes_translated": {
+      "fr": "Toutes les institutions assujetties \u00e0 la Politique sur les paiements de transfert sont tenues de publier des rapports sur les subventions et les contributions au sein du gouvernement du Canada. Ce jeu de donn\u00e9es r\u00e9unit tous les rapports sur les subventions et les contributions soumis par les institutions f\u00e9d\u00e9rales.",
+      "en": "Grants and Contributions: All institutions subject to the Policy on Transfer Payments are required to publish reports on Grants and Contributions within the Government of Canada. This dataset consolidates all the Grants and Contributions reports submitted by federal institutions."
+    },
+    "num_resources": 6,
+    "num_tags": 0,
+    "org_section": {
+      "fr": "",
+      "en": ""
+    },
+    "org_title_at_publication": {
+      "fr": "Secr\u00e9tariat du Conseil du Tr\u00e9sor du Canada",
+      "en": "Treasury Board of Canada Secretariat"
+    },
+    "organization": {
+      "id": "81765FCD-32B3-4708-A593-3AA00705E62B",
+      "name": "tbs-sct",
+      "title": "Treasury Board of Canada Secretariat | Secr\u00e9tariat du Conseil du Tr\u00e9sor du Canada",
+      "type": "organization",
+      "description": "",
+      "image_url": "",
+      "created": "2016-09-23T17:26:17.294681",
+      "is_organization": true,
+      "approval_status": "approved",
+      "state": "active"
+    },
+    "owner_org": "81765FCD-32B3-4708-A593-3AA00705E62B",
+    "place_of_publication": [],
+    "portal_release_date": "2017-02-20",
+    "position_name": {},
+    "private": false,
+    "program_page_url": {
+      "fr": "",
+      "en": ""
+    },
+    "ready_to_publish": "true",
+    "restrictions": "unrestricted",
+    "spatial": "",
+    "spatial_representation_type": [],
+    "state": "active",
+    "subject": [
+      "government_and_politics",
+      "information_and_communications"
+    ],
+    "title": "Proactive Disclosure - Grants and Contributions",
+    "title_translated": {
+      "fr": "Divulgation des octrois de subventions et de contributions ",
+      "en": "Proactive Disclosure - Grants and Contributions"
+    },
+    "topic_category": [],
+    "type": "dataset",
+    "url": "{u'fr': u'', u'en': u''}",
+    "version": null,
+    "resources": [
+      {
+        "cache_last_updated": null,
+        "cache_url": null,
+        "character_set": "",
+        "created": "2019-08-06T15:00:22.928674",
+        "data_quality": [],
+        "datastore_active": false,
+        "datastore_contains_all_records_of_source_file": false,
+        "date_published": "",
+        "description": null,
+        "format": "JSON",
+        "hash": "",
+        "id": "d9fee653-1090-444d-9854-b0b44d90a7c7",
+        "language": [
+          "en",
+          "fr"
+        ],
+        "last_modified": null,
+        "metadata_modified": "2026-02-10T14:57:23.340202",
+        "mimetype": null,
+        "mimetype_inner": null,
+        "name": "Data Schema",
+        "name_translated": {
+          "en": "Data Schema",
+          "fr": "Sch\u00e9ma"
+        },
+        "package_id": "432527ab-7aac-45b5-81d6-7597107a7013",
+        "position": 0,
+        "resource_type": "specification",
+        "size": 30030,
+        "state": "active",
+        "unique_identifier": "",
+        "url": "https://open.canada.ca/data/recombinant-published-schema/grants.json",
+        "url_type": ""
+      },
+      {
+        "cache_last_updated": null,
+        "cache_url": null,
+        "character_set": "",
+        "created": "2019-08-06T15:00:22.928667",
+        "data_quality": [],
+        "datastore_active": false,
+        "datastore_contains_all_records_of_source_file": false,
+        "date_published": "",
+        "description": null,
+        "format": "XLSX",
+        "hash": "",
+        "id": "87f0a925-216a-477d-b229-eada095f7b55",
+        "language": [
+          "en",
+          "fr"
+        ],
+        "last_modified": null,
+        "metadata_modified": "2026-02-10T15:38:09.929786",
+        "mimetype": null,
+        "mimetype_inner": null,
+        "name": "Data Dictionary",
+        "name_translated": {
+          "en": "Data Dictionary",
+          "fr": "Dictionnaire de donn\u00e9es"
+        },
+        "package_id": "432527ab-7aac-45b5-81d6-7597107a7013",
+        "position": 1,
+        "resource_type": "data_dictionary",
+        "size": 29207,
+        "state": "active",
+        "unique_identifier": "",
+        "url": "https://open.canada.ca/data/recombinant-published-dictionary/grants",
+        "url_type": "",
+        "validation_status": "failure",
+        "validation_timestamp": "2023-12-08T07:16:21.433725"
+      },
+      {
+        "cache_last_updated": null,
+        "cache_url": null,
+        "character_set": "",
+        "created": "2017-02-20T15:30:45.414256",
+        "data_quality": [],
+        "datastore_active": false,
+        "datastore_contains_all_records_of_source_file": false,
+        "date_published": "",
+        "description": null,
+        "format": "HTML",
+        "hash": "",
+        "id": "ea968ebb-72a7-45c7-9666-fbac36fb5893",
+        "language": [
+          "en"
+        ],
+        "last_modified": null,
+        "metadata_modified": "2026-02-10T14:57:23.340327",
+        "mimetype": null,
+        "mimetype_inner": null,
+        "name": "Search Government Grants and Contributions (English)",
+        "name_translated": {
+          "en": "Search Government Grants and Contributions (English)",
+          "fr": "Rechercher octrois de subventions gouvernementaux (anglais)"
+        },
+        "package_id": "432527ab-7aac-45b5-81d6-7597107a7013",
+        "position": 2,
+        "resource_type": "website",
+        "state": "active",
+        "unique_identifier": "",
+        "url": "https://search.open.canada.ca/grants",
+        "url_type": "",
+        "validation_status": "",
+        "validation_timestamp": ""
+      },
+      {
+        "cache_last_updated": null,
+        "cache_url": null,
+        "character_set": "",
+        "created": "2017-02-20T15:30:45.414269",
+        "data_quality": [],
+        "datastore_active": false,
+        "datastore_contains_all_records_of_source_file": false,
+        "date_published": "",
+        "description": null,
+        "format": "HTML",
+        "hash": "",
+        "id": "7ad8fb26-e2e8-40f7-94a4-b1ab86feddc3",
+        "language": [
+          "fr"
+        ],
+        "last_modified": null,
+        "metadata_modified": "2026-02-10T14:57:23.340378",
+        "mimetype": null,
+        "mimetype_inner": null,
+        "name": "Search Government Grants and Contributions (French)",
+        "name_translated": {
+          "en": "Search Government Grants and Contributions (French)",
+          "fr": "Rechercher octrois de subventions gouvernementaux (fran\u00e7ais)"
+        },
+        "package_id": "432527ab-7aac-45b5-81d6-7597107a7013",
+        "position": 3,
+        "resource_type": "website",
+        "state": "active",
+        "unique_identifier": "",
+        "url": "https://rechercher.ouvert.canada.ca/subventions",
+        "url_type": "",
+        "validation_status": "",
+        "validation_timestamp": ""
+      },
+      {
+        "cache_last_updated": null,
+        "cache_url": null,
+        "character_set": "",
+        "ckan_url": "https://registry.open.canada.ca",
+        "created": "2017-04-19T09:50:10.158312",
+        "data_quality": [],
+        "datastore_active": true,
+        "datastore_contains_all_records_of_source_file": true,
+        "date_published": "",
+        "description": null,
+        "format": "CSV",
+        "hash": "e667ff2f051219c3c1aa2ec957f3a97f",
+        "id": "4e4db232-f5e8-43c7-b8b2-439eb7d55475",
+        "ignore_hash": false,
+        "language": [
+          "en",
+          "fr"
+        ],
+        "last_modified": "2026-07-28T06:53:21.803792",
+        "metadata_modified": "2026-07-28T09:31:00.507054",
+        "mimetype": null,
+        "mimetype_inner": null,
+        "name": "Proactive Disclosure - Grants and Contributions Nothing to Report",
+        "name_translated": {
+          "fr": "Divulgation proactive - Subventions et les contributions  (Rien \u00e0 signaler)",
+          "en": "Proactive Disclosure - Grants and Contributions Nothing to Report"
+        },
+        "original_url": "https://registry.open.canada.ca/dataset/432527ab-7aac-45b5-81d6-7597107a7013/resource/4e4db232-f5e8-43c7-b8b2-439eb7d55475/download/grants-nil.csv",
+        "package_id": "432527ab-7aac-45b5-81d6-7597107a7013",
+        "position": 4,
+        "resource_id": "4e4db232-f5e8-43c7-b8b2-439eb7d55475",
+        "resource_type": "dataset",
+        "set_url_type": false,
+        "size": 24734,
+        "state": "active",
+        "task_created": "2026-04-30 06:56:55.731629",
+        "unique_identifier": "",
+        "url": "https://open.canada.ca/data/dataset/432527ab-7aac-45b5-81d6-7597107a7013/resource/4e4db232-f5e8-43c7-b8b2-439eb7d55475/download/grants-nil.csv",
+        "url_type": "upload",
+        "validation_status": "success",
+        "validation_timestamp": "2026-07-28T06:59:15.626166"
+      },
+      {
+        "cache_last_updated": null,
+        "cache_url": null,
+        "character_set": "UTF-8",
+        "ckan_url": "https://registry.open.canada.ca",
+        "created": "2017-02-20T15:30:45.414189",
+        "data_quality": [],
+        "datastore_active": true,
+        "datastore_contains_all_records_of_source_file": true,
+        "date_published": "",
+        "description": null,
+        "format": "CSV",
+        "hash": "26c2f3986d918c51b91729d2ed4455f8",
+        "id": "1d15a62f-5656-49ad-8c88-f40ce689d831",
+        "ignore_hash": false,
+        "language": [
+          "en",
+          "fr"
+        ],
+        "last_modified": "2026-07-28T06:52:38.402715",
+        "metadata_modified": "2026-07-28T09:31:00.507116",
+        "mimetype": null,
+        "mimetype_inner": null,
+        "name": "Proactive Disclosure - Grants and Contributions",
+        "name_translated": {
+          "fr": "Divulgation des octrois de subventions et de contributions ",
+          "en": "Proactive Disclosure - Grants and Contributions"
+        },
+        "original_url": "https://registry.open.canada.ca/dataset/432527ab-7aac-45b5-81d6-7597107a7013/resource/1d15a62f-5656-49ad-8c88-f40ce689d831/download/grants.csv",
+        "package_id": "432527ab-7aac-45b5-81d6-7597107a7013",
+        "position": 5,
+        "resource_id": "1d15a62f-5656-49ad-8c88-f40ce689d831",
+        "resource_type": "dataset",
+        "set_url_type": false,
+        "size": 2290761766,
+        "state": "active",
+        "task_created": "2026-07-28 06:59:10.276003",
+        "unique_identifier": "",
+        "url": "https://open.canada.ca/data/dataset/432527ab-7aac-45b5-81d6-7597107a7013/resource/1d15a62f-5656-49ad-8c88-f40ce689d831/download/grants.csv",
+        "url_type": "upload",
+        "validation_status": "success",
+        "validation_timestamp": "2026-07-28T06:59:08.983185"
+      }
+    ],
+    "tags": [],
+    "groups": [],
+    "relationships_as_subject": [],
+    "relationships_as_object": []
+  }
+}
