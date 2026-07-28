@@ -37,6 +37,23 @@ impl Default for Configuration {
     }
 }
 
+/// Percent-encode a single URL path segment.
+///
+/// Everything outside the unreserved set is escaped, including `/` and `.`, so
+/// a value containing `..`, `%2e` or a slash cannot escape its segment and
+/// redirect the request to a different endpoint. `.` is escaped rather than
+/// passed through precisely so that `..` cannot survive as a dot-segment.
+fn encode_path_segment(segment: &str) -> String {
+    let mut out = String::with_capacity(segment.len());
+    for byte in segment.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'~' => out.push(byte as char),
+            other => out.push_str(&format!("%{other:02X}")),
+        }
+    }
+    out
+}
+
 /// Async client for the Catalog API.
 ///
 /// Holds an [`Arc<Configuration>`] so it's cheap to clone and share across
@@ -248,6 +265,45 @@ impl CatalogClient {
         format!("{base}{path}")
     }
 
+    /// Issue a GET where a 404 means "no such thing" rather than a failure.
+    ///
+    /// Distinct from [`Self::get_json`], which treats every non-2xx as an
+    /// error. Collapsing the two is how a data.gov outage came to be reported
+    /// to users as a missing dataset.
+    async fn get_json_optional<T: DeserializeOwned>(
+        &self,
+        path: &str,
+    ) -> Result<Option<T>, CatalogError> {
+        let mut req = self.configuration.client.get(self.url(path));
+        if let Some(ua) = &self.configuration.user_agent {
+            req = req.header(reqwest::header::USER_AGENT, ua);
+        }
+        let response = req
+            .send()
+            .await
+            .map_err(|e| CatalogError::RequestError(Box::new(e)))?;
+
+        if response.status() == reqwest::StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
+        if !response.status().is_success() {
+            let status = response.status().as_u16();
+            let message = response
+                .text()
+                .await
+                .unwrap_or_else(|_| "<no body>".to_string());
+            return Err(CatalogError::ApiError { status, message });
+        }
+
+        let bytes = response
+            .bytes()
+            .await
+            .map_err(|e| CatalogError::RequestError(Box::new(e)))?;
+        serde_json::from_slice(&bytes)
+            .map(Some)
+            .map_err(CatalogError::ParseError)
+    }
+
     /// Issue a GET with optional query parameters and deserialize the JSON body.
     async fn get_json<T: DeserializeOwned, Q: serde::Serialize + ?Sized>(
         &self,
@@ -301,24 +357,32 @@ impl CatalogClient {
     /// [`SearchHit`](models::SearchHit) carries the denormalized fields and a
     /// nested `dcat` record with the full DCAT-US 3 metadata.
     ///
-    /// # Notes
+    /// Uses `GET /api/dataset/{slug_or_id}`, the exact-lookup endpoint declared
+    /// in the API's own OpenAPI document at `/openapi.json`. Lookup is exact:
+    /// the endpoint does no prefix or substring matching, so a near-miss slug
+    /// returns 404 rather than a plausible wrong dataset.
     ///
-    /// The Catalog API does not actually honor a `slug=` query parameter
-    /// today — it returns the top relevance hit regardless of the value.
-    /// We work around this by using a full-text query (`q=<slug>`) and then
-    /// scanning the first page for a hit whose `slug` exactly matches.
-    /// Slug-shaped queries reliably rank the exact match first when it
-    /// exists; we look at the top 20 results to leave headroom for ties.
+    /// # Errors
+    ///
+    /// Returns [`CatalogError::ApiError`] for any non-2xx status other than
+    /// 404, [`CatalogError::RequestError`] for network or TLS failure, and
+    /// [`CatalogError::ParseError`] if the body is not a valid
+    /// [`SearchResponse`](models::SearchResponse). A 404 is *not* an error — it
+    /// is the "no such dataset" answer and yields `Ok(None)`.
     pub async fn dataset_by_slug(
         &self,
         slug: &str,
     ) -> Result<Option<models::SearchHit>, CatalogError> {
-        let params = SearchParams::new().q(slug).per_page(20);
-        let response: models::SearchResponse = self.search(params).await?;
+        let path = format!("/api/dataset/{}", encode_path_segment(slug));
+        let response: Option<models::SearchResponse> = self.get_json_optional(&path).await?;
+
+        // Belt and braces: the endpoint is exact, but a hit whose slug differs
+        // from the request would mean the server matched something else, and
+        // returning it would be the silent-wrong-dataset failure this call
+        // exists to avoid.
         Ok(response
-            .results
-            .into_iter()
-            .find(|hit| hit.slug.as_deref() == Some(slug)))
+            .and_then(|r| r.results.into_iter().next())
+            .filter(|hit| hit.slug.as_deref() == Some(slug)))
     }
 
     /// List all organizations known to the catalog.

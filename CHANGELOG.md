@@ -10,7 +10,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.5.0] - Unreleased
 
 ### Breaking
-
 - **`structuredContent` is now always a JSON object** (#60). Two tools —
   `data_gov.listOrganizations` and `data_gov.autocompleteDatasets` — returned a
   bare JSON array, which the spec does not permit: structured content "is
@@ -46,13 +45,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   goes to stderr via `tracing` at startup.
 
 ### Changed
-
 - All dependencies refreshed to their latest semver-compatible releases.
   `rustyline` 17 → 18 is deliberately **not** included; it is a major bump
   under the whole REPL and is tracked separately.
 
 ### Security
-
 - **Cleared three advisories** by refreshing the lockfile (#46):
   - `quinn-proto` 0.11.14 → 0.11.16 — RUSTSEC-2026-0185, remote memory
     exhaustion from unbounded out-of-order stream reassembly (7.5 High).
@@ -64,15 +61,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `anyhow` 1.0.102 → 1.0.104 — RUSTSEC-2026-0190, unsoundness in
     `Error::downcast_mut()`.
 
-### Removed
+### Fixed
+- **`dataset_by_slug` now resolves every dataset that exists** (#94). It was
+  implemented as a full-text search — `q=<slug>&per_page=20`, scanning the page
+  for an exact match — because the `slug=` query parameter it was written
+  against never existed in the API. A slug is a lossy derivation of the title
+  (truncated at 90 characters mid-word, punctuation collapsed, `U.S.` flattened
+  to `u-s`), so its tokens are frequently absent from the indexed text and the
+  query returned nothing. Measured against live data.gov: **15% of datasets
+  unresolvable on a uniform sample, 27% past cursor depth 400, ~69% of slugs at
+  the 90-character cap.**
 
+  It now uses `GET /api/dataset/{slug_or_id}`, the exact-lookup endpoint
+  declared in the API's own OpenAPI document at `/openapi.json`. Same one
+  request, no ranking, no prefix matching. This affects every entry point that
+  takes a slug — REPL `cd`/`show`/`download`, one-shot CLI, and the
+  `data_gov.dataset` and `data_gov.downloadResources` MCP tools — all of which
+  previously reported "not found" for datasets they had just listed.
+- **A data.gov outage is no longer reported as a missing dataset** (#94). Only a
+  404 yields `Ok(None)`; every other non-2xx surfaces as
+  `CatalogError::ApiError` and network failure as `CatalogError::RequestError`.
+- **The slug is percent-encoded into a single path segment**, so a value
+  containing `..`, `%2e` or a slash cannot redirect the request to another
+  endpoint.
+
+### Removed
 - Six declared-but-unused dependencies (#76): `serde`, `serde_json`,
   `tokio-util`, and `anyhow` from `data-gov`; `futures` and `data-gov-catalog`
   from `data-gov-mcp-server`, which reaches catalog types through the
   `data_gov::catalog` re-export. The lockfile drops from 308 to 279 crates.
 
 ### Infrastructure
-
 - Documented the testing standard in `CLAUDE.md`: test conditions derive from
   the specification or real API data and never from the current implementation;
   every test must name the wrong implementation it would catch; real captured
