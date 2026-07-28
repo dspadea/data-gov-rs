@@ -212,11 +212,10 @@ async fn dispatch_tools_call_missing_params_returns_invalid_params() {
 #[tokio::test]
 async fn dispatch_direct_tool_method_wraps_response() {
     let mock = MockServer::start().await;
-    // dataset_by_slug uses q=<slug> on the wire (the API doesn't honor slug=)
-    // and matches the slug client-side.
+    // dataset_by_slug resolves through the exact-lookup endpoint
+    // GET /api/dataset/{slug_or_id}, not a full-text search.
     Mock::given(wm_method("GET"))
-        .and(wm_path("/search"))
-        .and(query_param("q", "my-dataset"))
+        .and(wm_path("/api/dataset/my-dataset"))
         .respond_with(
             ResponseTemplate::new(200).set_body_json(search_body("my-dataset", "My Dataset")),
         )
@@ -493,7 +492,7 @@ async fn dispatch_download_resources_rejects_parent_traversal_in_output_dir() {
     // dataset. Include at least one downloadable distribution so the traversal
     // check is the one that fires.
     Mock::given(wm_method("GET"))
-        .and(wm_path("/search"))
+        .and(wm_path("/api/dataset/some-dataset"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
             "results": [{
                 "slug": "some-dataset",

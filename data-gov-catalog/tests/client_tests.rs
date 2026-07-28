@@ -92,105 +92,126 @@ async fn search_with_org_slug_passes_filter() {
 }
 
 #[tokio::test]
-async fn dataset_by_slug_returns_first_hit() {
+async fn dataset_by_slug_returns_the_dataset() {
+    let slug = "crime-data-from-2020-to-present";
     let server = MockServer::start().await;
-    // dataset_by_slug uses q=<slug> (the API doesn't honor slug= today)
-    // and matches the slug client-side.
     Mock::given(method("GET"))
-        .and(path("/search"))
-        .and(query_param("q", "crime-data-from-2020-to-present"))
+        .and(path(format!("/api/dataset/{slug}")))
         .respond_with(
             ResponseTemplate::new(200)
-                .set_body_raw(fixture("search_by_slug.json"), "application/json"),
+                .set_body_raw(fixture("dataset_by_slug.json"), "application/json"),
         )
         .mount(&server)
         .await;
 
-    let client = client_for(&server);
-    let hit = client
-        .dataset_by_slug("crime-data-from-2020-to-present")
+    let hit = client_for(&server)
+        .dataset_by_slug(slug)
         .await
         .expect("slug lookup succeeds")
         .expect("slug matches a dataset");
 
+    assert_eq!(hit.slug.as_deref(), Some(slug));
     assert!(hit.title.is_some());
-    assert!(hit.dcat.is_some());
+    assert!(hit.dcat.is_some(), "the full DCAT record must come through");
 }
 
+/// The endpoint is exact, but if it ever answered with a different dataset we
+/// must not hand it back: returning a plausible wrong dataset is worse than
+/// returning nothing, because the caller cannot tell.
 #[tokio::test]
-async fn dataset_by_slug_returns_none_when_empty() {
+async fn dataset_by_slug_returns_none_when_the_hit_has_a_different_slug() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
-        .and(path("/search"))
+        .and(path("/api/dataset/nasa-thesaurus"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "results": [],
-            "sort": "relevance"
-        })))
-        .mount(&server)
-        .await;
-
-    let client = client_for(&server);
-    let result = client.dataset_by_slug("nonexistent").await.unwrap();
-    assert!(result.is_none());
-}
-
-/// The live Catalog API doesn't honor a `slug=` query parameter — it
-/// returns the top relevance hit regardless. We work around it with
-/// `q=<slug>` plus a client-side slug-equality check. Make sure that
-/// check actually fires when the API returns a non-matching hit.
-#[tokio::test]
-async fn dataset_by_slug_returns_none_when_top_hit_has_a_different_slug() {
-    let server = MockServer::start().await;
-    Mock::given(method("GET"))
-        .and(path("/search"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "total": 1,
             "results": [{
                 "slug": "crime-data-from-2020-to-present",
-                "title": "Crime Data from 2020 to 2024"
-            }],
-            "sort": "relevance"
+                "title": "A completely different dataset"
+            }]
         })))
         .mount(&server)
         .await;
 
-    let client = client_for(&server);
-    let result = client.dataset_by_slug("nasa-thesaurus").await.unwrap();
+    let result = client_for(&server)
+        .dataset_by_slug("nasa-thesaurus")
+        .await
+        .expect("lookup succeeds");
     assert!(
         result.is_none(),
-        "expected None when API returns a hit with a different slug, got Some(_)"
+        "a hit whose slug differs from the request must not be returned, got {result:?}"
     );
 }
 
-/// When the response includes the requested slug among multiple hits
-/// (for example, a `q=<slug>` query that fans out to similarly-named
-/// datasets), `dataset_by_slug` should pick the exact match rather than
-/// the top-ranked or first hit.
+/// A 200 carrying no results is "no such dataset", the same as a 404.
 #[tokio::test]
-async fn dataset_by_slug_picks_exact_match_among_multiple_hits() {
+async fn dataset_by_slug_returns_none_when_the_response_is_empty() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
-        .and(path("/search"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "results": [
-                { "slug": "ev-population-history", "title": "Decoy 1" },
-                { "slug": "electric-vehicle-population-data", "title": "Real" },
-                { "slug": "ev-population-by-county",   "title": "Decoy 2" }
-            ],
-            "sort": "relevance"
-        })))
+        .and(path("/api/dataset/nonexistent"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"total": 0, "results": []})))
         .mount(&server)
         .await;
 
-    let client = client_for(&server);
-    let hit = client
-        .dataset_by_slug("electric-vehicle-population-data")
-        .await
-        .unwrap()
-        .expect("exact match should be found");
-    assert_eq!(
-        hit.slug.as_deref(),
-        Some("electric-vehicle-population-data")
+    assert!(
+        client_for(&server)
+            .dataset_by_slug("nonexistent")
+            .await
+            .expect("lookup succeeds")
+            .is_none()
     );
+}
+
+/// The slug goes into a URL *path segment*, so a hostile value must not be able
+/// to steer the request elsewhere. `Url` normalisation resolves `..` after
+/// percent-decoding, so an unencoded slug could reach a different endpoint
+/// entirely.
+///
+/// Asserted by mounting the *only* legitimate path and requiring the request to
+/// land on it: any escape produces a different path, no mock matches, and the
+/// call fails.
+#[tokio::test]
+async fn dataset_by_slug_percent_encodes_hostile_slugs_into_one_path_segment() {
+    for hostile in [
+        "../search",
+        "..%2Fsearch",
+        "a/b",
+        "with space",
+        "quote\"inside",
+        "sem;colon",
+        "q?uery=1",
+        "frag#ment",
+    ] {
+        let server = MockServer::start().await;
+        // Matches any path; we assert on what was actually requested.
+        Mock::given(method("GET"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(json!({"total": 0, "results": []})),
+            )
+            .mount(&server)
+            .await;
+
+        let _ = client_for(&server).dataset_by_slug(hostile).await;
+
+        let requests = server.received_requests().await.expect("recorded requests");
+        assert_eq!(requests.len(), 1, "{hostile:?}: exactly one request");
+        let path = requests[0].url.path();
+
+        assert!(
+            path.starts_with("/api/dataset/"),
+            "{hostile:?} escaped the endpoint: requested {path}"
+        );
+        assert_eq!(
+            path.matches('/').count(),
+            3,
+            "{hostile:?} must occupy exactly one path segment, got {path}"
+        );
+        assert!(
+            requests[0].url.query().is_none(),
+            "{hostile:?} must not introduce a query string: {}",
+            requests[0].url
+        );
+    }
 }
 
 #[tokio::test]
@@ -362,4 +383,100 @@ async fn parse_error_surfaces_bad_json() {
     let client = client_for(&server);
     let err = client.organizations().await.unwrap_err();
     assert!(matches!(err, CatalogError::ParseError(_)));
+}
+
+/// The contract nothing in this suite previously pinned: **a slug that exists
+/// resolves**, regardless of whether full-text search recalls it.
+///
+/// The shipped implementation queried `q=<slug>` and scanned the page. A slug
+/// is a lossy derivation of the title — truncated at 90 characters mid-word,
+/// punctuation collapsed, `U.S.` flattened to `u-s` — so its tokens are
+/// frequently absent from the indexed text and the query returns nothing.
+/// Measured against live data.gov: 15% of datasets on a uniform sample, 27%
+/// past cursor depth 400.
+///
+/// This test makes `/search` return zero hits, which is exactly what the live
+/// API does for those slugs. Any implementation that resolves slugs by
+/// full-text search fails here; only one that calls the documented exact-lookup
+/// endpoint passes.
+#[tokio::test]
+async fn dataset_by_slug_resolves_a_slug_that_full_text_search_cannot_recall() {
+    let slug = "advancing-the-automation-of-plant-nucleic-acid-extraction-for-rapid-diagnosis-of-plant-dis";
+    let server = MockServer::start().await;
+
+    // Zero recall, as the live API genuinely returns for this slug: the final
+    // token `dis` is a fragment of "diseases" and appears nowhere in the text.
+    Mock::given(method("GET"))
+        .and(path("/search"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "results": [], "sort": "relevance"
+        })))
+        .mount(&server)
+        .await;
+
+    // The documented exact-lookup endpoint, captured verbatim from live.
+    Mock::given(method("GET"))
+        .and(path(format!("/api/dataset/{slug}")))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(
+            fixture("dataset_by_slug_truncated.json"),
+            "application/json",
+        ))
+        .mount(&server)
+        .await;
+
+    let hit = client_for(&server)
+        .dataset_by_slug(slug)
+        .await
+        .expect("slug lookup succeeds")
+        .expect("the dataset exists, so it must resolve");
+
+    assert_eq!(
+        hit.slug.as_deref(),
+        Some(slug),
+        "must return the exact slug"
+    );
+    assert!(hit.title.is_some(), "the resolved hit must carry its title");
+}
+
+/// A slug that genuinely does not exist must be `Ok(None)`, not an error and
+/// not a false positive. The endpoint answers 404 with `{"total":0,...}`, and
+/// it does no prefix or substring matching: `nasa-pat` and `nasa-patents-extra`
+/// both 404 against live.
+#[tokio::test]
+async fn dataset_by_slug_returns_none_for_a_slug_that_does_not_exist() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api/dataset/no-such-dataset-anywhere-12345"))
+        .respond_with(ResponseTemplate::new(404).set_body_json(json!({
+            "detail": {}, "message": "Not Found"
+        })))
+        .mount(&server)
+        .await;
+
+    let outcome = client_for(&server)
+        .dataset_by_slug("no-such-dataset-anywhere-12345")
+        .await;
+
+    assert!(
+        matches!(outcome, Ok(None)),
+        "a missing dataset is Ok(None), not an error: got {outcome:?}"
+    );
+}
+
+/// A 404 means "no such dataset"; every other failure is an error. Reporting a
+/// data.gov outage as a missing dataset is how `cd` came to print
+/// "dataset not found" when the network was simply down.
+#[tokio::test]
+async fn dataset_by_slug_distinguishes_a_server_error_from_a_missing_dataset() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api/dataset/some-slug"))
+        .respond_with(ResponseTemplate::new(503).set_body_string("upstream unavailable"))
+        .mount(&server)
+        .await;
+
+    match client_for(&server).dataset_by_slug("some-slug").await {
+        Err(CatalogError::ApiError { status, .. }) => assert_eq!(status, 503),
+        other => panic!("503 must surface as an ApiError, not as a missing dataset: {other:?}"),
+    }
 }

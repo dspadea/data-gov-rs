@@ -1,0 +1,85 @@
+{
+  "aggregations": null,
+  "results": [
+    {
+      "_score": 0.0,
+      "_sort": null,
+      "dcat": {
+        "@type": "dcat:Dataset",
+        "accessLevel": "public",
+        "bureauCode": [
+          "026:00"
+        ],
+        "contactPoint": {
+          "@type": "vcard:Contact",
+          "fn": "Open Science Data Repository Help Desk",
+          "hasEmail": "mailto:arc-dl-osdr-help@mail.nasa.gov"
+        },
+        "description": "Human space exploration missions will continue the development of sustainable plant cultivation in what are obviously novel habitat settings. Effective pathology mitigation strategies are needed to cope with plant disease outbreaks in any space-based plant growth system. However, few technologies currently exist for space-based diagnosis of plant pathogens. Therefore, we developed a method of extracting plant nucleic acid that will facilitate the rapid diagnosis of plant diseases for future spaceflight applications. The microHomogenizer from Claremont BioSolutions, originally designed for bacterial and animal tissue samples, was evaluated for plant\u2013microbial nucleic acid extractions. The microHomogenizer is an appealing device in that it provides automation and containment capabilities that would be required in spaceflight applications. Two different plant pathosystems were used to assess the versatility of the extraction process. Tomato and lettuce plants were respectively inoculated with a fungal plant pathogen, an oomycete pathogen, and a plant viral pathogen. The microHomogenizer, along with the developed protocols, proved to be an effective mechanism for producing DNA from two pathosystems, in that PCR and sequencing of the resulting samples demonstrated clear DNA-based diagnoses. Thus, this investigation advances the efforts to automate nucleic acid extraction for future plant disease diagnosis in space.",
+        "distribution": [
+          {
+            "@type": "dcat:Distribution",
+            "downloadURL": "http://purl.bioontology.org/ontology/NCBITAXON/13613",
+            "format": "BIN",
+            "mediaType": "application/octet-stream"
+          },
+          {
+            "@type": "dcat:Distribution",
+            "downloadURL": "https://osdr.nasa.gov/bio/repo/data/studies/OSD-594",
+            "format": "BIN",
+            "mediaType": "application/octet-stream"
+          }
+        ],
+        "identifier": "10.26030/qc04-a934",
+        "keyword": [
+          "__"
+        ],
+        "license": "https://www.usa.gov/government-works",
+        "modified": "2026-06-22",
+        "programCode": [
+          "026:000"
+        ],
+        "publisher": {
+          "@type": "org:Organization",
+          "name": "Open Science Data Repository"
+        },
+        "theme": [
+          "Biological and Physical Sciences"
+        ],
+        "title": "Advancing the automation of plant nucleic acid extraction for rapid diagnosis of plant diseases in space"
+      },
+      "description": "Human space exploration missions will continue the development of sustainable plant cultivation in what are obviously novel habitat settings. Effective pathology mitigation strategies are needed to cope with plant disease outbreaks in any space-based plant growth system. However, few technologies currently exist for space-based diagnosis of plant pathogens. Therefore, we developed a method of extracting plant nucleic acid that will facilitate the rapid diagnosis of plant diseases for future spaceflight applications. The microHomogenizer from Claremont BioSolutions, originally designed for bacterial and animal tissue samples, was evaluated for plant\u2013microbial nucleic acid extractions. The microHomogenizer is an appealing device in that it provides automation and containment capabilities that would be required in spaceflight applications. Two different plant pathosystems were used to assess the versatility of the extraction process. Tomato and lettuce plants were respectively inoculated with a fungal plant pathogen, an oomycete pathogen, and a plant viral pathogen. The microHomogenizer, along with the developed protocols, proved to be an effective mechanism for producing DNA from two pathosystems, in that PCR and sequencing of the resulting samples demonstrated clear DNA-based diagnoses. Thus, this investigation advances the efforts to automate nucleic acid extraction for future plant disease diagnosis in space.",
+      "distribution_titles": [],
+      "harvest_record": "https://catalog.data.gov/harvest_record/3d6075e6-5980-40af-aa74-0a424b0b0599",
+      "harvest_record_raw": "https://catalog.data.gov/harvest_record/3d6075e6-5980-40af-aa74-0a424b0b0599/raw",
+      "has_spatial": false,
+      "identifier": "10.26030/qc04-a934",
+      "keyword": [
+        "__"
+      ],
+      "last_harvested_date": "2026-06-23T21:47:38.565781",
+      "organization": {
+        "aliases": [
+          ""
+        ],
+        "description": null,
+        "id": "f4ca4614-8901-409b-8553-2e994ad10023",
+        "logo": "https://raw.githubusercontent.com/GSA/logo/refs/heads/master/nasa.png",
+        "name": "National Aeronautics and Space Administration",
+        "organization_type": "Federal Government",
+        "slug": "nasa"
+      },
+      "popularity": 15,
+      "publisher": "Open Science Data Repository",
+      "slug": "advancing-the-automation-of-plant-nucleic-acid-extraction-for-rapid-diagnosis-of-plant-dis",
+      "spatial_centroid": null,
+      "spatial_shape": null,
+      "theme": [
+        "Biological and Physical Sciences"
+      ],
+      "title": "Advancing the automation of plant nucleic acid extraction for rapid diagnosis of plant diseases in space"
+    }
+  ],
+  "search_after": null,
+  "total": 1
+}
