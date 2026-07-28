@@ -635,12 +635,42 @@ the field sits in plain sight next to the thing a consumer is looking for.
 
 So, for anything `pub`:
 
-- **`#[non_exhaustive]` on every config struct and every error enum.** It stops
-  a struct literal from bypassing a constructor, and it makes adding an error
-  variant a non-breaking change. Adding the attribute later is itself breaking,
-  so it belongs in the release that is already breaking.
-- **Validate at the point of use, not only in the builder.** A builder is a
-  convenience, never the enforcement. Clamp where the value is consumed.
+- **`#[non_exhaustive]` on every config struct and every error enum**, and know
+  exactly what it buys. Measured, not assumed:
+
+  | Consumer writes | Result |
+  |---|---|
+  | `Cfg::new().with_a(..)`, or reading `c.a` | unaffected |
+  | `Cfg { a: 0, b: .. }` | `E0639`, blocked |
+  | `Cfg { a: 0, ..Cfg::default() }` | `E0639`, blocked - functional update dies too |
+  | `let mut c = Cfg::default(); c.a = 0;` | **still compiles** |
+
+  So it closes the literal, not the hole. It is necessary and not sufficient,
+  and on its own it would not have prevented any of the four defects above. Its
+  real wins are that adding an error variant stops being breaking, and that a
+  consumer is pushed onto the constructors. Because functional-update syntax
+  also stops working, every field needs a builder before the attribute lands,
+  or a configuration becomes unreachable.
+
+  Adding the attribute later is itself breaking, so it belongs in a release that
+  is already breaking.
+- **Validate at the point of use, not only in the builder** - this is the part
+  that actually closes the hole. A builder is a convenience, never the
+  enforcement.
+
+  Prefer failing over clamping where a constructor can return `Result`. A clamp
+  silently overrides what the caller asked for, and silence was the damage in
+  every one of the four: `max_concurrent_downloads: 0` hung with no error,
+  `download_timeout_secs: 0` failed every download with no explanation, and a
+  stale user agent went out on the wire unremarked. An error naming the field
+  costs a correct consumer nothing, because they already handle the `Result`.
+
+  Note that a builder-only defence would not have caught #107 at all: that value
+  is reachable *through* the builder, which applies no clamp.
+- **One value, one source of truth.** #106 existed because `user_agent` lived on
+  both `DataGovConfig` and its nested `catalog_config`, and only the builder kept
+  them in step. A field that cannot desync is better than two that are kept
+  synchronised by a code path a consumer can avoid.
 - **Where a value cannot take effect after construction, take it in the
   constructor rather than exposing a field.** A `reqwest::Client` bakes its
   timeouts in when it is built, so a settable `timeout` field silently stops
