@@ -127,8 +127,6 @@ pub struct SearchParams {
     pub spatial_within: Option<bool>,
     /// Opaque cursor from a previous [`SearchResponse::after`](models::SearchResponse::after).
     pub after: Option<String>,
-    /// Exact-match slug filter (single dataset lookup).
-    pub slug: Option<String>,
 }
 
 impl SearchParams {
@@ -207,12 +205,6 @@ impl SearchParams {
         self
     }
 
-    /// Filter to an exact slug match (single-dataset lookup).
-    pub fn slug(mut self, slug: impl Into<String>) -> Self {
-        self.slug = Some(slug.into());
-        self
-    }
-
     /// Serialize to the repeated `(key, value)` form reqwest expects.
     fn to_query(&self) -> Vec<(&'static str, String)> {
         let mut q: Vec<(&'static str, String)> = Vec::new();
@@ -245,9 +237,6 @@ impl SearchParams {
         }
         if let Some(v) = &self.after {
             q.push(("after", v.clone()));
-        }
-        if let Some(v) = &self.slug {
-            q.push(("slug", v.clone()));
         }
         q
     }
