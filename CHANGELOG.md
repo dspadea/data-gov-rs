@@ -76,6 +76,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Breaking - data-gov
 
+- **`DataGovConfig::base_download_dir` is an `Option<PathBuf>`** (#86, #53). It
+  was an eager `PathBuf`, so "the user asked for the working directory" and
+  "nobody said anything" were the same state - which is exactly why
+  `--download-dir` was accepted and then discarded. Wrap a struct-literal value
+  in `Some(..)`; `with_download_dir` is unchanged.
 - **`DataGovConfig::user_agent` is a method, not a field** (#106). The agent
   lived on both `DataGovConfig` and its nested `catalog_config`, kept in step
   only by `with_user_agent` - so a config built any other way sent metadata
@@ -246,6 +251,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   under the whole REPL and is tracked separately.
 
 ### Security
+- **Credentials in a `base_url` are masked wherever it is displayed** (#86). A
+  URL carrying userinfo would otherwise reach an error message, a log line, or
+  `config show`.
 - **A distribution title could write anywhere on the filesystem** (#45). The DCAT
   `title` was joined onto the output directory verbatim, so `../../outside/x`
   escaped the tree and an absolute `/etc/cron.d/evil` discarded the output
