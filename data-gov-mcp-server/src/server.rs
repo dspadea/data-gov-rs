@@ -8,9 +8,9 @@ use std::env;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::{
-    self, AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader, BufWriter,
+    self, AsyncBufRead, AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader, BufWriter,
 };
-use tokio::sync::{Mutex, mpsc, oneshot};
+use tokio::sync::{Mutex, OwnedSemaphorePermit, Semaphore, mpsc, oneshot};
 
 use crate::tools::find_tool_spec_by_method;
 use crate::types::{Request, RequestIdKind, Response, ServerError, classify_request_id};
@@ -29,6 +29,47 @@ pub(crate) const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(900);
 /// Responses buffered between the dispatch tasks and the writer.
 const RESPONSE_QUEUE_DEPTH: usize = 64;
 
+/// How many requests may be in dispatch at once.
+///
+/// Reading a line is cheap and serving it is not, so without a bound the read
+/// loop queues work faster than the server can finish it. The response channel
+/// throttles the *writing*, but only once the work is already done, which is
+/// why it does not limit the work: pipelining `tools/list` into a server whose
+/// stdout nobody drained reached 27.5 GB of resident memory in 30 seconds and
+/// was still climbing.
+///
+/// The number is deliberately generous. A small bound would reintroduce the
+/// head-of-line blocking #65 exists to remove - one slow download would stop
+/// the requests behind it - and that is only a risk when the bound is near the
+/// number of requests a client really has outstanding. Real MCP clients keep a
+/// handful in flight, so 256 is two orders of magnitude clear of normal use and
+/// is only ever reached by a client that is flooding.
+///
+/// What it trades: at saturation the loop stops reading, so a
+/// `notifications/cancelled` queued behind the request that saturated it waits
+/// too. That is inherent to backpressure on a single ordered stream - the
+/// cancellation cannot be read without reading the line in front of it - and
+/// [`DEFAULT_REQUEST_TIMEOUT`] is the backstop that always frees a slot.
+const MAX_CONCURRENT_DISPATCHES: usize = 256;
+
+/// The largest message the server will accept, in bytes, newline included.
+///
+/// A message past this is refused rather than buffered, because buffering one
+/// the server has already decided not to serve is the whole cost: before this
+/// cap a 1 GiB line peaked at 1046 MiB of resident memory on its way to a
+/// `-32700`, and a 256 MiB line that was a *valid* request peaked at 4.09x its
+/// own size, because the raw buffer, the parsed `Value`, the cloned id, and the
+/// serialised response all exist at once.
+///
+/// Sized against the largest legitimate message, which is a `tools/call` for
+/// `data_gov.downloadResources`: a dataset slug at the catalog's 90-character
+/// truncation cap, an `outputDir` bounded by the platform's path limit, a short
+/// `formats` list, and one integer of `distributionIndexes` per distribution.
+/// Even 10,000 distributions with every index spelled out is about 60 KB of
+/// JSON, so 1 MiB leaves more than an order of magnitude of headroom over a
+/// payload far larger than data.gov serves.
+const MAX_LINE_BYTES: usize = 1024 * 1024;
+
 /// The requests currently being served, keyed by request id.
 type InFlight = Arc<Mutex<InFlightRequests>>;
 
@@ -43,6 +84,17 @@ struct Registration {
     token: u64,
     /// Resolved to ask the dispatch task to stop.
     cancel: oneshot::Sender<()>,
+}
+
+/// What one read of the transport produced.
+enum ReadLine {
+    /// A whole message, in the caller's buffer.
+    Line,
+    /// A message past [`MAX_LINE_BYTES`]. Nothing was kept, and the rest of the
+    /// line was consumed so it cannot be read as the next message.
+    TooLong,
+    /// The transport reached end of input.
+    Eof,
 }
 
 /// The cancellation registry for one session.
@@ -165,6 +217,7 @@ impl DataGovMcpServer {
         let writer_task = tokio::spawn(write_responses(writer, queue));
 
         let in_flight: InFlight = Arc::default();
+        let slots = Arc::new(Semaphore::new(MAX_CONCURRENT_DISPATCHES));
         let mut reader = BufReader::new(reader);
         let mut raw = Vec::new();
 
@@ -175,8 +228,22 @@ impl DataGovMcpServer {
             // session for every well-formed request behind it. Reading raw
             // keeps the failure local to the line it arrived on. Only EOF and
             // a transport failure end the loop.
-            if reader.read_until(b'\n', &mut raw).await? == 0 {
-                break;
+            match read_capped_line(&mut reader, &mut raw).await? {
+                ReadLine::Eof => break,
+                ReadLine::Line => {}
+                ReadLine::TooLong => {
+                    tracing::warn!("a line exceeded {MAX_LINE_BYTES} bytes and was discarded");
+                    // -32600 rather than -32700: the server did not fail to
+                    // parse this message, it declined to receive it, and what
+                    // the client has to do about it is send a smaller one. The
+                    // id is null because nothing was kept to recover one from.
+                    let error = ServerError::InvalidRequest(format!(
+                        "a message may not exceed {MAX_LINE_BYTES} bytes; the line was \
+                         discarded unread"
+                    ));
+                    send_response(&responses, Response::error(None, error)).await;
+                    continue;
+                }
             }
 
             // Strictly, not lossily. Replacing an undecodable byte with U+FFFD
@@ -197,7 +264,7 @@ impl DataGovMcpServer {
 
             let trimmed = line.trim();
             if !trimmed.is_empty() {
-                self.accept(trimmed, &responses, &in_flight).await;
+                self.accept(trimmed, &responses, &in_flight, &slots).await;
             }
 
             // A closed output means the client is gone. Reading on would keep
@@ -226,12 +293,14 @@ impl DataGovMcpServer {
     ///
     /// Requests are spawned; only the cheap envelope decisions and cancellation
     /// happen on the reading task, so nothing that can take time is between one
-    /// line and the next.
+    /// line and the next. The one thing that deliberately does wait here is a
+    /// free dispatch slot - see [`MAX_CONCURRENT_DISPATCHES`].
     async fn accept(
         self: &Arc<Self>,
         line: &str,
         responses: &mpsc::Sender<Response>,
         in_flight: &InFlight,
+        slots: &Arc<Semaphore>,
     ) {
         // Deserialize to a `Value` before a `Request`. It is what makes an
         // absent `id` distinguishable from an explicit `"id": null`, and what
@@ -250,7 +319,7 @@ impl DataGovMcpServer {
 
         let id = match classify_request_id(&message) {
             RequestIdKind::Absent => {
-                self.accept_notification(message, responses, in_flight)
+                self.accept_notification(message, responses, in_flight, slots)
                     .await;
                 return;
             }
@@ -291,6 +360,12 @@ impl DataGovMcpServer {
             }
         };
 
+        // Backpressure, and the reason it sits on the reading task rather than
+        // inside the spawned one: waiting here is what stops the next line
+        // being read. Taken before the id is claimed, so the registry only
+        // ever holds work that has somewhere to run.
+        let slot = acquire_slot(slots).await;
+
         // Registered before the task is spawned, so a cancellation arriving on
         // the very next line always finds it. The task gives the entry up when
         // it ends, whether it finished or was cancelled.
@@ -319,6 +394,10 @@ impl DataGovMcpServer {
         #[cfg(test)]
         let gated_method = request.method.clone();
         tokio::spawn(async move {
+            // Held until this task ends, response written and all, so the slot
+            // covers the whole cost of the request rather than only its
+            // dispatch.
+            let _slot = slot;
             tokio::select! {
                 biased;
                 // Dropping the handler future is what "stop processing the
@@ -378,6 +457,7 @@ impl DataGovMcpServer {
         message: Value,
         responses: &mpsc::Sender<Response>,
         in_flight: &InFlight,
+        slots: &Arc<Semaphore>,
     ) {
         let request: Request = match serde_json::from_value(message) {
             Ok(request) => request,
@@ -419,8 +499,14 @@ impl DataGovMcpServer {
             return;
         }
 
+        // A notification is dispatched work like any other, so it takes a slot
+        // too. It is taken after the cancellation branch above, which is what
+        // keeps a cancellation off the bound entirely.
+        let slot = acquire_slot(slots).await;
+
         let server = Arc::clone(self);
         tokio::spawn(async move {
+            let _slot = slot;
             if let Err(err) = server.dispatch(&method, params).await {
                 tracing::debug!(method = %method, "notification not handled: {err}");
             }
@@ -457,6 +543,72 @@ impl DataGovMcpServer {
         match self.dispatch(&request.method, request.params).await {
             Ok(result) => Response::success(id, result),
             Err(err) => Response::error(id, err),
+        }
+    }
+}
+
+/// Wait for a free dispatch slot.
+///
+/// # Panics
+///
+/// Never in practice. `acquire_owned` fails only on a closed semaphore, and
+/// this one is created by [`DataGovMcpServer::serve`], cloned into the tasks it
+/// spawns, and closed by nothing.
+async fn acquire_slot(slots: &Arc<Semaphore>) -> OwnedSemaphorePermit {
+    match Arc::clone(slots).acquire_owned().await {
+        Ok(slot) => slot,
+        Err(_closed) => unreachable!("the dispatch limiter is never closed"),
+    }
+}
+
+/// Read one newline-framed message, refusing anything past [`MAX_LINE_BYTES`].
+///
+/// An over-long line is discarded as it arrives rather than buffered and then
+/// rejected, so the memory it costs is bounded by the read buffer and not by
+/// what the client chose to send. The rest of the line is consumed either way,
+/// so its tail is never read as the next message.
+///
+/// The cap counts the newline, so a message of exactly [`MAX_LINE_BYTES`]
+/// bytes including its terminator is accepted and one byte more is not.
+async fn read_capped_line<R>(reader: &mut R, raw: &mut Vec<u8>) -> io::Result<ReadLine>
+where
+    R: AsyncBufRead + Unpin,
+{
+    let mut discarding = false;
+    loop {
+        let available = reader.fill_buf().await?;
+        if available.is_empty() {
+            // End of input. A final line with no newline still counts as one.
+            return Ok(if discarding {
+                ReadLine::TooLong
+            } else if raw.is_empty() {
+                ReadLine::Eof
+            } else {
+                ReadLine::Line
+            });
+        }
+
+        let newline = available.iter().position(|byte| *byte == b'\n');
+        let taken = newline.map_or(available.len(), |at| at + 1);
+        if !discarding {
+            if raw.len() + taken > MAX_LINE_BYTES {
+                // Give the bytes back at the moment the line is refused. What
+                // has been read is already paid for; what follows must not be.
+                raw.clear();
+                raw.shrink_to_fit();
+                discarding = true;
+            } else {
+                raw.extend_from_slice(&available[..taken]);
+            }
+        }
+        reader.consume(taken);
+
+        if newline.is_some() {
+            return Ok(if discarding {
+                ReadLine::TooLong
+            } else {
+                ReadLine::Line
+            });
         }
     }
 }
