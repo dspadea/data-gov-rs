@@ -60,6 +60,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   broken request. This crate serves any CKAN portal, so there is no correct live
   default to pick; set `base_path` to your own.
 
+### Breaking - data-gov
+
+- **`DataGovConfig` has a new `allow_private_network_downloads` field** (#51).
+  A struct literal must add it, or switch to `..Default::default()`. It defaults
+  to `false`; set it with `with_private_network_downloads(true)` if you point the
+  client at a mirror on your own network. It deliberately does **not** open
+  link-local: no mirror is served from the range that carries cloud instance
+  metadata.
+- **`get_distribution_filename` returns one sanitized path component** (#45). A
+  title of `../../etc/passwd` now yields `____etc_passwd`. If you relied on the
+  raw title reaching the filename, names will differ.
+- **`sanitize_path_component(".")` returns `""`, not `"."`** (#45). A lone dot
+  names the current directory rather than a file, so it can no longer be
+  returned. Callers already handle an empty result via the `data.<ext>` fallback.
+
 ### Breaking - MCP server
 
 - **`structuredContent` is now always a JSON object** (#60). Two tools —
@@ -95,6 +110,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   goes to stderr via `tracing` at startup.
 
 ### Changed
+- **Downloads refuse a destination on your own network** (#51). A distribution's
+  `downloadURL` comes from harvested third-party metadata, so it is untrusted
+  input. Loopback, RFC1918, carrier-grade NAT, IPv6 unique-local, and link-local
+  destinations are refused, as is any scheme but `http` and `https`. Checked
+  before the request, on every redirect hop, and again at name resolution. Point
+  the client at a mirror on your own network with
+  `with_private_network_downloads(true)`; that opt-in does not open link-local.
+- **`download_timeout_secs` is a stall timeout, not a deadline on the transfer**
+  (#50). `reqwest`'s `timeout` runs from connect until the body finishes, so the
+  300-second default cut off any transfer longer than five minutes no matter how
+  healthy the connection was - a 3 GB file over a 20 Mbit link failed every time,
+  identically, so it could never be fetched at all. It now bounds the connect
+  phase and each read of the body. If you raised the value to fit a large
+  download, you can lower it again.
+- **A download writes to a temporary file and renames it into place** (#49). The
+  destination now only ever holds a complete file.
 - **The CKAN client actually sends the credentials you configure** (#56). The
   request builder never attached the configured API key, basic auth, bearer
   token, or user agent, so calls a caller believed were authenticated went out
@@ -150,6 +181,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   under the whole REPL and is tracked separately.
 
 ### Security
+- **A distribution title could write anywhere on the filesystem** (#45). The DCAT
+  `title` was joined onto the output directory verbatim, so `../../outside/x`
+  escaped the tree and an absolute `/etc/cron.d/evil` discarded the output
+  directory entirely - `Path::join` replaces the whole path on an absolute
+  component. Titles come from harvested third-party agency metadata, not from
+  anything the operator controls. Confirmed end to end against a mock server
+  before the fix. `format` was a second injection point and is sanitized too, and
+  the transfer verifies the resolved path is still inside the chosen directory as
+  a backstop.
+- **A harvested URL could reach cloud instance metadata** (#51). The download URL
+  went straight to `reqwest` with no scheme allowlist, no destination check, and
+  reqwest's default redirect policy. A compromised harvest source could point at
+  `169.254.169.254`, and the fetched credentials landed on disk - with the path
+  handed back to the model in the MCP case. Redirects are now followed manually
+  so every hop is checked by the same async validation that resolves hostnames;
+  the synchronous redirect policy could not resolve, and a configured proxy meant
+  the resolver never saw the destination either. **Residual risk, stated plainly:
+  a name we resolve and a proxy resolves can differ, so this closes the
+  demonstrated escape but does not make a hostile proxy safe.**
 - **`openssl` is now avoidable rather than unconditional** (#47). It was
   reachable only because `reqwest` pulled its default TLS backend, which is why
   the seven GHSA advisories below applied to this workspace at all. Selecting
@@ -168,12 +218,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `Error::downcast_mut()`.
 
 ### Added
+- `util::join_inside` in `data-gov`, which joins a component onto a directory and
+  refuses a result that leaves it.
+- `DataGovConfig::with_private_network_downloads`.
 - `SpatialFilter`, `Configuration::with_timeouts`, `DEFAULT_CONNECT_TIMEOUT`, and
   `DEFAULT_TIMEOUT` in `data-gov-catalog`, all re-exported from the crate root.
 - `Configuration::with_timeouts` in `data-gov-ckan`, the supported way to build a
   client with specific timeouts.
 
 ### Fixed
+- **An interrupted download no longer destroys the file it was replacing** (#49).
+  `File::create` is create-plus-truncate, so an existing complete file was zeroed
+  the moment the request succeeded, and every error path left a partial file
+  under the final name with nothing to distinguish it from a whole one. A
+  40 MB truncated `report.csv` looked like an ordinary CSV to every downstream
+  tool.
+- **The last chunk of a download is no longer lost.** The file was never flushed,
+  and dropping a `tokio::fs::File` does not flush it - the transfer was still
+  reported complete.
+- **A body shorter than its declared `Content-Length` is a failure**, not a
+  success.
+- **`max_concurrent_downloads: 0` no longer hangs forever** (#73). The builder
+  clamped it, but the field is public on a struct that was not
+  `#[non_exhaustive]`, so a struct literal built a zero-permit semaphore whose
+  `acquire()` never resolved - no error, no timeout, no log. It presented as
+  "only multi-file datasets hang", because the single-distribution path skips the
+  semaphore. Clamped where it is used.
 - **A dropped connection reading an error body is a transport failure** (#72).
   `data-gov-ckan` read a non-2xx body with `unwrap_or_else`, so a connection that
   dropped mid-body - or the client's own timeout firing - was discarded and the
