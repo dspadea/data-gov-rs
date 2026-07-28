@@ -3,7 +3,9 @@
 //! These tests never hit the network. Fixtures live in `tests/fixtures/` and
 //! are trimmed captures of real responses.
 
-use data_gov_catalog::{CatalogClient, CatalogError, Configuration, SearchParams, SpatialFilter};
+use data_gov_catalog::{
+    CatalogClient, CatalogError, Configuration, SearchParams, SortOrder, SpatialFilter,
+};
 use serde_json::json;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -192,6 +194,103 @@ async fn search_with_spatial_within_sends_true_and_false() {
             .search(SearchParams::new().spatial_within(within))
             .await
             .unwrap_or_else(|e| panic!("spatial_within={within} search succeeds: {e}"));
+    }
+}
+
+/// `SearchParams::sort` was a bare `String`, so a typo like
+/// `sort=BOGUS_NOT_A_SORT` compiled fine and the server silently substituted
+/// `relevance` (confirmed live -- see `SortOrder`'s doc comment for the
+/// probe). `SortOrder` makes only the four values the Catalog API's own
+/// OpenAPI schema declares (`https://catalog.data.gov/openapi.json`,
+/// `/search`'s `sort` parameter `enum`) representable at all.
+#[tokio::test]
+async fn search_with_sort_sends_the_wire_value_for_each_variant() {
+    for (variant, wire_value) in [
+        (SortOrder::Relevance, "relevance"),
+        (SortOrder::Popularity, "popularity"),
+        (SortOrder::Distance, "distance"),
+        (SortOrder::LastHarvestedDate, "last_harvested_date"),
+    ] {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/search"))
+            .and(query_param("sort", wire_value))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_raw(fixture("search_filtered.json"), "application/json"),
+            )
+            .mount(&server)
+            .await;
+
+        client_for(&server)
+            .search(SearchParams::new().sort(variant))
+            .await
+            .unwrap_or_else(|e| panic!("{variant:?} search succeeds: {e}"));
+    }
+}
+
+/// #111: `SearchParams::per_page` stored whatever it was given and forwarded
+/// it into the URL verbatim; the CLI validates its own boundary (#54) but a
+/// direct library caller had no local check and would get an opaque `400`
+/// back from the Catalog API instead. The valid range is declared in the
+/// API's own OpenAPI schema (`https://catalog.data.gov/openapi.json`,
+/// `/search`'s `per_page` parameter: `minimum: 1, maximum: 1000`) and
+/// confirmed live: `per_page=0`, `per_page=1001`, and `per_page=-5` each
+/// return `400 {"error":"Search failed","message":"per_page must be between
+/// 1 and 1000"}`.
+///
+/// A responder is mounted (rather than leaving the server bare) so that if
+/// validation regresses, the failure is the assertion below naming the
+/// mismatch, not an ambiguous connection error.
+#[tokio::test]
+async fn search_rejects_per_page_outside_the_valid_range_before_the_network() {
+    for invalid in [i32::MIN, -5, 0, 1001, i32::MAX] {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_raw(fixture("search.json"), "application/json"),
+            )
+            .mount(&server)
+            .await;
+
+        let outcome = client_for(&server)
+            .search(SearchParams::new().q("climate").per_page(invalid))
+            .await;
+
+        assert!(
+            matches!(outcome, Err(CatalogError::InvalidPerPage(got)) if got == invalid),
+            "per_page={invalid} must fail with InvalidPerPage, got {outcome:?}"
+        );
+        assert!(
+            server
+                .received_requests()
+                .await
+                .expect("recorded requests")
+                .is_empty(),
+            "per_page={invalid} must not reach the network"
+        );
+    }
+}
+
+/// Guards the boundary itself: an off-by-one range check (`1..1000` instead
+/// of `1..=1000`) would reject the very values the API documents as valid.
+#[tokio::test]
+async fn search_accepts_the_inclusive_per_page_boundary_values() {
+    for boundary in [1, 1000] {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/search"))
+            .and(query_param("per_page", boundary.to_string()))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_raw(fixture("search.json"), "application/json"),
+            )
+            .mount(&server)
+            .await;
+
+        client_for(&server)
+            .search(SearchParams::new().q("climate").per_page(boundary))
+            .await
+            .unwrap_or_else(|e| panic!("per_page={boundary} search succeeds: {e}"));
     }
 }
 

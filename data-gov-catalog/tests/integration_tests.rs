@@ -8,7 +8,7 @@
 //! cargo test -p data-gov-catalog --test integration_tests -- --ignored
 //! ```
 
-use data_gov_catalog::{CatalogClient, Configuration, SearchParams, SpatialFilter};
+use data_gov_catalog::{CatalogClient, Configuration, SearchParams, SortOrder, SpatialFilter};
 use std::sync::Arc;
 
 fn live_client() -> CatalogClient {
@@ -178,6 +178,57 @@ async fn live_org_type_filters_to_the_requested_type() {
             hit.slug
         );
     }
+}
+
+/// `SearchParams::sort` was a bare `String`; the client-side probe that
+/// motivated `SortOrder` (see its doc comment) showed a typo silently
+/// falling back to relevance ranking with HTTP 200. This is the live half:
+/// two orders that differ from the relevance baseline must also differ from
+/// each other, and -- to rule out ranking noise rather than a real,
+/// order-dependent sort -- each order's result set must be identical across
+/// two separate calls before the cross-order comparison means anything.
+#[tokio::test]
+#[ignore = "hits the live data.gov Catalog API"]
+async fn live_sort_orders_produce_different_stable_result_sets() {
+    let client = live_client();
+
+    async fn slugs_for(client: &CatalogClient, sort: SortOrder) -> Vec<String> {
+        let page = client
+            .search(SearchParams::new().q("climate").sort(sort).per_page(5))
+            .await
+            .unwrap_or_else(|e| panic!("sort={sort:?} search succeeds: {e}"));
+        page.results.into_iter().filter_map(|h| h.slug).collect()
+    }
+
+    let popularity_first = slugs_for(&client, SortOrder::Popularity).await;
+    let popularity_second = slugs_for(&client, SortOrder::Popularity).await;
+    assert_eq!(
+        popularity_first, popularity_second,
+        "sort=popularity returned a different order on a repeated, identical call -- \
+         this is ranking noise, not a stable sort, and invalidates the comparison below"
+    );
+    assert!(
+        !popularity_first.is_empty(),
+        "expected at least one result for sort=popularity"
+    );
+
+    let recency_first = slugs_for(&client, SortOrder::LastHarvestedDate).await;
+    let recency_second = slugs_for(&client, SortOrder::LastHarvestedDate).await;
+    assert_eq!(
+        recency_first, recency_second,
+        "sort=last_harvested_date returned a different order on a repeated, identical call -- \
+         this is ranking noise, not a stable sort, and invalidates the comparison below"
+    );
+    assert!(
+        !recency_first.is_empty(),
+        "expected at least one result for sort=last_harvested_date"
+    );
+
+    assert_ne!(
+        popularity_first, recency_first,
+        "sort=popularity and sort=last_harvested_date returned identical, stable result sets; \
+         sort may be silently ignored"
+    );
 }
 
 /// #77: `spatial_filter` was probed with an *invalid* value in the issue
