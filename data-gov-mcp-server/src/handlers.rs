@@ -517,6 +517,35 @@ mod tests {
         assert_eq!(resolved, PathBuf::from("/tmp/downloads"));
     }
 
+    /// The `..` check covers the string the caller supplied. The slug is joined
+    /// on afterwards and comes from the catalog, which is untrusted input, so
+    /// the join needs its own check rather than an assumption about what the
+    /// reduction can produce.
+    #[test]
+    fn resolve_output_dir_rejects_a_slug_that_leaves_the_chosen_directory() {
+        for slug in ["..", "../escaped", "/etc/cron.d", "sub/dir"] {
+            let outcome = resolve_output_dir(Some("/tmp/downloads"), true, slug);
+            match outcome {
+                Err(ServerError::InvalidParams(_)) => {}
+                Err(other) => panic!("expected InvalidParams for slug {slug:?}, got: {other:?}"),
+                Ok(path) => panic!(
+                    "slug {slug:?} resolved to {path:?}, which is not inside the chosen directory"
+                ),
+            }
+        }
+    }
+
+    /// A slug that reduces to nothing would silently make the chosen directory
+    /// itself the destination, which is not the directory the caller asked for.
+    #[test]
+    fn resolve_output_dir_rejects_a_slug_that_reduces_to_nothing() {
+        let outcome = resolve_output_dir(Some("/tmp/downloads"), true, "");
+        assert!(
+            matches!(outcome, Err(ServerError::InvalidParams(_))),
+            "an empty slug must be refused, got: {outcome:?}"
+        );
+    }
+
     #[test]
     fn resolve_output_dir_anchors_relative_path_to_cwd() {
         let resolved = resolve_output_dir(Some("mydir"), false, "slug")
