@@ -378,6 +378,53 @@ async fn a_notification_is_not_answered_even_when_it_fails() {
 }
 
 // ---------------------------------------------------------------------------
+// Lifecycle notifications (#110)
+// ---------------------------------------------------------------------------
+
+/// MCP 2025-11-25, Lifecycle: "After successful initialization, the client
+/// MUST send an `initialized` notification" - and the JSON-RPC method name on
+/// the wire is `notifications/initialized`, confirmed against every supported
+/// revision back to 2024-11-05. It must be a recognised method.
+///
+/// Sent as a notification, "recognised" and "unrecognised" are wire-identical:
+/// JSON-RPC answers neither, so the earlier bug - falling through to the
+/// unknown-method arm - was invisible here and only showed up in the debug
+/// log. So the method is driven twice: once carrying an id, which no
+/// conformant client ever does, solely to make recognition observable as a
+/// result instead of a log line; and once the way a real client actually
+/// sends it, as a notification, to prove that shape still answers nothing and
+/// does not derail the session.
+#[tokio::test]
+async fn notifications_initialized_is_recognised_and_answers_nothing_as_a_notification() {
+    let (_mock, server) = server_with_catalog().await;
+
+    let responses = drive(
+        &server,
+        b"{\"jsonrpc\":\"2.0\",\"id\":21,\"method\":\"notifications/initialized\"}\n",
+    )
+    .await;
+    assert_eq!(responses.len(), 1, "exactly one response: {responses:?}");
+    assert_eq!(
+        responses[0].get("result"),
+        Some(&json!({})),
+        "notifications/initialized must be a recognised method, not -32601: {}",
+        responses[0]
+    );
+
+    let responses = drive(
+        &server,
+        b"{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\"}\n{\"jsonrpc\":\"2.0\",\"id\":22,\"method\":\"ping\"}\n",
+    )
+    .await;
+    assert_eq!(
+        responses.len(),
+        1,
+        "the notification must not be answered, recognised or not: {responses:?}"
+    );
+    assert_eq!(responses[0].get("id"), Some(&json!(22)));
+}
+
+// ---------------------------------------------------------------------------
 // Omitted `arguments` (#55.4)
 // ---------------------------------------------------------------------------
 
@@ -810,11 +857,14 @@ fn no_tool_method_is_dispatchable_as_a_notification() {
         "the tools/call envelope is the same hazard by another name"
     );
 
-    // The lifecycle notifications a client really does send must still pass.
+    // Only `notifications/initialized` is a notification MCP actually
+    // defines (see #110) - `initialized` and `shutdown` are not MCP methods
+    // at all, bare or otherwise. All three are checked anyway: none may ever
+    // collide with a tool name, whether or not the server recognises it.
     for method in ["initialized", "notifications/initialized", "shutdown"] {
         assert!(
             crate::server::notification_may_dispatch(method),
-            "{method} is a lifecycle notification, not a tool"
+            "{method} must not be blocked as though it named a tool"
         );
     }
 }
