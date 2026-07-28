@@ -28,6 +28,18 @@ pub struct DataGovConfig {
     pub max_concurrent_downloads: usize,
     /// Timeout for downloads in seconds
     pub download_timeout_secs: u64,
+    /// Permit downloads whose destination is on a private network.
+    ///
+    /// Download URLs arrive in harvested third-party metadata, so by default a
+    /// download that resolves to loopback, an RFC 1918 network, a
+    /// carrier-grade-NAT range, or an IPv6 unique-local address is refused.
+    /// Set this to `true` when the client points at a mirror on the local
+    /// network.
+    ///
+    /// Link-local destinations - `169.254.0.0/16` and `fe80::/10` - stay
+    /// refused whatever this holds. That range carries the cloud
+    /// instance-metadata services, and no mirror lives there.
+    pub allow_private_network_downloads: bool,
     /// Optional status reporter for UI callbacks
     pub status_reporter: Option<Arc<dyn StatusReporter + Send + Sync>>,
 }
@@ -41,6 +53,10 @@ impl fmt::Debug for DataGovConfig {
             .field("user_agent", &self.user_agent)
             .field("max_concurrent_downloads", &self.max_concurrent_downloads)
             .field("download_timeout_secs", &self.download_timeout_secs)
+            .field(
+                "allow_private_network_downloads",
+                &self.allow_private_network_downloads,
+            )
             .field(
                 "status_reporter",
                 &self
@@ -61,6 +77,7 @@ impl Default for DataGovConfig {
             user_agent: concat!("data-gov-rs/", env!("CARGO_PKG_VERSION")).to_string(),
             max_concurrent_downloads: 3,
             download_timeout_secs: 300,
+            allow_private_network_downloads: false,
             status_reporter: None,
         }
     }
@@ -135,6 +152,25 @@ impl DataGovConfig {
     /// Set the download timeout.
     pub fn with_download_timeout(mut self, timeout_secs: u64) -> Self {
         self.download_timeout_secs = timeout_secs;
+        self
+    }
+
+    /// Permit or refuse downloads whose destination is on a private network.
+    ///
+    /// The default is to refuse. See
+    /// [`allow_private_network_downloads`](Self::allow_private_network_downloads)
+    /// for the ranges this covers and for the one range it never opens.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # use data_gov::DataGovConfig;
+    /// // Point the client at a mirror on the local network.
+    /// let config = DataGovConfig::new().with_private_network_downloads(true);
+    /// assert!(config.allow_private_network_downloads);
+    /// ```
+    pub fn with_private_network_downloads(mut self, allow: bool) -> Self {
+        self.allow_private_network_downloads = allow;
         self
     }
 
