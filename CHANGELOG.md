@@ -93,6 +93,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Infrastructure
 
+- **Working docs are plain ASCII, and CI enforces it.** `CLAUDE.md` and the
+  `justfile` used em-dashes and arrow glyphs throughout - characters nobody
+  types by hand, in the file that documents the project's own writing standard.
+  `just check-ascii` fails the gate on any non-ASCII character in those files.
+  The READMEs are deliberately exempt: their emoji headings and box-drawing
+  trees are presentation, and converting them would cost more than it returns.
+- **Documented the commit and writing conventions in `CLAUDE.md`**, which had
+  covered branches, PRs, and the tracker but never said what a commit should
+  look like: conventional subjects scoped to the crate, one concern each, never
+  against a failing gate, lockfile committed, and a body carrying the
+  measurements the diff cannot show.
+
 - **Fixtures now record where they came from** (#101). `tests/fixtures/MANIFEST.json`
   holds the endpoint, HTTP status, source host, and capture date for every
   fixture; `just fixtures` writes it and `fixture_parity_tests` enforces it, so a
