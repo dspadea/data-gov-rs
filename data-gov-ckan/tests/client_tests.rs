@@ -5,7 +5,7 @@ use std::sync::Arc;
 #[test]
 fn test_client_creation() {
     let config = Arc::new(Configuration {
-        base_path: "https://catalog.data.gov/api/3".to_string(),
+        base_path: "https://open.canada.ca/data/en/api/3".to_string(),
         user_agent: Some("test-client/1.0".to_string()),
         client: reqwest::Client::new(),
         basic_auth: None,
@@ -19,14 +19,14 @@ fn test_client_creation() {
     // Test debug formatting
     let debug_str = format!("{:?}", client);
     assert!(debug_str.contains("CkanClient"));
-    assert!(debug_str.contains("catalog.data.gov"));
+    assert!(debug_str.contains("open.canada.ca"));
 }
 
 /// Test that we can create a client with authentication
 #[test]
 fn test_authenticated_client_creation() {
     let config = Arc::new(Configuration {
-        base_path: "https://catalog.data.gov/api/3".to_string(),
+        base_path: "https://open.canada.ca/data/en/api/3".to_string(),
         user_agent: Some("test-client/1.0".to_string()),
         client: reqwest::Client::new(),
         basic_auth: None,

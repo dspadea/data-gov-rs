@@ -12,7 +12,7 @@ use std::sync::Arc;
 
 fn create_test_client() -> CkanClient {
     let config = Arc::new(Configuration {
-        base_path: "https://catalog.data.gov/api/3".to_string(),
+        base_path: "https://open.canada.ca/data/en/api/3".to_string(),
         user_agent: Some("data-gov-ckan-solr-test/1.0".to_string()),
         client: reqwest::Client::new(),
         basic_auth: None,

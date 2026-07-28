@@ -5,7 +5,10 @@ use std::sync::Arc;
 /// Configuration for the CKAN client
 #[derive(Clone)]
 pub struct Configuration {
-    /// Base URL for the CKAN API (e.g., `https://catalog.data.gov/api/3`)
+    /// Base URL for the CKAN API (e.g., `https://open.canada.ca/data/en/api/3`).
+    ///
+    /// data.gov retired its CKAN endpoint in 2026; do not point this at
+    /// `catalog.data.gov`. Set it to your target CKAN-compatible portal.
     pub base_path: String,
     /// User agent string for HTTP requests
     pub user_agent: Option<String>,
@@ -59,7 +62,13 @@ impl Configuration {
 impl Default for Configuration {
     fn default() -> Self {
         Configuration {
-            base_path: "https://catalog.data.gov/api/3".to_owned(),
+            // catalog.data.gov (the old default) is a confirmed 404: data.gov
+            // retired its CKAN endpoint in 2026. open.canada.ca is a live,
+            // government-run CKAN portal -- verified responding, not
+            // publicly editable -- so a caller who runs this crate's own
+            // quick-start example unmodified sees it actually work (#72.3).
+            // Point this at your own instance for any real use.
+            base_path: "https://open.canada.ca/data/en/api/3".to_owned(),
             user_agent: Some(concat!("data-gov-rs/", env!("CARGO_PKG_VERSION")).to_owned()),
             client: reqwest::Client::new(),
             basic_auth: None,
@@ -202,7 +211,8 @@ impl CkanClient {
     /// Create a new CKAN client instance
     ///
     /// Creates a client configured to work with a specific CKAN instance.
-    /// For data.gov, use the base URL: `https://catalog.data.gov/api/3`
+    /// data.gov no longer exposes a CKAN API; point this at your own
+    /// CKAN-compatible portal, e.g. `https://open.canada.ca/data/en/api/3`.
     ///
     /// # Arguments
     ///
@@ -216,7 +226,7 @@ impl CkanClient {
     ///
     /// // Basic client for read-only operations
     /// let config = Arc::new(Configuration {
-    ///     base_path: "https://catalog.data.gov/api/3".to_string(),
+    ///     base_path: "https://open.canada.ca/data/en/api/3".to_string(),
     ///     user_agent: Some("my-rust-app/1.0".to_string()),
     ///     client: reqwest::Client::new(),
     ///     basic_auth: None,
@@ -229,7 +239,7 @@ impl CkanClient {
     ///
     /// // Client with API key for write operations
     /// let authenticated_config = Arc::new(Configuration {
-    ///     base_path: "https://catalog.data.gov/api/3".to_string(),
+    ///     base_path: "https://open.canada.ca/data/en/api/3".to_string(),
     ///     user_agent: Some("my-rust-app/1.0".to_string()),
     ///     client: reqwest::Client::new(),
     ///     basic_auth: None,
@@ -378,7 +388,7 @@ impl CkanClient {
     /// # use std::sync::Arc;
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// # let client = CkanClient::new(Arc::new(Configuration {
-    /// #     base_path: "https://catalog.data.gov/api/3".to_string(),
+    /// #     base_path: "https://open.canada.ca/data/en/api/3".to_string(),
     /// #     user_agent: Some("test".to_string()),
     /// #     client: reqwest::Client::new(),
     /// #     basic_auth: None, oauth_access_token: None, bearer_access_token: None, api_key: None,
@@ -512,7 +522,7 @@ impl CkanClient {
     /// # use std::sync::Arc;
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// # let client = CkanClient::new(Arc::new(Configuration {
-    /// #     base_path: "https://catalog.data.gov/api/3".to_string(),
+    /// #     base_path: "https://open.canada.ca/data/en/api/3".to_string(),
     /// #     user_agent: Some("test".to_string()),
     /// #     client: reqwest::Client::new(),
     /// #     basic_auth: None, oauth_access_token: None, bearer_access_token: None, api_key: None,
@@ -660,7 +670,7 @@ impl CkanClient {
     /// # use std::sync::Arc;
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// # let client = CkanClient::new(Arc::new(Configuration {
-    /// #     base_path: "https://catalog.data.gov/api/3".to_string(),
+    /// #     base_path: "https://open.canada.ca/data/en/api/3".to_string(),
     /// #     user_agent: Some("test".to_string()),
     /// #     client: reqwest::Client::new(),
     /// #     basic_auth: None, oauth_access_token: None, bearer_access_token: None, api_key: None,
@@ -781,7 +791,7 @@ impl CkanClient {
     /// # use std::sync::Arc;
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// # let client = CkanClient::new(Arc::new(Configuration {
-    /// #     base_path: "https://catalog.data.gov/api/3".to_string(),
+    /// #     base_path: "https://open.canada.ca/data/en/api/3".to_string(),
     /// #     user_agent: Some("test".to_string()),
     /// #     client: reqwest::Client::new(),
     /// #     basic_auth: None, oauth_access_token: None, bearer_access_token: None, api_key: None,

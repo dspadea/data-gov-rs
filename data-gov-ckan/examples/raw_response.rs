@@ -5,7 +5,10 @@ use std::sync::Arc;
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = Arc::new(Configuration {
-        base_path: "https://catalog.data.gov/api/3".to_string(),
+        // data.gov retired its CKAN endpoint in 2026; open.canada.ca is a
+        // live, government-run CKAN portal used here so the example works
+        // unmodified. Point this at your own instance for real use.
+        base_path: "https://open.canada.ca/data/en/api/3".to_string(),
         user_agent: Some("debug-test/1.0".to_string()),
         client: reqwest::Client::new(),
         basic_auth: None,
