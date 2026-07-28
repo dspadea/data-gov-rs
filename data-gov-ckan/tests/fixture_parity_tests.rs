@@ -252,7 +252,10 @@ fn the_validation_error_capture_has_no_fixed_message_field() {
 
     let envelope: models::ValidationErrorResponse = parse("package_show_validation_error.json");
     assert!(!envelope.success);
-    assert_eq!(envelope.error.__type, Some(models::validation_error_response_error::Type::ValidationError));
+    assert_eq!(
+        envelope.error.__type,
+        Some(models::validation_error_response_error::Type::ValidationError)
+    );
 }
 
 // --- Fixture provenance -----------------------------------------------------
