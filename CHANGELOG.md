@@ -9,7 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.5.0] - Unreleased
 
-### Breaking
+### Breaking - data-gov-catalog
+
 - **`SearchParams::slug` is removed** (#71). The field, the `.slug()` builder,
   and its query arm all promised exact-slug filtering that the Catalog API does
   not implement: `GET /search?slug=electric-vehicle-population-data` returns
@@ -25,13 +26,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   values in the published OpenAPI document exactly.
 - **`CatalogError` has a new `InvalidPathSegment` variant** (#71). Code matching
   the enum exhaustively must add an arm.
+
+### Breaking - data-gov-ckan
+
+- **Entity ids are `Option<String>`, not `Option<Uuid>`** (#63). `make_uuid` is
+  only CKAN's *default* id generator: harvesters, migrations, an explicit
+  `package_create`, and CKAN-compatible backends such as DKAN all store
+  slug-style ids. A single record with `"id":"city-budget-2024"` failed the
+  entire containing response with `UUID parsing failed`, taking every valid
+  sibling down with it - which contradicts the whole reason this crate was kept
+  after data.gov retired its CKAN endpoint. This is not hypothetical: data.gov.ie
+  serves `"id":"central-statistics-office"` today, and the captured fixture
+  proving it is in the test suite. Affects `Package`, `Resource` (`id` and
+  `package_id`), `Group`, `Tag` (`id` and `vocabulary_id`), `User`, and
+  `Vocabulary`. Parse to `Uuid` yourself if you need one.
+- **`Resource.size` is `Option<i64>` and tolerates a string** (#62). CKAN's
+  column is a `BigInteger`, and serde rejected anything above `i32::MAX` rather
+  than saturating - so one multi-gigabyte file discarded a whole search page.
+  Captured proof: a 2,290,761,766-byte resource on open.canada.ca. Some portals
+  send `size` as text, so a numeric string and an integral float are both
+  accepted; a non-numeric string such as `"523 KiB"` (real, from
+  data.qld.gov.au) degrades to `None` rather than failing the record.
+- **`Configuration` has no `timeout` or `connect_timeout` field** (#48). Setting
+  one was a silent no-op: `client` is built once, so
+  `Configuration { timeout, ..default() }` kept the old client and the new value
+  sat unused. Use `Configuration::with_timeouts(connect, request)`, which builds
+  the client from the values given. Defaults are 10s connect, 30s request.
+- **`Configuration::default()` no longer names a live portal** (#72). It pointed
+  at data.gov's retired CKAN endpoint, a confirmed 404, while the crate's own
+  docs said data.gov no longer exposes CKAN. It is now
+  `https://ckan.example.invalid/api/3` - reserved by RFC 2606, so it never
+  resolves and fails immediately rather than 404-ing in a way that reads like a
+  broken request. This crate serves any CKAN portal, so there is no correct live
+  default to pick; set `base_path` to your own.
+
+### Breaking - MCP server
+
 - **`structuredContent` is now always a JSON object** (#60). Two tools —
   `data_gov.listOrganizations` and `data_gov.autocompleteDatasets` — returned a
   bare JSON array, which the spec does not permit: structured content "is
   returned as a JSON object". They now return `{"organizations": [...]}` and
   `{"datasets": [...]}` respectively. If you were reading the array directly,
   read the named key instead.
-
 - **Tool results no longer contain a `{"type":"json"}` content block** (#60).
   MCP's `content` is a closed union of `text`, `image`, `audio`,
   `resource_link` and `resource`; `json` is not a member, so every tool result
@@ -40,7 +76,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the pretty-printed text block stays, as the spec recommends for clients that
   do not read structured output. If you were reading
   `content[1].json`, read `structuredContent` instead.
-
 - **MCP `initialize` now returns the required `protocolVersion`** and negotiates
   it (#44). The server advertises `2024-11-05`, `2025-03-26`, `2025-06-18`, and
   `2025-11-25`: a version it supports is echoed verbatim, anything else (or an
@@ -60,6 +95,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   goes to stderr via `tracing` at startup.
 
 ### Changed
+- **The CKAN client actually sends the credentials you configure** (#56). The
+  request builder never attached the configured API key, basic auth, bearer
+  token, or user agent, so calls a caller believed were authenticated went out
+  anonymous. The server answered "not authorized" or an empty result set, and
+  nothing indicated the credential had never been sent. Priority is API key,
+  then bearer, then basic. `Debug` on `Configuration` and `ApiKey` now redacts
+  every secret.
+- **`CkanError` discriminates transport from parse from business failure** (#72).
+  A JSON decode failure was classified `RequestError`, documented as covering
+  "connection failures, timeouts, DNS resolution issues", so the error class
+  depended on which layer of the same document failed - and the rustdoc example
+  teaches consumers to branch on exactly that distinction. Decode failures are
+  now `ParseError`. Separately, `ApiError.message` carries CKAN's own parsed
+  error text rather than the raw envelope or the fixed literal
+  `"CKAN API reported failure"`.
 - **The Catalog client now has timeouts** (#48). `Configuration::default()` built
   a bare `reqwest::Client`, which applies no connect timeout and no request
   timeout, so a host that accepted the connection and never sent headers hung
@@ -120,8 +170,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - `SpatialFilter`, `Configuration::with_timeouts`, `DEFAULT_CONNECT_TIMEOUT`, and
   `DEFAULT_TIMEOUT` in `data-gov-catalog`, all re-exported from the crate root.
+- `Configuration::with_timeouts` in `data-gov-ckan`, the supported way to build a
+  client with specific timeouts.
 
 ### Fixed
+- **A dropped connection reading an error body is a transport failure** (#72).
+  `data-gov-ckan` read a non-2xx body with `unwrap_or_else`, so a connection that
+  dropped mid-body - or the client's own timeout firing - was discarded and the
+  literal `"Unknown error"` became an `ApiError`. Retry logic keyed on
+  `RequestError` never fired, because a dropped connection was indistinguishable
+  from a permanent CKAN-reported 500.
 - **The DCAT contact name is no longer silently dropped** (#61).
   `ContactPoint::fn_` keyed on the literal JSON name `fn_`, because serde does
   not strip trailing underscores and the `rename` its own comment and rustdoc
@@ -175,6 +233,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   endpoint.
 
 ### Removed
+- Four more unused dependencies from `data-gov-ckan` (#105): `async-trait`,
+  `serde_repr`, `url`, and `uuid`. Found by the new `just check-deps` gate, which
+  was added for #76 and immediately paid for itself - #76's own sweep had only
+  covered `data-gov` and `data-gov-mcp-server`.
 - Six declared-but-unused dependencies (#76): `serde`, `serde_json`,
   `tokio-util`, and `anyhow` from `data-gov`; `futures` and `data-gov-catalog`
   from `data-gov-mcp-server`, which reaches catalog types through the
