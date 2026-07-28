@@ -548,8 +548,13 @@ async fn every_tool_returns_object_shaped_structured_content() {
 
         // A tool may legitimately fail against this mock (the download tool
         // reaches for distributions the fixture has none of). What must never
-        // happen is a *successful* result in a non-conformant shape.
+        // happen is a *successful* result in a non-conformant shape. A failure
+        // arrives either as a JSON-RPC error or as a result flagged
+        // `isError: true`, and neither carries machine-readable output.
         let Ok(value) = outcome else { continue };
+        if tool_error_flag(&value) {
+            continue;
+        }
 
         for block in value["content"].as_array().expect("content array") {
             let ty = block["type"].as_str().expect("every block has a type");

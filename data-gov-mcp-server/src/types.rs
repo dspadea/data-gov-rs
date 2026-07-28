@@ -131,6 +131,11 @@ impl From<ServerError> for ResponseError {
                 message: err.to_string(),
                 data: None,
             },
+            ServerError::ToolFailed(message) => Self {
+                code: -32040,
+                message,
+                data: None,
+            },
         }
     }
 }
@@ -159,6 +164,37 @@ pub enum ServerError {
     /// Serialization error (distinct from parse errors).
     #[error("serialization error: {0}")]
     Serialization(serde_json::Error),
+    /// The tool ran and could not finish for a reason in the data rather than
+    /// in the request: no distribution matched, the dataset carries no DCAT
+    /// metadata, and the like.
+    ///
+    /// Reaches the client as a tool result with `isError: true`. The JSON-RPC
+    /// code below only applies if such a fault ever escapes a tool path.
+    #[error("{0}")]
+    ToolFailed(String),
+}
+
+impl ServerError {
+    /// Whether this fault belongs in a tool result rather than in a JSON-RPC
+    /// error object.
+    ///
+    /// MCP splits the two: a protocol fault (unknown tool, arguments that fail
+    /// the schema, a server bug) is a JSON-RPC error the model cannot act on,
+    /// while a tool that ran and failed reports `isError: true` with the
+    /// message in `content` so the model can read it and correct itself.
+    ///
+    /// The match is exhaustive on purpose: a new variant has to be classified
+    /// rather than defaulting to either side.
+    pub(crate) fn is_tool_execution_failure(&self) -> bool {
+        match self {
+            Self::DataGov(_) | Self::Io(_) | Self::ToolFailed(_) => true,
+            Self::InvalidRequest(_)
+            | Self::InvalidMethod(_)
+            | Self::InvalidParams(_)
+            | Self::Json(_)
+            | Self::Serialization(_) => false,
+        }
+    }
 }
 
 /// Convenience alias used throughout the server.
@@ -216,8 +252,17 @@ pub(crate) fn validate_limit(
 // MCP parameter and result structs
 // ---------------------------------------------------------------------------
 
+/// The five structs below back the tools whose advertised `inputSchema`
+/// declares `additionalProperties: false`, so each carries
+/// `deny_unknown_fields`. A schema is a promise, and dropping an undeclared key
+/// would run the tool on arguments the client never sent and report success.
+///
+/// The protocol-level structs (`InitializeParams`, `CallToolParams`,
+/// `ListToolsParams`, `ClientInfo`) deliberately stay permissive: MCP reserves
+/// `_meta` on any params object, and their schemas are not ours to close.
 /// Parameters for `data_gov.search`.
 #[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct SearchParams {
     #[serde(default)]
     pub query: String,
@@ -252,6 +297,7 @@ pub(crate) struct DatasetSummary {
 
 /// Parameters for `data_gov.dataset`.
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct DatasetParams {
     /// data.gov dataset slug (e.g., `electric-vehicle-population-data`).
     pub slug: String,
@@ -259,6 +305,7 @@ pub(crate) struct DatasetParams {
 
 /// Parameters for `data_gov.autocompleteDatasets`.
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct AutocompleteParams {
     pub partial: String,
     #[serde(default)]
@@ -372,6 +419,7 @@ pub(crate) struct ClientInfoSummary {
 
 /// Parameters for `data_gov.downloadResources`.
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct DownloadResourcesParams {
     #[serde(rename = "datasetId")]
     pub dataset_id: String,
@@ -387,6 +435,7 @@ pub(crate) struct DownloadResourcesParams {
 
 /// Parameters for `data_gov.listOrganizations`.
 #[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct ListOrganizationsParams {
     #[serde(default)]
     pub limit: Option<i32>,

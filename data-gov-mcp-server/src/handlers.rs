@@ -4,7 +4,7 @@ use data_gov::DataGovClient;
 use data_gov::catalog::models::{Distribution, SearchHit};
 use serde_json::{Value, json};
 use std::collections::HashSet;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::server::DataGovMcpServer;
 use crate::tools::{
@@ -28,20 +28,32 @@ impl DataGovMcpServer {
             let spec = find_tool_spec(&params.name)
                 .ok_or_else(|| ServerError::InvalidMethod(params.name.clone()))?;
 
-            let value = self
-                .invoke_method(spec.method_name, params.arguments)
-                .await?;
-            let response = ToolResponse::from_value(value);
-            return serde_json::to_value(response).map_err(ServerError::Serialization);
+            return self.run_tool(spec.method_name, params.arguments).await;
         }
 
         if find_tool_spec_by_method(method).is_some() {
-            let value = self.invoke_method(method, params).await?;
-            let response = ToolResponse::from_value(value);
-            return serde_json::to_value(response).map_err(ServerError::Serialization);
+            return self.run_tool(method, params).await;
         }
 
         self.invoke_method(method, params).await
+    }
+
+    /// Run a tool and wrap the outcome in a `ToolResponse`.
+    ///
+    /// A tool that ran and failed comes back as a result with `isError: true`,
+    /// so the model can read the reason. A protocol fault it cannot act on -
+    /// an unknown tool, arguments that fail the schema - propagates as a
+    /// JSON-RPC error.
+    async fn run_tool(&self, method: &str, params: Option<Value>) -> Result<Value, ServerError> {
+        let response = match self.invoke_method(method, params).await {
+            Ok(value) => ToolResponse::from_value(value),
+            Err(err) if err.is_tool_execution_failure() => {
+                tracing::warn!(method = %method, "tool execution failed: {err}");
+                ToolResponse::execution_error(err.to_string())
+            }
+            Err(err) => return Err(err),
+        };
+        serde_json::to_value(response).map_err(ServerError::Serialization)
     }
 
     /// Execute a single method and return the result as a JSON `Value`.
@@ -166,14 +178,18 @@ impl DataGovMcpServer {
         }
 
         let hit = self.data_gov.get_dataset(&params.dataset_id).await?;
+        // What follows describes the dataset the catalog returned, not the
+        // request, so it reaches the client as a tool result with
+        // `isError: true` rather than as a parameter error the model would try
+        // to fix by changing arguments that were never wrong.
         let slug = hit.slug.clone().ok_or_else(|| {
-            ServerError::InvalidParams(format!(
+            ServerError::ToolFailed(format!(
                 "{method}: dataset returned without a slug; cannot derive download subdirectory"
             ))
         })?;
 
         let dcat = hit.dcat.as_ref().ok_or_else(|| {
-            ServerError::InvalidParams(format!(
+            ServerError::ToolFailed(format!(
                 "{method}: dataset has no DCAT metadata; cannot enumerate distributions"
             ))
         })?;
@@ -208,11 +224,7 @@ impl DataGovMcpServer {
             // (e.g., "application/json"), so users typing "JSON" should still
             // match. Empty filter strings are dropped — they would otherwise
             // match every distribution.
-            let normalized_filters: Vec<String> = formats
-                .iter()
-                .map(|f| f.trim().to_ascii_lowercase())
-                .filter(|f| !f.is_empty())
-                .collect();
+            let filters = normalized_format_filters(formats);
 
             let distribution_matches = |d: &Distribution, filter: &str| -> bool {
                 d.format
@@ -223,19 +235,19 @@ impl DataGovMcpServer {
                         .is_some_and(|m| m.to_ascii_lowercase().contains(filter))
             };
 
-            for (raw, normalized) in formats.iter().zip(normalized_filters.iter()) {
+            for (raw, normalized) in &filters {
                 if !distributions
                     .iter()
                     .any(|d| distribution_matches(d, normalized))
                 {
-                    unavailable_formats.push(raw.trim().to_string());
+                    unavailable_formats.push(raw.clone());
                 }
             }
 
             distributions.retain(|d| {
-                normalized_filters
+                filters
                     .iter()
-                    .any(|filter| distribution_matches(d, filter))
+                    .any(|(_, normalized)| distribution_matches(d, normalized))
             });
         }
 
@@ -254,7 +266,7 @@ impl DataGovMcpServer {
                     unavailable_formats.join(", ")
                 ));
             }
-            return Err(ServerError::InvalidParams(message));
+            return Err(ServerError::ToolFailed(message));
         }
 
         if params.output_dir.is_none() {
@@ -264,14 +276,12 @@ impl DataGovMcpServer {
         let use_dataset_subdir = params.dataset_subdirectory.unwrap_or(true);
         let safe_dataset_slug = data_gov::util::sanitize_path_component(&slug);
 
-        let resolved_output_dir = resolve_output_dir(
+        let output_dir = resolve_output_dir(
             params.output_dir.as_deref(),
             use_dataset_subdir,
             &safe_dataset_slug,
+            &self.data_gov.download_dir(),
         )?;
-
-        let output_dir = resolved_output_dir
-            .unwrap_or_else(|| self.data_gov.download_dir().join(&safe_dataset_slug));
 
         let download_results = self
             .data_gov
@@ -429,14 +439,37 @@ impl DataGovMcpServer {
     }
 }
 
-/// Resolve a client-requested download directory into an absolute path.
+/// Pair each requested format with the lowercase form used for matching.
 ///
-/// - Returns `Ok(None)` when no directory was requested (caller picks a
-///   default).
-/// - Rejects any path containing `..` components with
+/// Blank entries are dropped: they would match every distribution. The raw and
+/// normalized forms travel together in one vector so the report and the filter
+/// cannot disagree about which string a filter came from. Building them as two
+/// vectors and zipping them looks equivalent and is not - the moment a blank is
+/// dropped the indexes stop lining up, and the zip both mislabels the survivors
+/// and stops at the shorter vector.
+fn normalized_format_filters(formats: &[String]) -> Vec<(String, String)> {
+    formats
+        .iter()
+        .map(|raw| {
+            let trimmed = raw.trim();
+            (trimmed.to_string(), trimmed.to_ascii_lowercase())
+        })
+        .filter(|(trimmed, _)| !trimmed.is_empty())
+        .collect()
+}
+
+/// Resolve the directory the downloaded files land in.
+///
+/// - Uses `default_base` when the client requested no directory.
+/// - Rejects any requested path containing `..` components with
 ///   [`ServerError::InvalidParams`].
-/// - Anchors relative paths to the current working directory.
+/// - Anchors a relative requested path to the current working directory.
 /// - Appends `safe_dataset_slug` when `use_dataset_subdir` is true.
+///
+/// The subdirectory flag applies on both branches. It is advertised and
+/// defaulted, so it has to mean the same thing whether or not `outputDir` was
+/// given; deciding it only on the requested branch left it inert across half
+/// its input space.
 ///
 /// `safe_dataset_slug` is expected to have already been run through
 /// [`data_gov::util::sanitize_path_component`].
@@ -444,40 +477,51 @@ pub(crate) fn resolve_output_dir(
     requested: Option<&str>,
     use_dataset_subdir: bool,
     safe_dataset_slug: &str,
-) -> Result<Option<PathBuf>, ServerError> {
-    let Some(dir) = requested else {
-        return Ok(None);
+    default_base: &Path,
+) -> Result<PathBuf, ServerError> {
+    let mut base = match requested {
+        None => default_base.to_path_buf(),
+        Some(dir) => {
+            if dir.contains("..") {
+                return Err(ServerError::InvalidParams(
+                    "output_dir must not contain '..' path components".to_string(),
+                ));
+            }
+
+            let path = PathBuf::from(dir);
+            if path.is_absolute() {
+                path
+            } else {
+                std::env::current_dir().map_err(ServerError::Io)?.join(path)
+            }
+        }
     };
 
-    if dir.contains("..") {
-        return Err(ServerError::InvalidParams(
-            "output_dir must not contain '..' path components".to_string(),
-        ));
-    }
-
-    let mut path = PathBuf::from(dir);
-    if !path.is_absolute() {
-        path = std::env::current_dir().map_err(ServerError::Io)?.join(path);
-    }
     if use_dataset_subdir {
-        path = path.join(safe_dataset_slug);
+        base = base.join(safe_dataset_slug);
     }
-    Ok(Some(path))
+    Ok(base)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
-    #[test]
-    fn resolve_output_dir_returns_none_when_no_dir_requested() {
-        let resolved = resolve_output_dir(None, true, "slug").expect("should succeed");
-        assert!(resolved.is_none());
+    /// Stand-in for the configured download directory.
+    const DEFAULT_BASE: &str = "/base/downloads";
+
+    fn default_base() -> &'static Path {
+        Path::new(DEFAULT_BASE)
+    }
+
+    fn distribution(fields: Value) -> Distribution {
+        serde_json::from_value(fields).expect("a Distribution")
     }
 
     #[test]
     fn resolve_output_dir_rejects_leading_parent_traversal() {
-        let err = resolve_output_dir(Some("../etc/passwd"), true, "slug")
+        let err = resolve_output_dir(Some("../etc/passwd"), true, "slug", default_base())
             .expect_err("parent traversal must be rejected");
         match err {
             ServerError::InvalidParams(msg) => {
@@ -492,40 +536,125 @@ mod tests {
 
     #[test]
     fn resolve_output_dir_rejects_embedded_parent_traversal() {
-        let err = resolve_output_dir(Some("/tmp/ok/../escape"), false, "slug")
+        let err = resolve_output_dir(Some("/tmp/ok/../escape"), false, "slug", default_base())
             .expect_err("embedded '..' must be rejected");
         assert!(matches!(err, ServerError::InvalidParams(_)));
     }
 
     #[test]
     fn resolve_output_dir_rejects_windows_style_parent_traversal() {
-        let err = resolve_output_dir(Some("C:\\Users\\me\\..\\other"), false, "slug")
-            .expect_err("'..' inside backslash path must be rejected");
+        let err = resolve_output_dir(
+            Some("C:\\Users\\me\\..\\other"),
+            false,
+            "slug",
+            default_base(),
+        )
+        .expect_err("'..' inside backslash path must be rejected");
         assert!(matches!(err, ServerError::InvalidParams(_)));
     }
 
     #[test]
-    fn resolve_output_dir_appends_dataset_slug_when_enabled() {
-        let resolved = resolve_output_dir(Some("/tmp/downloads"), true, "climate-data")
-            .expect("should succeed")
-            .expect("should produce path");
-        assert_eq!(resolved, PathBuf::from("/tmp/downloads/climate-data"));
-    }
-
-    #[test]
-    fn resolve_output_dir_omits_dataset_slug_when_disabled() {
-        let resolved = resolve_output_dir(Some("/tmp/downloads"), false, "climate-data")
-            .expect("should succeed")
-            .expect("should produce path");
-        assert_eq!(resolved, PathBuf::from("/tmp/downloads"));
-    }
-
-    #[test]
     fn resolve_output_dir_anchors_relative_path_to_cwd() {
-        let resolved = resolve_output_dir(Some("mydir"), false, "slug")
-            .expect("should succeed")
-            .expect("should produce path");
+        let resolved = resolve_output_dir(Some("mydir"), false, "slug", default_base())
+            .expect("should succeed");
         assert!(resolved.is_absolute());
         assert!(resolved.ends_with("mydir"));
+    }
+
+    /// `datasetSubdirectory` is advertised with a default, so it has to mean
+    /// the same thing across its whole input space. All four combinations, in
+    /// one table: with `outputDir` omitted the flag was previously decided
+    /// before it was ever read, and the `(None, false)` row is the one that
+    /// could not pass.
+    #[test]
+    fn resolve_output_dir_honours_the_subdirectory_flag_on_both_branches() {
+        let cases = [
+            (
+                Some("/tmp/downloads"),
+                true,
+                PathBuf::from("/tmp/downloads/climate-data"),
+            ),
+            (
+                Some("/tmp/downloads"),
+                false,
+                PathBuf::from("/tmp/downloads"),
+            ),
+            (None, true, PathBuf::from("/base/downloads/climate-data")),
+            (None, false, PathBuf::from("/base/downloads")),
+        ];
+
+        for (requested, use_dataset_subdir, expected) in cases {
+            let resolved = resolve_output_dir(
+                requested,
+                use_dataset_subdir,
+                "climate-data",
+                default_base(),
+            )
+            .expect("should succeed");
+            assert_eq!(
+                resolved, expected,
+                "outputDir {requested:?} with datasetSubdirectory {use_dataset_subdir}"
+            );
+        }
+    }
+
+    #[test]
+    fn normalized_format_filters_drops_blanks_and_keeps_the_raw_form_paired() {
+        let formats = vec![
+            "  ".to_string(),
+            "XLSX".to_string(),
+            "".to_string(),
+            " CSV ".to_string(),
+        ];
+
+        let filters = normalized_format_filters(&formats);
+
+        assert_eq!(
+            filters,
+            vec![
+                ("XLSX".to_string(), "xlsx".to_string()),
+                ("CSV".to_string(), "csv".to_string()),
+            ],
+            "a blank filter would match every distribution, so it is dropped - \
+             and dropping it must not shift the remaining pairs"
+        );
+    }
+
+    /// The defect this replaced: `formats.iter().zip(normalized.iter())` paired
+    /// index 0 of the raw list with index 0 of the filtered list. With one
+    /// blank at the front, every pair is off by one and the last is lost.
+    #[test]
+    fn normalized_format_filters_never_pairs_a_filter_with_another_formats_label() {
+        let formats = vec!["  ".to_string(), "XLSX".to_string()];
+
+        let filters = normalized_format_filters(&formats);
+
+        assert_eq!(filters.len(), 1, "one usable filter: {filters:?}");
+        let (raw, normalized) = &filters[0];
+        assert_eq!(raw, "XLSX", "the label must name the format the user typed");
+        assert_eq!(normalized, "xlsx");
+    }
+
+    #[test]
+    fn normalized_format_filters_is_empty_when_every_entry_is_blank() {
+        let formats = vec!["".to_string(), "   ".to_string(), "\t".to_string()];
+        assert!(normalized_format_filters(&formats).is_empty());
+    }
+
+    /// A `Distribution` deserialized from the wire shape, so the field names
+    /// under test are the ones the Catalog API actually sends.
+    #[test]
+    fn a_distribution_carries_the_format_fields_the_filter_reads() {
+        let dist = distribution(json!({
+            "@type": "dcat:Distribution",
+            "downloadURL": "https://example.com/f.csv",
+            "mediaType": "text/csv"
+        }));
+        assert_eq!(dist.media_type.as_deref(), Some("text/csv"));
+        assert!(
+            dist.format.is_none(),
+            "DCAT-US 3 usually leaves `format` empty, which is why the filter \
+             also reads mediaType"
+        );
     }
 }

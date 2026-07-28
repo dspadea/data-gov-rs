@@ -39,8 +39,10 @@ pub(crate) struct ToolResponse {
     /// Machine-readable result, carried beside `content` rather than inside it.
     #[serde(skip_serializing_if = "Option::is_none", rename = "structuredContent")]
     pub structured_content: Option<Value>,
-    #[serde(skip_serializing_if = "Option::is_none", rename = "isError")]
-    pub is_error: Option<bool>,
+    /// Whether the tool ran and failed. Always emitted, as in the spec's own
+    /// `tools/call` example, so a client never has to read it from an absence.
+    #[serde(rename = "isError")]
+    pub is_error: bool,
 }
 
 impl ToolResponse {
@@ -63,7 +65,23 @@ impl ToolResponse {
         Self {
             content: vec![ToolContent::Text { text }],
             structured_content,
-            is_error: None,
+            is_error: false,
+        }
+    }
+
+    /// Build a result reporting that the tool ran and failed.
+    ///
+    /// MCP calls this a Tool Execution Error and requires a normal `result`
+    /// with `isError: true` and the reason in `content`. That is not a
+    /// formality: clients "SHOULD provide tool execution errors to language
+    /// models to enable self-correction", while a JSON-RPC error object may
+    /// never reach the model at all. There is no machine-readable payload to
+    /// carry, so `structuredContent` is omitted.
+    pub fn execution_error(message: String) -> Self {
+        Self {
+            content: vec![ToolContent::Text { text: message }],
+            structured_content: None,
+            is_error: true,
         }
     }
 }
@@ -321,7 +339,7 @@ mod tests {
 
         assert_eq!(resp.content.len(), 1, "content holds only the text block");
         assert_eq!(resp.structured_content.as_ref(), Some(&val));
-        assert!(resp.is_error.is_none());
+        assert!(!resp.is_error);
 
         // Reparse rather than substring-match: a substring check passes for a
         // truncated or reordered serialization, and would also fail spuriously
