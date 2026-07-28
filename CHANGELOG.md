@@ -73,6 +73,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Infrastructure
 
+- Documented the testing standard in `CLAUDE.md`: test conditions derive from
+  the specification or real API data and never from the current implementation;
+  every test must name the wrong implementation it would catch; real captured
+  payloads are preferred to synthetic bodies; edge cases and backfilling are
+  expected. Written up from two live examples in this codebase where a test
+  asserted the buggy behaviour and so guaranteed it.
+
 - **CI now runs 181 tests instead of 37** (#23). The gate selected `--lib`,
   which skips both binary crates (`data-gov-mcp-server` has no `lib.rs`; the
   CLI is a `[[bin]]`) and every `tests/` integration target — so all 54
