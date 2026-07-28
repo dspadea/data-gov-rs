@@ -246,6 +246,23 @@ fn handle_search(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let org = ctx.org.clone();
     let effective_limit = limit.unwrap_or(DEFAULT_PAGE_SIZE);
+
+    // `limit` is `Some` only when `ReplCommand::from_parts` consumed a
+    // trailing numeric token as the limit (#54) — the *only* way it can
+    // be `Some` at all. That rule is unambiguous and intentional, but
+    // silent: "search route 66" and "search area 51" quietly become a
+    // one-word search with a page-size limit, and nothing before this
+    // said so. Surface the decision every time it fires, live-confirmed
+    // cases included, so a query that looks like it ends in a number
+    // doesn't vanish without explanation.
+    if let Some(applied_limit) = limit {
+        println!(
+            "{} {}",
+            color_dimmed("Note:"),
+            color_dimmed(&trailing_limit_notice(query, applied_limit))
+        );
+    }
+
     if let Some(org_name) = org.as_deref() {
         println!(
             "{} '{}' in org {}...",
@@ -274,6 +291,19 @@ fn handle_search(
     });
 
     Ok(())
+}
+
+/// Build the advisory line shown when `ReplCommand::from_parts` consumed a
+/// trailing numeric token as the result limit, so a query that reads as
+/// ending in a number (`route 66`, `area 51`, `catch 22`) doesn't silently
+/// become a shorter, numbered search with no explanation. Names both the
+/// query actually searched and the limit applied, and points at the
+/// quoting escape hatch that searches the phrase literally.
+fn trailing_limit_notice(query: &str, limit: i32) -> String {
+    format!(
+        "trailing number treated as limit -- searching \"{query}\" with limit {limit} \
+         (quote the whole phrase to search literally, e.g. \"{query} {limit}\")"
+    )
 }
 
 /// Render search hits in a compact list with an optional truncated
@@ -1075,6 +1105,33 @@ mod tests {
     fn listing_summary_omits_hint_when_no_more_pages() {
         let line = listing_summary_line(50, None, "results", &OperatingMode::Interactive);
         assert!(!line.contains("next"), "line was: {line}");
+    }
+
+    // --- #54: the trailing-numeric-token-as-limit rule is silent by
+    // default, so surface what it decided ---
+
+    #[test]
+    fn trailing_limit_notice_names_the_query_actually_searched_and_the_limit_applied() {
+        // "search route 66" -> query "route", limit 66. A user who typed
+        // the whole phrase must see, unambiguously, that they got neither.
+        let notice = trailing_limit_notice("route", 66);
+        assert!(
+            notice.contains("\"route\""),
+            "notice must name the query actually searched: {notice}"
+        );
+        assert!(
+            notice.contains("66"),
+            "notice must name the limit applied: {notice}"
+        );
+    }
+
+    #[test]
+    fn trailing_limit_notice_points_at_the_quoting_escape_hatch() {
+        let notice = trailing_limit_notice("area", 51);
+        assert!(
+            notice.contains("\"area 51\""),
+            "notice must show the quoted form that searches literally: {notice}"
+        );
     }
 
     // --- #58.3: a failed 'next' leaves the cursor unchanged ---
