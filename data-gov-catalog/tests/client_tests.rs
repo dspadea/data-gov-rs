@@ -777,3 +777,80 @@ async fn a_short_configured_timeout_bounds_a_stalled_request() {
          the timeout is not being applied to the client"
     );
 }
+
+/// Values that have no representation as a URL path segment.
+///
+/// Percent-encoding cannot save these: the URL standard removes dot-segments
+/// after decoding, and treats `%2E` as a dot for that purpose, so an id of
+/// `..` turns `/harvest_record/{id}/transformed` into `/transformed`. An empty
+/// id leaves `//`. All three must be refused before a request goes out.
+const UNREPRESENTABLE_IDS: [&str; 3] = ["", ".", ".."];
+
+/// Assert every unrepresentable id is refused, and that nothing is requested.
+async fn assert_unrepresentable_ids_are_refused(
+    label: &str,
+    call: impl AsyncFn(&CatalogClient, &str) -> Result<(), CatalogError>,
+) {
+    for id in UNREPRESENTABLE_IDS {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({})))
+            .mount(&server)
+            .await;
+
+        let outcome = call(&client_for(&server), id).await;
+
+        assert!(
+            matches!(outcome, Err(CatalogError::InvalidPathSegment(ref got)) if got == id),
+            "{label} with id {id:?} must fail with InvalidPathSegment, got {outcome:?}"
+        );
+        assert!(
+            server
+                .received_requests()
+                .await
+                .expect("recorded requests")
+                .is_empty(),
+            "{label} with id {id:?} must not reach the network"
+        );
+    }
+}
+
+#[tokio::test]
+async fn dataset_by_slug_refuses_slugs_that_cannot_be_a_path_segment() {
+    assert_unrepresentable_ids_are_refused("dataset_by_slug", async |client, id| {
+        client.dataset_by_slug(id).await.map(|_| ())
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn location_geometry_refuses_ids_that_cannot_be_a_path_segment() {
+    assert_unrepresentable_ids_are_refused("location_geometry", async |client, id| {
+        client.location_geometry(id).await.map(|_| ())
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn harvest_record_refuses_ids_that_cannot_be_a_path_segment() {
+    assert_unrepresentable_ids_are_refused("harvest_record", async |client, id| {
+        client.harvest_record(id).await.map(|_| ())
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn harvest_record_raw_refuses_ids_that_cannot_be_a_path_segment() {
+    assert_unrepresentable_ids_are_refused("harvest_record_raw", async |client, id| {
+        client.harvest_record_raw(id).await.map(|_| ())
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn harvest_record_transformed_refuses_ids_that_cannot_be_a_path_segment() {
+    assert_unrepresentable_ids_are_refused("harvest_record_transformed", async |client, id| {
+        client.harvest_record_transformed(id).await.map(|_| ())
+    })
+    .await;
+}

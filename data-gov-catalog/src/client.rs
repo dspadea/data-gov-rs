@@ -101,10 +101,33 @@ impl Default for Configuration {
 /// Percent-encode a single URL path segment.
 ///
 /// Everything outside the unreserved set is escaped, including `/` and `.`, so
-/// a value containing `..`, `%2e` or a slash cannot escape its segment and
-/// redirect the request to a different endpoint. `.` is escaped rather than
-/// passed through precisely so that `..` cannot survive as a dot-segment.
-fn encode_path_segment(segment: &str) -> String {
+/// a value containing a slash, a `#`, a `?`, or `..` as a substring cannot
+/// escape its segment and redirect the request to a different endpoint.
+///
+/// Encoding is not sufficient on its own. Three values have no representation
+/// as a path segment at all and are refused instead:
+///
+/// | Value | What the URL parser does with it |
+/// |---|---|
+/// | `..` | Removes the segment *and* its parent: `/harvest_record/../raw` becomes `/raw` |
+/// | `.` | Removes the segment: `/harvest_record/./raw` becomes `/harvest_record/raw` |
+/// | `""` | Leaves an empty segment, so the path carries `//` |
+///
+/// Percent-encoding does not help for the first two. The URL standard looks for
+/// dot-segments *after* decoding, and treats `%2E` as a dot for that purpose, so
+/// `%2E%2E` collapses exactly as `..` does. Verified against `url` 2.5: an id of
+/// `..` turns `/harvest_record/{id}/transformed` into `/transformed`.
+///
+/// Only a value that is entirely dots is affected. `../search` is safe, because
+/// the encoded slash keeps it one segment.
+///
+/// # Errors
+///
+/// [`CatalogError::InvalidPathSegment`] when `segment` is `""`, `"."`, or `".."`.
+fn encode_path_segment(segment: &str) -> Result<String, CatalogError> {
+    if matches!(segment, "" | "." | "..") {
+        return Err(CatalogError::InvalidPathSegment(segment.to_owned()));
+    }
     let mut out = String::with_capacity(segment.len());
     for byte in segment.bytes() {
         match byte {
@@ -112,7 +135,7 @@ fn encode_path_segment(segment: &str) -> String {
             other => out.push_str(&format!("%{other:02X}")),
         }
     }
-    out
+    Ok(out)
 }
 
 /// Async client for the Catalog API.
@@ -145,6 +168,14 @@ pub enum CatalogError {
         /// Server-provided response body (often a JSON error document).
         message: String,
     },
+    /// A caller-supplied id or slug cannot be carried in a URL path segment.
+    ///
+    /// Percent-encoding is not enough for every value. A segment that is
+    /// exactly `.` or `..` is removed by URL normalization even when encoded,
+    /// because the URL standard treats `%2E` as a dot when it looks for
+    /// dot-segments. Such a value would silently retarget the request at a
+    /// different endpoint, so it is refused before any request is made.
+    InvalidPathSegment(String),
 }
 
 impl std::fmt::Display for CatalogError {
@@ -155,6 +186,10 @@ impl std::fmt::Display for CatalogError {
             CatalogError::ApiError { status, message } => {
                 write!(f, "Catalog API error ({status}): {message}")
             }
+            CatalogError::InvalidPathSegment(value) => write!(
+                f,
+                "invalid identifier {value:?}: it cannot be carried in a URL path segment"
+            ),
         }
     }
 }
@@ -464,7 +499,7 @@ impl CatalogClient {
         &self,
         slug: &str,
     ) -> Result<Option<models::SearchHit>, CatalogError> {
-        let path = format!("/api/dataset/{}", encode_path_segment(slug));
+        let path = format!("/api/dataset/{}", encode_path_segment(slug)?);
         let response: Option<models::SearchResponse> = self.get_json_optional(&path).await?;
 
         // Belt and braces: the endpoint is exact, but a hit whose slug differs
@@ -522,13 +557,13 @@ impl CatalogClient {
     /// shape is unconstrained GeoJSON and callers typically hand it straight
     /// to a mapping library.
     pub async fn location_geometry(&self, id: &str) -> Result<Value, CatalogError> {
-        let path = format!("/api/location/{}", encode_path_segment(id));
+        let path = format!("/api/location/{}", encode_path_segment(id)?);
         self.get_json(&path, &[(); 0]).await
     }
 
     /// Retrieve a harvest record's metadata envelope.
     pub async fn harvest_record(&self, id: &str) -> Result<models::HarvestRecord, CatalogError> {
-        let path = format!("/harvest_record/{}", encode_path_segment(id));
+        let path = format!("/harvest_record/{}", encode_path_segment(id)?);
         self.get_json(&path, &[(); 0]).await
     }
 
@@ -538,7 +573,7 @@ impl CatalogClient {
     /// XML fragments, and DCAT records through the same surface — so the
     /// result is returned as [`serde_json::Value`].
     pub async fn harvest_record_raw(&self, id: &str) -> Result<Value, CatalogError> {
-        let path = format!("/harvest_record/{}/raw", encode_path_segment(id));
+        let path = format!("/harvest_record/{}/raw", encode_path_segment(id)?);
         self.get_json(&path, &[(); 0]).await
     }
 
@@ -547,7 +582,7 @@ impl CatalogClient {
         &self,
         id: &str,
     ) -> Result<models::Dataset, CatalogError> {
-        let path = format!("/harvest_record/{}/transformed", encode_path_segment(id));
+        let path = format!("/harvest_record/{}/transformed", encode_path_segment(id)?);
         self.get_json(&path, &[(); 0]).await
     }
 }
