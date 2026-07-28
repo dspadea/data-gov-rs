@@ -24,3 +24,6 @@ data-gov = "0.5.0"
 
 [dev-dependencies]
 wiremock = "0.6"
+
+[lints]
+workspace = true

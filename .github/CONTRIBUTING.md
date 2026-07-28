@@ -21,6 +21,8 @@ orientation for new contributors.
 ### Prerequisites
 
 - **Rust 1.90 or later** (the workspace uses the Rust 2024 edition)
+- **[`just`](https://just.systems)** — the task runner CI and contributors both
+  use (`cargo install just`, or your package manager)
 - Git
 - Basic familiarity with the data.gov [Catalog API](https://resources.data.gov/catalog-api/)
   is helpful but not required (CKAN familiarity helps for the
@@ -82,17 +84,16 @@ orientation for new contributors.
    - Integration tests in `tests/` directories
    - Example usage in `examples/` directories
 
-4. **Run the full quality gates** (CI enforces all of these):
+4. **Run the full quality gate.** CI runs the same recipes, so a green run here
+   means a green pipeline. This needs [`just`](https://just.systems):
    ```bash
-   cargo fmt --all -- --check                                  # Formatting
-   cargo clippy --all-targets --all-features -- -D warnings    # Lint (warnings = errors)
-   cargo test --all-features                                   # Unit + fixture tests
-   cargo doc --all-features --no-deps                          # Rustdoc builds clean
+   just check      # Format, lint, build, test, rustls-only build, examples, docs
+   just            # List every recipe
    ```
 
    Live-network integration tests are marked `#[ignore]` and run separately:
    ```bash
-   cargo test -p data-gov-catalog --test integration_tests -- --ignored
+   just test-live
    ```
 
 5. **Update documentation** as needed:

@@ -16,28 +16,35 @@ Rust 2024 edition, MSRV **1.90**, Apache-2.0 license.
 
 ## Code quality gates
 
-Every commit must pass all of these. CI enforces them; run locally before pushing.
-
 ```bash
-cargo fmt --all -- --check                                # Formatting
-cargo clippy --all-targets --all-features -- -D warnings  # Lint (warnings = errors)
-cargo test --all-features                                 # All tests
-cargo doc --all-features --no-deps                        # Rustdoc builds clean
+just check      # The full gate: format, lint, build, test, rustls, examples, docs
+just            # List every recipe
 ```
+
+**`just check` is the gate.** CI calls the same recipes from the same
+`justfile`, so a green run locally and a green pipeline mean the same thing and
+cannot drift into two dialects of the same command. A fresh clone needs `just`
+and a Rust 1.90 toolchain, and nothing else.
+
+Keep recipes short. When one grows past a few lines, move the body into
+`scripts/` and call the script from the recipe.
 
 ### Warnings are fatal
 
-The workspace treats all compiler and clippy warnings as errors (`-D warnings`).
-Do not suppress warnings with `#[allow(...)]` unless there is a documented reason
-in a comment on the same line. Fix the root cause instead. A pre-existing warning
-in a file you touch is yours to clear, not to build on.
+The workspace denies all compiler and clippy warnings through a
+`[workspace.lints]` table in the root manifest, inherited by every member via
+`[lints] workspace = true`. A plain `cargo build` hard-fails on a warning, with
+no flag to remember and no way to be outside the gate.
 
-Enforcement is currently a command-line flag, which means it holds only where
-someone remembered to pass it. Preferred is a `[workspace.lints]` table in the
-root manifest with `rust.warnings = "deny"` and `clippy.all = "deny"`, inherited
-by every member via `[lints] workspace = true`, so a plain `cargo build` or
-`cargo test` hard-fails without anyone having to remember. Mechanical beats
-vigilant.
+**Mechanical beats vigilant, and this is the general rule, not a detail about
+lints.** A standard that depends on someone remembering it is not enforced; it
+is merely written down. When you find yourself writing "always pass `-D
+warnings`" or "remember to run X", ask what configuration would make the
+reminder unnecessary.
+
+Do not suppress warnings with `#[allow(...)]` unless there is a documented
+reason in a comment on the same line. Fix the root cause instead. A pre-existing
+warning in a file you touch is yours to clear, not to build on.
 
 Never `--no-verify` past a hook. If a hook is genuinely broken, fix it in its own
 change and say why.
@@ -54,9 +61,11 @@ rustls-only build, which consumers do select, is never compiled or tested by the
 gate at all. A single-feature build can fail on a missing import, a `cfg` typo,
 or a dependency that only one backend pulls in, and nothing here would notice.
 
+`just check-rustls` builds that configuration, and `just check` runs it.
+
 So when adding a feature, ask whether `--all-features` genuinely exercises it or
-merely compiles a superset, and add the explicit step when the answer is the
-latter.
+merely compiles a superset, and add a recipe naming the feature when the answer
+is the latter.
 
 ### Code formatting
 
@@ -247,6 +256,22 @@ coverage turns out to be vacuous.
 - **Group tests by concern** using `mod tests` blocks or dedicated test files.
 - **Assert on structure and invariants**, not exact external data that can change.
 
+**Each acceptance criterion becomes its own named test**, so a failing run names
+the unmet requirement rather than a line number. When an issue lists three
+criteria, the change adds three tests whose names read back as those criteria.
+One test asserting all three tells you something broke, not what.
+
+### Coverage is a floor, never a target
+
+Measure coverage to find the code nobody tested. Do not write tests to move the
+number: a test written to raise coverage is optimised for executing lines, which
+is exactly the vacuous test this project has already been bitten by. Uncovered
+code is a question to answer, not a defect to paper over.
+
+Unit tests are deterministic — no network, no wall clock, no filesystem, no
+randomness. Where behaviour depends on one of those, inject it. The live-API
+tests are `#[ignore]`d and run in their own job for exactly this reason.
+
 ### Test organization
 
 ```
@@ -358,19 +383,24 @@ For every public function or method:
 ### Running tests
 
 ```bash
-cargo test --all-features --workspace     # Everything CI runs (181+ tests)
-cargo test --lib --all-features           # Unit tests only (fast, no network)
+just test                                 # Everything CI runs (181+ tests)
+just test-unit                            # Unit tests only (fast, no network)
+just test-live                            # Network + known-defect acceptance tests
+```
+
+To run one target while working on it, call cargo directly:
+
+```bash
 cargo test --doc --all-features           # Doc tests
 cargo test --test client_tests            # Request shaping, via wiremock
 cargo test --test fixture_parity_tests    # Model vs. captured API responses
 cargo test --test integration_tests       # Live API tests
-cargo test --all-features -- --ignored    # Network + known-defect acceptance tests
 ```
 
 Refresh the captured responses with:
 
 ```bash
-scripts/capture-fixtures.sh               # Recapture from the live Catalog API
+just fixtures                             # Recapture from the live Catalog API
 ```
 
 Fixtures addressed by slug are pinned to a specific long-lived dataset, because
@@ -408,6 +438,58 @@ is a debugging nightmare — the operation fails and nothing explains why.
 
 Everything else should either propagate (`?`), log, or surface to the user.
 
+### A normal negative answer is not a failure
+
+**Distinguish "the answer is no" from "the request did not work."** They need
+different types, different log levels, and different behaviour from the caller —
+one is the API working correctly, the other needs somebody's attention.
+
+`dataset_by_slug` is the worked example. A 404 means the dataset does not exist,
+which is a legitimate answer to a legitimate question, so it returns `Ok(None)`.
+A 500, a timeout, or a connection reset means the request did not work, so it
+returns `Err`. Collapsing the two in either direction is a bug: report an outage
+as `Ok(None)` and a data.gov failure looks to the user like a missing dataset;
+report a 404 as `Err` and every "does this exist?" caller has to parse error
+strings to find out.
+
+The same split applies elsewhere:
+
+- **Log levels.** A missing dataset is `debug`. A failed request is `warn` or
+  `error`. Logging expected negatives at `error` trains everyone to ignore the
+  error log, which is worse than not logging.
+- **MCP tools.** A tool that declines for a business reason returns a result
+  with `isError: true` and an explanatory content block. A JSON-RPC error object
+  is for protocol and transport faults — a malformed request, an unknown method
+  — not for "no datasets matched".
+- **Empty results.** Zero search hits is a successful search. Never an error.
+
+When it is genuinely unclear which of the two a case is, ask rather than
+guessing.
+
+### Repeating an operation must be safe
+
+**Every operation is idempotent: running it again with the same inputs gives the
+same result and causes no additional effect.** Networks retry, users re-run
+commands, and an MCP client may redeliver a request. None of those should
+produce a second outcome.
+
+Reads are idempotent for free. Writes are where this is earned, and downloads
+are this project's writes:
+
+- **Downloading the same distribution twice converges on one correct file.** It
+  does not produce `file.csv` and `file (1).csv`, and it does not leave a
+  half-written file where a complete one stood. Write to a temporary path and
+  rename onto the destination only once the transfer finished, so the final path
+  only ever holds a complete file and an interrupted run loses nothing.
+- **Distinct resources get distinct paths.** Two distributions sharing a title
+  must not resolve to the same filename — that is not idempotency, it is data
+  loss reported as success (#52).
+- **Config writes replace, never append.** Setting an API key twice leaves one
+  key.
+
+Statements about this belong in tests: run the operation twice and assert the
+second run leaves the same state as the first.
+
 ### Error messages
 
 - **Be specific.** Say what went wrong and what was expected:
@@ -440,6 +522,39 @@ or while a tokio runtime is active. Blocking the executor starves other tasks.
   owns the runtime. Don't nest `block_on` inside an already-async context.
 
 ## Rust idioms
+
+### Type strictly outbound, tolerantly inbound
+
+Both directions want types rather than bare strings, but they fail in opposite
+ways, and the general "model fixed value sets as enums" rule needs inverting at
+the inbound boundary.
+
+**Outbound — values we choose — get enums.** A `sort` order, an operating mode,
+a colour setting, an output format: the valid set is closed and we own it, so an
+enum makes the invalid state unrepresentable and hands the caller compile-time
+errors and completion instead of a runtime 400. `OperatingMode`, `ColorMode`,
+and `ReplCommand` are the existing examples. A parameter typed `Option<String>`
+that the API accepts only four values for is a missing enum.
+
+**Inbound — values the server chooses — get permissive types.** A strict type on
+a deserialised field converts one unexpected value into a total failure of the
+whole response. This is the single most productive bug family in this workspace:
+
+| Field | Modelled as | Reality | Result |
+|---|---|---|---|
+| CKAN `id` (#63) | `uuid::Uuid` | The column is unconstrained text | Any non-UUID id fails the entire response |
+| `Resource.size` (#62) | `i32` | Byte counts, unbounded | One resource over 2 GiB fails the entire response |
+| `ContactPoint::fn_` (#61) | keyed on `fn_` | The wire name is `fn` | Every contact name silently `None` |
+
+So for anything arriving from the network: `String` over a parsed identifier,
+`i64` over `i32`, `Option<T>` with `#[serde(default)]` over a required field,
+and `#[serde(other)]` on any enum you do model, so an unknown variant lands in a
+catch-all rather than aborting the parse. Validate after deserialising, where a
+bad value costs you one record instead of the page.
+
+A useful check: **ask what happens when this field holds a value nobody
+anticipated.** If the answer is "the whole request fails", the type is too
+strict for a boundary.
 
 ### Prefer borrowing over cloning
 
@@ -509,6 +624,19 @@ to `main`:
 
 `main` therefore always reflects a released state, and a partially-landed release
 never sits on the default branch.
+
+**This is the repository's override of the general "open a PR to `main` and ask
+before merging" default.** Concretely, what it authorises and what it does not:
+
+| Action | Authorised? |
+|---|---|
+| Merge a green, complete work-item PR into `release/X.Y.Z` | Yes — this is the workflow |
+| Merge anything into `main` | No. Ask, every time |
+| Tag or publish to crates.io | No. Ask, every time |
+| Commit directly to `release/X.Y.Z` without a PR | No. Work items get branches and PRs |
+
+"Green" means every gating check passed on the PR itself, not that it passed
+somewhere else earlier.
 
 **Never stack a pull request on another work branch.** Every work branch targets
 the release branch directly, even when one change logically builds on another —
@@ -582,11 +710,11 @@ vulnerabilities. Before validating a release, run **both** halves:
 
 ```bash
 cargo update                       # Semver-compatible moves
-cargo outdated --root-deps-only    # Major-version drift needing a decision
-cargo audit                        # RustSec advisories
+just outdated                      # Major-version drift needing a decision
+just audit                         # RustSec advisories, then OSV/GHSA
 ```
 
-plus an **OSV/GHSA scan of the lockfile**. `cargo audit` alone is not sufficient:
+`just audit` runs both halves. `cargo audit` alone is not sufficient:
 in the 2026-07 review it reported two advisories while OSV surfaced seven further
 `openssl` CVEs (five High) that are GHSA-only and absent from the RustSec
 database. Re-run at release time, not just at the start of the work — advisories
@@ -684,6 +812,27 @@ that are easy to read and reason about in isolation.
 5. **Flat over deep.** Prefer `mod foo; mod bar;` siblings over deep nesting.
    One level of `submodule/` is fine; two levels is a smell.
 
+### Keep transport at the edges
+
+The crate split is already a ports-and-adapters boundary, and it is worth
+keeping deliberately:
+
+| Crate | Role |
+|---|---|
+| `data-gov-catalog`, `data-gov-ckan` | Adapters. HTTP, serde, wire shapes, one upstream API each |
+| `data-gov` | Domain and orchestration: search, download, path handling, config |
+| `data-gov-mcp-server`, the CLI | Transports. Parse a request, call the domain, format a response |
+
+So: no `reqwest::Response`, `serde_json::Value`, or `clap` type in a signature
+that domain logic depends on, and no download or search logic inside a request
+handler. A handler that is more than argument parsing, one domain call, and
+response formatting has domain logic in the wrong layer — the MCP server and the
+CLI should be two thin faces over identical behaviour, and they diverge the
+moment either grows logic of its own.
+
+The practical test: domain behaviour is unit-testable without a server, a mock
+HTTP endpoint, or an argv array.
+
 ### Earn abstractions
 
 Do not introduce a new abstraction until roughly three call sites prove the
@@ -713,14 +862,20 @@ Within a single `.rs` file, order items as:
 ### Use latest stable versions
 
 Keep dependencies at their **latest stable release** unless a specific version
-is required for MSRV compatibility. Run `cargo outdated --root-deps-only`
-periodically and update proactively.
+is required for MSRV compatibility. Run `just outdated` periodically and update
+proactively.
 
 ```bash
-cargo update                       # Apply semver-compatible updates
-cargo outdated --root-deps-only    # Check for new major versions
-cargo audit                        # Check for security advisories
+cargo update       # Apply semver-compatible updates
+just outdated      # Check for new major versions
+just audit         # Check for security advisories
 ```
+
+**Check the current release before adding a dependency**, with `cargo search` or
+crates.io, rather than reaching for a version you remember. A remembered version
+is usually behind, sometimes by a major release, and occasionally by an
+advisory. A new dependency is a review item: say in the PR why the standard
+library or an existing dependency does not cover it.
 
 ### Current state (as of 2026-03)
 
@@ -734,18 +889,58 @@ cargo audit                        # Check for security advisories
 2. **One version per dependency across the workspace.** Use
    `[workspace.dependencies]` in the root `Cargo.toml` to centralize versions
    when practical.
-3. **Run `cargo audit` before releasing.** CI does this automatically.
-4. **Test after every update.** `cargo test --all-features` and
-   `cargo clippy --all-targets`.
+3. **Run `just audit` before releasing.** CI does this automatically.
+4. **Run `just check` after every update.**
 
 ### MSRV constraint
 
 The workspace targets **Rust 1.90**. All dependency versions must be compatible.
 The `Cargo.lock` is committed and tested in CI against stable, beta, and MSRV.
 
+The MSRV is declared as `rust-version = "1.90"` in each of the four member
+manifests, so cargo refuses to build on an older toolchain and says why. There
+is deliberately **no `rust-toolchain.toml`**: that file overrides the toolchain
+rustup selects, which would pin the beta and MSRV legs of the CI matrix to a
+single channel and quietly reduce three-way coverage to one. Reproducibility
+here comes from the committed lockfile plus the declared `rust-version`.
+
+A fresh clone needs `just` and any Rust from 1.90 up. `just check` then builds
+and tests everything, with no other machine-local state.
+
 ## Security checklist
 
-### Read your own diff adversarially before asking for review
+### Nothing machine-specific or personal reaches git
+
+**No detail of the machine you happen to be working on belongs in anything that
+lands in the repository** — not in code, configs, manifests, docs, comments,
+commit messages, or PR descriptions. That covers absolute home paths, usernames,
+internal hostnames, IP addresses, personal ports, email addresses, and account
+identifiers.
+
+The committed VS Code MCP example hardcodes an absolute developer home path
+(#74), which is the whole failure mode in one line: it does not work for anyone
+else, and it publishes the author's directory layout and account name for no
+benefit.
+
+Use workspace-relative paths, read anything machine-specific from configuration
+or the environment, and put obvious placeholders in examples:
+`/home/<user>` or `$HOME`, `example.com`, `user@example.com`, `192.0.2.0/24`.
+Values shared by CI or by every user of the crate are fine; a specific
+workstation is not.
+
+Scan the diff for real paths, hostnames, and addresses before committing. A
+`grep` for your own username and home directory takes a second and catches
+nearly all of it.
+
+### Test data stays synthetic or public
+
+Fixtures in this workspace are captured from data.gov, whose contents are public
+federal metadata, so there is no personal data in them by construction. Keep it
+that way: never commit a payload from a private or authenticated endpoint, and
+never paste a real credential into a fixture even in a redacted-looking form.
+Hand-written fixtures use obviously fake values.
+
+### Read your own diff adversarially — twice
 
 Before requesting review, reread the change looking for: untrusted input
 crossing a trust boundary (network responses, MCP tool arguments, CLI
@@ -754,15 +949,30 @@ messages, panics reachable from input, and paths or shell strings built by
 concatenation. Every one of those classes has produced a real defect in this
 workspace.
 
+**Then review the fixes, as a second pass over the new diff.** A fix is fresh
+code written under time pressure by someone who has stopped looking for
+problems, and it gets no scrutiny at all unless you deliberately turn around and
+look at it.
+
+This is written from a fix that shipped a fresh bug. Correcting the MCP content
+blocks (#60) introduced a `structuredContent` that was a bare JSON array for two
+of the five tools — a new spec violation, created by the change that existed to
+remove a spec violation. It survived because verification exercised one tool and
+generalised, and because nobody re-reviewed the repair.
+
+Anything you deliberately leave unfixed gets a one-line reason recorded in the
+PR, so a reviewer can tell a considered decision from an oversight.
+
 Scan dependencies whenever the lockfile changed, before the first build.
 
 Before any release:
 
-- [ ] `cargo audit` passes
+- [ ] `just audit` passes — RustSec *and* OSV
 - [ ] User-supplied paths are sanitized via `data_gov::util::sanitize_path_component()`
 - [ ] MCP `output_dir` parameter rejects `..`
 - [ ] No secrets (API keys, tokens) in logs or error messages
 - [ ] Download URLs are not constructed from unvalidated user input
+- [ ] No absolute home path, username, hostname, or email in the diff
 
 ## CI pipeline
 
@@ -770,11 +980,17 @@ GitHub Actions CI (`.github/workflows/ci.yml`) runs on pushes and pull requests
 targeting `main` **and any `release/**` branch**, so release-branch work is gated
 the same way `main` is.
 
+**Every step calls a `just` recipe**, so the pipeline and a local `just check`
+run identical commands. Changing a gate command means editing the `justfile`,
+once.
+
 **Test Suite** (matrix: stable, beta, MSRV 1.90)
-1. **Format check** (`cargo fmt --all -- --check`, stable only)
-2. **Clippy** with `-D warnings` (stable only)
-3. **Build** (`--all-features --workspace`)
-4. **Tests** (`cargo test --all-features --workspace`)
+1. **Format check** (`just fmt-check`, stable only)
+2. **Clippy** (`just lint`, stable only)
+3. **Build** (`just build`)
+4. **Tests** (`just test`)
+5. **rustls-only build** (`just check-rustls`) — the configuration
+   `--all-features` never compiles
 
 Test selection matters here. `--workspace` covers unit tests, every `tests/`
 integration target, and doc tests. Selecting `--lib` instead silently skips both
@@ -783,15 +999,17 @@ every `tests/` target — 37 of 181 tests would run, while `clippy --all-targets
 still compiles the rest so nothing looks wrong. Do not narrow this back.
 
 **Other jobs**
-5. **Examples** — compiles all workspace examples (they make real API calls, so
-   they are built but never run)
-6. **Documentation build** (`cargo doc --no-deps`)
-7. **Security audit** — `cargo audit` *plus* an OSV/GHSA lockfile scan. Both are
+6. **Examples** (`just examples`) — compiles all workspace examples; they make
+   real API calls, so they are built but never run
+7. **Documentation build** (`just docs`)
+8. **Security audit** — `cargo audit` *plus* an OSV/GHSA lockfile scan. Both are
    required; see the dependency-freshness section for why `cargo audit` alone is
-   insufficient.
-8. **Live API Tests** — opt-in via `workflow_dispatch`, runs the `#[ignore]`d
-   network tests. Deliberately not gating: a data.gov outage must not turn PRs
-   red.
+   insufficient. This job does not use `just audit`: locally that recipe calls
+   the `osv-scanner` CLI, while CI runs the upstream scanner action. Same two
+   databases, different delivery.
+9. **Live API Tests** (`just test-live`) — opt-in via `workflow_dispatch`, runs
+   the `#[ignore]`d network tests. Deliberately not gating: a data.gov outage
+   must not turn PRs red.
 
 All gating checks must pass before merging.
 
@@ -813,6 +1031,10 @@ brief each on its scope, and check first for shared files: a manifest edit or a
 changelog entry in two trees at once serialises whether you planned it or not.
 
 ### Issue and pull request hygiene
+
+**The tracker is GitHub Issues on this repository**, reached with the `gh` CLI
+(`gh issue list`, `gh issue create`, `gh issue comment`). It is settled; do not
+ask again.
 
 - Claim an issue when you start it, so parallel work does not collide.
 - Link the change to the issue: `Closes #N` to auto-close, `Refs #N` when it

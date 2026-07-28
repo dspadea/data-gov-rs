@@ -93,6 +93,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Infrastructure
 
+- **Warnings are now denied by the manifest, not by a flag** (#97). A
+  `[workspace.lints]` table in the root `Cargo.toml`, inherited by all four
+  members, makes a plain `cargo build` fail on any compiler or clippy warning.
+  Enforcement previously depended on someone passing `-D warnings`, so it held
+  in CI and nowhere else.
+- **Added a `justfile`, and CI now calls it** (#97). The gate commands lived in
+  the workflow and in `CLAUDE.md` as two dialects that could drift apart; they
+  are now one set of recipes that both a developer and the pipeline run.
+  `just check` is the gate; `just` lists the rest. Contributors need `just`
+  installed, which `CONTRIBUTING.md` now states.
+- **The rustls-only build is gated** (#98). `--all-features` enables
+  `native-tls` and `rustls` together, a combination no consumer selects, so the
+  rustls-only configuration consumers do select was never compiled or tested.
+  `just check-rustls` builds it, in the gate and locally.
+- **Adopted the remaining shared engineering standards in `CLAUDE.md`**: strict
+  types outbound and permissive types inbound, with the three deserialization
+  failures in this workspace as the evidence; a normal negative answer is not a
+  failure, worked through `dataset_by_slug` returning `Ok(None)` on 404;
+  idempotent and resumable operations, aimed at downloads; coverage as a floor
+  rather than a target; acceptance criteria as individually named tests;
+  adversarial self-review of the fixes as a second pass; transport kept at the
+  crate edges; no machine-specific or personal data in the repository; the
+  release-branch override of the merge default, stated as a table of what is and
+  is not authorised; and GitHub Issues recorded as the tracker.
 - **Recorded the lessons from the 2026-07 review in `CLAUDE.md`**, each written
   from a specific failure rather than from principle: falsifiability is proven
   by mutation rather than by introspection; assertions are driven from the
