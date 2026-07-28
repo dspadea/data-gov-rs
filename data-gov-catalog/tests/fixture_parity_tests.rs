@@ -154,6 +154,21 @@ fn contact_point_name_survives_deserialization() {
         raw_name,
         "contact name was dropped: the API sends `fn`, the model expects `fn_`"
     );
+
+    // Round-trip side: re-serializing must emit the wire name `fn`, not the
+    // schema-invalid `fn_`. A rename that only worked for deserialization
+    // (e.g. `#[serde(alias = "fn")]` instead of `rename`) would pass the
+    // assertion above and still fail this one.
+    let serialized = serde_json::to_value(contact).expect("ContactPoint serializes");
+    assert_eq!(
+        serialized.get("fn").and_then(|v| v.as_str()),
+        raw_name,
+        "re-serialized contactPoint must carry the name under the wire key `fn`"
+    );
+    assert!(
+        serialized.get("fn_").is_none(),
+        "re-serialized contactPoint must not emit the schema-invalid key `fn_`, got {serialized}"
+    );
 }
 
 // --- Fixture provenance -----------------------------------------------------
