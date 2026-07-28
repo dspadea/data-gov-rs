@@ -3,7 +3,7 @@ use serde::de::DeserializeOwned;
 use std::sync::Arc;
 
 /// Configuration for the CKAN client
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct Configuration {
     /// Base URL for the CKAN API (e.g., `https://catalog.data.gov/api/3`)
     pub base_path: String,
@@ -13,7 +13,12 @@ pub struct Configuration {
     pub client: reqwest::Client,
     /// Basic authentication credentials (username, optional password)
     pub basic_auth: Option<BasicAuth>,
-    /// OAuth access token
+    /// OAuth access token.
+    ///
+    /// Not currently attached to outgoing requests: CKAN's Action API
+    /// defines no OAuth flow of its own, and the RFC 6750 bearer semantics
+    /// an OAuth access token normally rides on over HTTP are covered by
+    /// [`Self::bearer_access_token`] instead. Kept for API compatibility.
     pub oauth_access_token: Option<String>,
     /// Bearer token for authentication
     pub bearer_access_token: Option<String>,
@@ -25,12 +30,23 @@ pub struct Configuration {
 pub type BasicAuth = (String, Option<String>);
 
 /// API key configuration
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct ApiKey {
     /// Optional prefix for the API key (e.g., "Bearer")
     pub prefix: Option<String>,
     /// The actual API key value
     pub key: String,
+}
+
+impl std::fmt::Debug for ApiKey {
+    /// Redacts [`Self::key`] so an `ApiKey` never leaks a secret into a log
+    /// line, an error message, or a test failure printed to a CI console.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ApiKey")
+            .field("prefix", &self.prefix)
+            .field("key", &"[REDACTED]")
+            .finish()
+    }
 }
 
 impl Configuration {
@@ -51,6 +67,35 @@ impl Default for Configuration {
             bearer_access_token: None,
             api_key: None,
         }
+    }
+}
+
+/// `Some("[REDACTED]")` for a configured secret, `None` for an absent one.
+///
+/// Lets a `Configuration` be logged whole (`tracing::debug!(?config)`, a
+/// failed-assertion printout, ...) without a credential ever reaching a log
+/// line or a console.
+fn redacted(secret: &Option<String>) -> Option<&'static str> {
+    secret.as_ref().map(|_| "[REDACTED]")
+}
+
+impl std::fmt::Debug for Configuration {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Username is not secret; only the password half of basic auth is.
+        let basic_auth = self
+            .basic_auth
+            .as_ref()
+            .map(|(user, pass)| (user.as_str(), pass.as_deref().map(|_| "[REDACTED]")));
+
+        f.debug_struct("Configuration")
+            .field("base_path", &self.base_path)
+            .field("user_agent", &self.user_agent)
+            .field("client", &self.client)
+            .field("basic_auth", &basic_auth)
+            .field("oauth_access_token", &redacted(&self.oauth_access_token))
+            .field("bearer_access_token", &redacted(&self.bearer_access_token))
+            .field("api_key", &self.api_key)
+            .finish()
     }
 }
 
@@ -215,11 +260,13 @@ impl CkanClient {
     ) -> Result<T, CkanError> {
         let url = format!("{}/action/{}", self.configuration.base_path, action);
 
-        let response = self
-            .configuration
-            .client
-            .get(&url)
-            .query(params)
+        let mut req = self.configuration.client.get(&url).query(params);
+        if let Some(ua) = &self.configuration.user_agent {
+            req = req.header(reqwest::header::USER_AGENT, ua);
+        }
+        req = self.apply_credentials(req);
+
+        let response = req
             .send()
             .await
             .map_err(|e| CkanError::RequestError(Box::new(e)))?;
@@ -255,6 +302,37 @@ impl CkanClient {
                 message: "No result data in API response".to_string(),
             }),
         }
+    }
+
+    /// Attach whichever credential is configured, in priority order: an
+    /// explicit CKAN API key, then a bearer token, then HTTP basic auth.
+    ///
+    /// A CKAN API key is sent as `Authorization: <prefix> <key>` (or just
+    /// `<key>` with no configured prefix) -- the mechanism CKAN's own API
+    /// documents natively, distinct from RFC 6750 bearer tokens. Only one
+    /// credential is ever attached per request, so a `Configuration` with
+    /// more than one set is not an error, just resolved by this order.
+    ///
+    /// `oauth_access_token` is not attached here: CKAN's Action API defines
+    /// no OAuth flow of its own, and RFC 6750 bearer semantics -- which is
+    /// what an OAuth access token normally rides on over HTTP -- are already
+    /// covered by `bearer_access_token`.
+    fn apply_credentials(&self, req: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+        let config = &self.configuration;
+        if let Some(api_key) = &config.api_key {
+            let value = match &api_key.prefix {
+                Some(prefix) => format!("{prefix} {}", api_key.key),
+                None => api_key.key.clone(),
+            };
+            return req.header(reqwest::header::AUTHORIZATION, value);
+        }
+        if let Some(token) = &config.bearer_access_token {
+            return req.bearer_auth(token);
+        }
+        if let Some((username, password)) = &config.basic_auth {
+            return req.basic_auth(username, password.as_deref());
+        }
+        req
     }
 
     /// Search for datasets (packages) with advanced filtering and faceting
