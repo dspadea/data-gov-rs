@@ -345,8 +345,12 @@ impl DataGovClient {
             .map(|p| p.to_path_buf())
             .unwrap_or_else(|| self.config.get_base_download_dir());
 
+        // Clamped here rather than only in `with_max_concurrent_downloads`,
+        // because the field is `pub` and a struct literal reaches it without
+        // passing through the builder. A zero-permit semaphore is never
+        // closed, so `acquire()` would stay pending forever.
         let semaphore = Arc::new(tokio::sync::Semaphore::new(
-            self.config.max_concurrent_downloads,
+            self.config.max_concurrent_downloads.max(1),
         ));
 
         let status_reporter = self.reporter();
