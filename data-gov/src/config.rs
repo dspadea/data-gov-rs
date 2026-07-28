@@ -26,7 +26,12 @@ pub struct DataGovConfig {
     pub user_agent: String,
     /// Maximum concurrent downloads
     pub max_concurrent_downloads: usize,
-    /// Timeout for downloads in seconds
+    /// How long a download may stall, in seconds.
+    ///
+    /// This is a stall timeout, not a deadline on the whole transfer. It caps
+    /// the connect phase, and it caps the wait for each read of the response
+    /// body, resetting after every successful read. A large file that arrives
+    /// slowly but steadily is not cut off; a connection that stops sending is.
     pub download_timeout_secs: u64,
     /// Permit downloads whose destination is on a private network.
     ///
@@ -149,7 +154,11 @@ impl DataGovConfig {
         self
     }
 
-    /// Set the download timeout.
+    /// Set how long a download may stall before it is abandoned.
+    ///
+    /// See [`download_timeout_secs`](Self::download_timeout_secs): this bounds
+    /// the connect phase and each read of the body, not the transfer as a
+    /// whole.
     pub fn with_download_timeout(mut self, timeout_secs: u64) -> Self {
         self.download_timeout_secs = timeout_secs;
         self

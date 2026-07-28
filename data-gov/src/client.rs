@@ -60,8 +60,13 @@ impl DataGovClient {
         let catalog = CatalogClient::new(config.catalog_config.clone());
 
         let allow_private = config.allow_private_network_downloads;
+        // A stall timeout, not a deadline on the transfer. `timeout` runs from
+        // the start of the connect until the body has finished, which caps how
+        // large a file can be fetched rather than how long it may hang.
+        let stall = std::time::Duration::from_secs(config.download_timeout_secs);
         let http_client = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(config.download_timeout_secs))
+            .connect_timeout(stall)
+            .read_timeout(stall)
             .user_agent(&config.user_agent)
             .dns_resolver(util::GuardedResolver::new(allow_private))
             .redirect(reqwest::redirect::Policy::custom(move |attempt| {
