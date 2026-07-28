@@ -153,6 +153,36 @@ fn download_dir_default_applies_when_nothing_is_set() {
     );
 }
 
+/// The other half of the default cell. CLAUDE.md's "Configuration and file
+/// locations" table names `dirs::download_dir()` as the call for the user's
+/// own Downloads folder, so that call is the specification here, not this
+/// crate's incidental choice. `~/Downloads` is the fallback where the platform
+/// names no folder.
+#[test]
+fn download_dir_default_is_the_downloads_folder_in_interactive_mode() {
+    let resolved = ConfigResolver::new()
+        .with_mode(OperatingMode::Interactive)
+        .resolve()
+        .expect("resolution must succeed");
+
+    let expected = dirs::download_dir().unwrap_or_else(|| {
+        dirs::home_dir()
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join("Downloads")
+    });
+
+    assert_eq!(resolved.config().get_base_download_dir(), expected);
+    assert_ne!(
+        resolved.config().get_base_download_dir(),
+        std::env::current_dir().expect("the test process has a cwd"),
+        "the REPL must not silently download into whatever directory it was launched from"
+    );
+    assert_eq!(
+        resolved.source_of(SettingKey::DownloadDir),
+        SettingSource::Default
+    );
+}
+
 // ---------------------------------------------------------------------------
 // base_url
 // ---------------------------------------------------------------------------
