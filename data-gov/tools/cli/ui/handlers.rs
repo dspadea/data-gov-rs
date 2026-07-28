@@ -997,9 +997,18 @@ mod tests {
             &mut ctx,
         );
 
+        let Err(error) = result else {
+            panic!("lcd in CLI mode must return Err, not silently succeed");
+        };
+        // `is_err()` alone is satisfied by *any* error, including one from
+        // a completely different code path (e.g. a client construction
+        // failure) that would make this test pass for the wrong reason.
+        // Pin the actual message so the test names the real defect.
+        let message = error.to_string();
         assert!(
-            result.is_err(),
-            "lcd in CLI mode must return Err, not silently succeed"
+            message.contains("lcd") && message.contains("REPL"),
+            "expected the 'lcd is only available in interactive REPL mode' \
+             message, got: {message}"
         );
     }
 
@@ -1018,9 +1027,21 @@ mod tests {
             &mut ctx,
         );
 
+        let Err(error) = result else {
+            panic!("an unknown `ls` subject must return Err, not print and return Ok");
+        };
+        // Pin the message, not just Err-ness: `is_err()` alone would also
+        // pass for an unrelated failure (a network error, a panic caught
+        // upstream as an Err, ...) that has nothing to do with "bogus"
+        // being an unrecognized subject.
+        let message = error.to_string();
         assert!(
-            result.is_err(),
-            "an unknown `ls` subject must return Err, not print and return Ok"
+            message.contains("bogus"),
+            "error should name the rejected subject: {message}"
+        );
+        assert!(
+            message.contains("organizations"),
+            "error should name the one subject that IS available: {message}"
         );
     }
 
