@@ -1,6 +1,13 @@
 use crate::models;
 use serde::de::DeserializeOwned;
 use std::sync::Arc;
+use std::time::Duration;
+
+/// Connect timeout [`Configuration::default`] builds [`Configuration::client`] with.
+const DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Overall request timeout [`Configuration::default`] builds [`Configuration::client`] with.
+const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Configuration for the CKAN client
 #[derive(Clone)]
@@ -12,8 +19,27 @@ pub struct Configuration {
     pub base_path: String,
     /// User agent string for HTTP requests
     pub user_agent: Option<String>,
-    /// HTTP client instance
+    /// HTTP client instance.
+    ///
+    /// [`Configuration::default`] (and therefore [`Configuration::new`])
+    /// builds this from [`Self::connect_timeout`] and [`Self::timeout`], so a
+    /// stalled server -- one that accepts the connection but never sends
+    /// response headers -- cannot hang a caller forever. Supplying your own
+    /// `client` here (via struct-update syntax against a value other than
+    /// `Configuration::default()`, or a bare struct literal) bypasses those
+    /// two fields entirely; set your own timeouts on it directly in that
+    /// case.
     pub client: reqwest::Client,
+    /// Connect timeout used when [`Configuration::default`] builds [`Self::client`].
+    ///
+    /// Changing this field on an already-constructed `Configuration` has no
+    /// effect on `client`, which was already built; see [`Self::client`].
+    pub connect_timeout: Duration,
+    /// Overall request timeout used when [`Configuration::default`] builds [`Self::client`].
+    ///
+    /// Changing this field on an already-constructed `Configuration` has no
+    /// effect on `client`, which was already built; see [`Self::client`].
+    pub timeout: Duration,
     /// Basic authentication credentials (username, optional password)
     pub basic_auth: Option<BasicAuth>,
     /// OAuth access token.
@@ -61,6 +87,21 @@ impl Configuration {
 
 impl Default for Configuration {
     fn default() -> Self {
+        let connect_timeout = DEFAULT_CONNECT_TIMEOUT;
+        let timeout = DEFAULT_TIMEOUT;
+
+        // `ClientBuilder::build()` only fails for structurally invalid
+        // client configuration (a bad TLS backend or proxy setup); a builder
+        // that sets only timeouts cannot fail in practice. Fall back to an
+        // untimed client rather than panicking, per #48's acceptance
+        // criteria -- a client with no timeout is still strictly better than
+        // no client at all.
+        let client = reqwest::Client::builder()
+            .connect_timeout(connect_timeout)
+            .timeout(timeout)
+            .build()
+            .unwrap_or_else(|_| reqwest::Client::new());
+
         Configuration {
             // catalog.data.gov (the old default) is a confirmed 404: data.gov
             // retired its CKAN endpoint in 2026. open.canada.ca is a live,
@@ -70,7 +111,9 @@ impl Default for Configuration {
             // Point this at your own instance for any real use.
             base_path: "https://open.canada.ca/data/en/api/3".to_owned(),
             user_agent: Some(concat!("data-gov-rs/", env!("CARGO_PKG_VERSION")).to_owned()),
-            client: reqwest::Client::new(),
+            client,
+            connect_timeout,
+            timeout,
             basic_auth: None,
             oauth_access_token: None,
             bearer_access_token: None,
@@ -100,6 +143,8 @@ impl std::fmt::Debug for Configuration {
             .field("base_path", &self.base_path)
             .field("user_agent", &self.user_agent)
             .field("client", &self.client)
+            .field("connect_timeout", &self.connect_timeout)
+            .field("timeout", &self.timeout)
             .field("basic_auth", &basic_auth)
             .field("oauth_access_token", &redacted(&self.oauth_access_token))
             .field("bearer_access_token", &redacted(&self.bearer_access_token))
@@ -228,11 +273,7 @@ impl CkanClient {
     /// let config = Arc::new(Configuration {
     ///     base_path: "https://open.canada.ca/data/en/api/3".to_string(),
     ///     user_agent: Some("my-rust-app/1.0".to_string()),
-    ///     client: reqwest::Client::new(),
-    ///     basic_auth: None,
-    ///     oauth_access_token: None,
-    ///     bearer_access_token: None,
-    ///     api_key: None,
+    ///     ..Configuration::default()
     /// });
     ///
     /// let client = CkanClient::new(config);
@@ -241,14 +282,11 @@ impl CkanClient {
     /// let authenticated_config = Arc::new(Configuration {
     ///     base_path: "https://open.canada.ca/data/en/api/3".to_string(),
     ///     user_agent: Some("my-rust-app/1.0".to_string()),
-    ///     client: reqwest::Client::new(),
-    ///     basic_auth: None,
-    ///     oauth_access_token: None,
-    ///     bearer_access_token: None,
     ///     api_key: Some(ApiKey {
     ///         prefix: None,
     ///         key: "your-api-key-here".to_string(),
     ///     }),
+    ///     ..Configuration::default()
     /// });
     ///
     /// let auth_client = CkanClient::new(authenticated_config);
@@ -390,8 +428,7 @@ impl CkanClient {
     /// # let client = CkanClient::new(Arc::new(Configuration {
     /// #     base_path: "https://open.canada.ca/data/en/api/3".to_string(),
     /// #     user_agent: Some("test".to_string()),
-    /// #     client: reqwest::Client::new(),
-    /// #     basic_auth: None, oauth_access_token: None, bearer_access_token: None, api_key: None,
+    /// #     ..Configuration::default()
     /// # }));
     ///
     /// // Basic text search
@@ -524,8 +561,7 @@ impl CkanClient {
     /// # let client = CkanClient::new(Arc::new(Configuration {
     /// #     base_path: "https://open.canada.ca/data/en/api/3".to_string(),
     /// #     user_agent: Some("test".to_string()),
-    /// #     client: reqwest::Client::new(),
-    /// #     basic_auth: None, oauth_access_token: None, bearer_access_token: None, api_key: None,
+    /// #     ..Configuration::default()
     /// # }));
     ///
     /// // Get dataset by name
@@ -672,8 +708,7 @@ impl CkanClient {
     /// # let client = CkanClient::new(Arc::new(Configuration {
     /// #     base_path: "https://open.canada.ca/data/en/api/3".to_string(),
     /// #     user_agent: Some("test".to_string()),
-    /// #     client: reqwest::Client::new(),
-    /// #     basic_auth: None, oauth_access_token: None, bearer_access_token: None, api_key: None,
+    /// #     ..Configuration::default()
     /// # }));
     ///
     /// // Get suggestions as user types "elect"
@@ -793,8 +828,7 @@ impl CkanClient {
     /// # let client = CkanClient::new(Arc::new(Configuration {
     /// #     base_path: "https://open.canada.ca/data/en/api/3".to_string(),
     /// #     user_agent: Some("test".to_string()),
-    /// #     client: reqwest::Client::new(),
-    /// #     basic_auth: None, oauth_access_token: None, bearer_access_token: None, api_key: None,
+    /// #     ..Configuration::default()
     /// # }));
     ///
     /// // Find agriculture-related groups

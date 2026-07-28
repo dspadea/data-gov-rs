@@ -10,11 +10,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // unmodified. Point this at your own instance for real use.
         base_path: "https://open.canada.ca/data/en/api/3".to_string(),
         user_agent: Some("debug-test/1.0".to_string()),
-        client: reqwest::Client::new(),
-        basic_auth: None,
-        oauth_access_token: None,
-        bearer_access_token: None,
-        api_key: None,
+        ..Configuration::default()
     });
 
     // Make the request manually to see the actual structure

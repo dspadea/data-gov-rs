@@ -18,11 +18,7 @@ fn test_client(base_url: &str) -> CkanClient {
     let config = Arc::new(Configuration {
         base_path: base_url.to_string(),
         user_agent: Some("test/1.0".to_string()),
-        client: reqwest::Client::new(),
-        basic_auth: None,
-        oauth_access_token: None,
-        bearer_access_token: None,
-        api_key: None,
+        ..Configuration::default()
     });
     CkanClient::new(config)
 }

@@ -7,11 +7,7 @@ fn test_client_creation() {
     let config = Arc::new(Configuration {
         base_path: "https://open.canada.ca/data/en/api/3".to_string(),
         user_agent: Some("test-client/1.0".to_string()),
-        client: reqwest::Client::new(),
-        basic_auth: None,
-        oauth_access_token: None,
-        bearer_access_token: None,
-        api_key: None,
+        ..Configuration::default()
     });
 
     let client = CkanClient::new(config);
@@ -28,14 +24,11 @@ fn test_authenticated_client_creation() {
     let config = Arc::new(Configuration {
         base_path: "https://open.canada.ca/data/en/api/3".to_string(),
         user_agent: Some("test-client/1.0".to_string()),
-        client: reqwest::Client::new(),
-        basic_auth: None,
-        oauth_access_token: None,
-        bearer_access_token: None,
         api_key: Some(ApiKey {
             prefix: None,
             key: "test-api-key".to_string(),
         }),
+        ..Configuration::default()
     });
 
     let client = CkanClient::new(config);
