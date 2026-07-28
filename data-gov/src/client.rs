@@ -167,8 +167,23 @@ impl DataGovClient {
     }
 
     /// Fetch the DCAT-US 3 record for a harvest-record UUID.
+    ///
+    /// Returns `Err(ResourceNotFound)` if the harvest record has no
+    /// populated transform (`source_transform` is null server-side). That is
+    /// the common case, not a rare one -- see
+    /// [`CatalogClient::harvest_record_transformed`] -- but this wrapper
+    /// keeps a `Result<Dataset>` signature, the same shape [`Self::get_dataset`]
+    /// uses for its own not-found case, rather than pushing an `Option` onto
+    /// every caller.
     pub async fn get_dataset_by_harvest_record(&self, id: &str) -> Result<Dataset> {
-        Ok(self.catalog.harvest_record_transformed(id).await?)
+        self.catalog
+            .harvest_record_transformed(id)
+            .await?
+            .ok_or_else(|| {
+                DataGovError::resource_not_found(format!(
+                    "harvest record {id} has no populated transform"
+                ))
+            })
     }
 
     /// Fetch dataset title suggestions for interactive prompts.
