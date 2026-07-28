@@ -29,9 +29,30 @@ pub(crate) const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(900);
 /// Responses buffered between the dispatch tasks and the writer.
 const RESPONSE_QUEUE_DEPTH: usize = 64;
 
-/// Cancellation handles for the requests currently being served, keyed by
-/// request id.
-type InFlight = Arc<Mutex<HashMap<String, oneshot::Sender<()>>>>;
+/// The requests currently being served, keyed by request id.
+type InFlight = Arc<Mutex<InFlightRequests>>;
+
+/// One request's claim on a request id.
+struct Registration {
+    /// Tells one occupant of a key from the next.
+    ///
+    /// The key alone does not identify whose entry this is: a cancellation
+    /// frees an id, and a retry under that id - a normal thing for a client to
+    /// do - claims the same key. Without the token, a task that finishes just
+    /// after both of those removes the retry's entry instead of its own.
+    token: u64,
+    /// Resolved to ask the dispatch task to stop.
+    cancel: oneshot::Sender<()>,
+}
+
+/// The cancellation registry for one session.
+#[derive(Default)]
+struct InFlightRequests {
+    entries: HashMap<String, Registration>,
+    /// Handed out in order and never reused within a session, so a token
+    /// identifies one occupancy of a key rather than the key itself.
+    next_token: u64,
+}
 
 /// A hold point a test can place in front of one method.
 ///
@@ -271,8 +292,8 @@ impl DataGovMcpServer {
         };
 
         // Registered before the task is spawned, so a cancellation arriving on
-        // the very next line always finds it. The task removes its own entry
-        // when it ends, whether it finished or was cancelled.
+        // the very next line always finds it. The task gives the entry up when
+        // it ends, whether it finished or was cancelled.
         //
         // A second request under an id already in flight is refused rather
         // than allowed to take the slot. MCP forbids reusing a request id
@@ -282,18 +303,7 @@ impl DataGovMcpServer {
         // cancelling that one too. Neither is ever answered.
         let (cancel, cancelled) = oneshot::channel();
         let key = cancellation_key(&id);
-        let already_in_flight = {
-            let mut registry = in_flight.lock().await;
-            match registry.entry(key.clone()) {
-                Entry::Occupied(_) => true,
-                Entry::Vacant(slot) => {
-                    slot.insert(cancel);
-                    false
-                }
-            }
-        };
-
-        if already_in_flight {
+        let Some(token) = register(in_flight, key.clone(), cancel).await else {
             tracing::warn!(request_id = %id, "request id is already in flight");
             let error = ServerError::InvalidRequest(format!(
                 "request id {id} is already in flight; a request id must not be reused \
@@ -301,7 +311,7 @@ impl DataGovMcpServer {
             ));
             send_response(responses, Response::error(Some(id), error)).await;
             return;
-        }
+        };
 
         let server = Arc::clone(self);
         let responses = responses.clone();
@@ -326,10 +336,15 @@ impl DataGovMcpServer {
                 response = server.handle_request(Some(id), request) => {
                     #[cfg(test)]
                     server.hold_epilogue(&gated_method).await;
-                    // Only ever removes this task's own entry: while it ran,
-                    // the id was occupied by this task's sender, because a
-                    // second request under a live id is refused above.
-                    registry.lock().await.remove(&key);
+                    // Compare-and-remove, never remove-by-key. This task can
+                    // reach here after a cancellation has already freed its id
+                    // and a retry has claimed the same key: `select!` keeps the
+                    // branch it did not take alive while this body runs, so the
+                    // cancellation is delivered to a receiver that has already
+                    // lost, and the entry it removed was this task's. Removing
+                    // by key here would take the retry's entry, drop its
+                    // sender, and cancel a request nobody will ever answer.
+                    deregister(&registry, &key, token).await;
                     send_response(&responses, response).await;
                 }
             }
@@ -498,6 +513,41 @@ fn cancellation_key(id: &Value) -> String {
     id.to_string()
 }
 
+/// Claim `key` for a request, returning the token that identifies the claim.
+///
+/// Returns `None` when the key is already occupied, which is a request id
+/// being reused while its first use is still in flight.
+async fn register(in_flight: &InFlight, key: String, cancel: oneshot::Sender<()>) -> Option<u64> {
+    let mut registry = in_flight.lock().await;
+    let token = registry.next_token;
+    match registry.entries.entry(key) {
+        Entry::Occupied(_) => return None,
+        Entry::Vacant(slot) => {
+            slot.insert(Registration { token, cancel });
+        }
+    }
+    // A u64 counter cannot run out inside a session: one id per nanosecond
+    // would take five centuries.
+    registry.next_token = token + 1;
+    Some(token)
+}
+
+/// Give `key` up, but only while `token` still holds it.
+///
+/// The comparison is the whole point. A key can be freed by a cancellation and
+/// claimed again by a retry between a task resolving and that task reaching
+/// here, so "the key is present" does not mean "the key is mine".
+async fn deregister(in_flight: &InFlight, key: &str, token: u64) {
+    let mut registry = in_flight.lock().await;
+    if registry
+        .entries
+        .get(key)
+        .is_some_and(|held| held.token == token)
+    {
+        registry.entries.remove(key);
+    }
+}
+
 /// Honour `notifications/cancelled`.
 ///
 /// MCP asks receivers to "stop processing the cancelled request", "free
@@ -521,8 +571,13 @@ async fn cancel_request(params: Option<Value>, in_flight: &InFlight) {
         .and_then(Value::as_str)
         .unwrap_or("no reason given");
 
-    match in_flight.lock().await.remove(&cancellation_key(requested)) {
-        Some(cancel) => {
+    let held = in_flight
+        .lock()
+        .await
+        .entries
+        .remove(&cancellation_key(requested));
+    match held {
+        Some(Registration { cancel, .. }) => {
             tracing::info!(request_id = %requested, "cancelling request: {reason}");
             if cancel.send(()).is_err() {
                 tracing::debug!(
