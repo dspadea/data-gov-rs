@@ -1009,3 +1009,66 @@ fn configuration_debug_redacts_basic_auth_password() {
         "basic auth password leaked in Configuration Debug output: {debug}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Timeouts (#48)
+// ---------------------------------------------------------------------------
+//
+// `Configuration::default()` built its client with a bare `reqwest::Client::
+// new()`: no connect timeout, no overall request timeout. A host that
+// accepts the TCP/TLS connection but never sends response headers -- a
+// partial outage, a blackholing middlebox -- hangs the caller forever. The
+// MCP server's run loop awaits each request to completion before reading the
+// next line, so one stalled call blocks every request after it, including
+// `shutdown`.
+
+#[tokio::test]
+async fn a_request_against_a_non_responding_endpoint_errors_within_the_configured_timeout() {
+    let server = MockServer::start().await;
+
+    // Far longer than the client's configured timeout below, so a client
+    // that ignores its own timeout would make this test hang instead of
+    // fail -- a stronger signal than a merely-slow response would give.
+    Mock::given(method("GET"))
+        .and(path("/action/package_search"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(json!({"help": "", "success": true, "result": {}}))
+                .set_delay(std::time::Duration::from_secs(10)),
+        )
+        .mount(&server)
+        .await;
+
+    let short_timeout_client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_millis(100))
+        .build()
+        .expect("client with just a timeout must build");
+    let config = Arc::new(Configuration {
+        base_path: server.uri(),
+        client: short_timeout_client,
+        ..Configuration::default()
+    });
+
+    let started = std::time::Instant::now();
+    let result = CkanClient::new(config)
+        .package_search(None, None, None, None)
+        .await;
+    let elapsed = started.elapsed();
+
+    assert!(
+        result.is_err(),
+        "a request against a server that never responds within the timeout must error"
+    );
+    assert!(
+        elapsed < std::time::Duration::from_secs(2),
+        "expected the 100ms client timeout to fire well before the mock's \
+         10s delay; took {elapsed:?}"
+    );
+}
+
+#[test]
+fn default_configuration_sets_explicit_connect_and_request_timeouts() {
+    let config = Configuration::default();
+    assert_eq!(config.connect_timeout, std::time::Duration::from_secs(10));
+    assert_eq!(config.timeout, std::time::Duration::from_secs(30));
+}
