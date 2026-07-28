@@ -50,6 +50,10 @@ jobs:
       run: just fmt-check
       if: matrix.rust == 'stable'
 
+    - name: Check the working docs are plain ASCII
+      run: just check-ascii
+      if: matrix.rust == 'stable'
+
     - name: Run clippy
       run: just lint
       if: matrix.rust == 'stable'

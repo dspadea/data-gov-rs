@@ -7,7 +7,7 @@
 # Three of the recipes exist because of a specific trap:
 #
 #   test          `--workspace` is required. Narrowing to `--lib` silently skips
-#                 both binary crates and every `tests/` target — 37 of 181 tests
+#                 both binary crates and every `tests/` target - 37 of 181 tests
 #                 ran that way, and nothing looked wrong.
 #   check-rustls  `--all-features` enables native-tls and rustls at once, which
 #                 no consumer selects, and never compiles the rustls-only build
@@ -20,7 +20,7 @@ default:
     @just --list
 
 # The full gate. Run this before you push.
-check: fmt-check lint build test check-rustls examples docs
+check: fmt-check check-ascii lint build test check-rustls examples docs
 
 # Format every file in place.
 fmt:
@@ -29,6 +29,20 @@ fmt:
 # Fail if any file is not rustfmt-clean.
 fmt-check:
     cargo fmt --all -- --check
+
+# Fail if the working documents contain characters nobody can type by hand.
+# The READMEs are exempt: their emoji and box-drawing are presentation.
+check-ascii:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    status=0
+    for f in CLAUDE.md justfile; do
+      if LC_ALL=C grep -nP '[^\x00-\x7F]' "$f"; then
+        echo "^ $f: non-ASCII above. Use - for dashes, -> for arrows, ... for ellipsis." >&2
+        status=1
+      fi
+    done
+    exit $status
 
 # Clippy over every target and feature, warnings fatal.
 lint:

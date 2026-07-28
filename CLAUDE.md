@@ -1,14 +1,14 @@
-# Development Guide — data-gov-rs
+# Development Guide - data-gov-rs
 
 ## Project overview
 
 Rust workspace with four crates:
 
-- `data-gov-catalog` — async client for the data.gov Catalog API (current
+- `data-gov-catalog` - async client for the data.gov Catalog API (current
   backend; DCAT-US 3, cursor-paginated)
-- `data-gov` — high-level client + CLI binary (built on `data-gov-catalog`)
-- `data-gov-mcp-server` — MCP server for AI integration
-- `data-gov-ckan` — async CKAN Action API client. data.gov retired its CKAN
+- `data-gov` - high-level client + CLI binary (built on `data-gov-catalog`)
+- `data-gov-mcp-server` - MCP server for AI integration
+- `data-gov-ckan` - async CKAN Action API client. data.gov retired its CKAN
   endpoint in 2026; this crate is retained as a general-purpose client for
   other CKAN-compatible portals (European, state, municipal, university).
 
@@ -56,7 +56,7 @@ change and say why.
 
 Concretely: `data-gov-catalog` and `data-gov-ckan` each expose `native-tls` and
 `rustls-tls`. `--all-features` enables both at once, linking `native-tls` *and*
-`rustls` simultaneously — a configuration no consumer ever selects. The
+`rustls` simultaneously - a configuration no consumer ever selects. The
 rustls-only build, which consumers do select, is never compiled or tested by the
 gate at all. A single-feature build can fail on a missing import, a `cfg` typo,
 or a dependency that only one backend pulls in, and nothing here would notice.
@@ -78,7 +78,7 @@ overrides. Run `cargo fmt --all` before committing. CI rejects unformatted code.
 
 1. **Every public item gets a doc comment.** `pub fn`, `pub struct`, `pub enum`,
    `pub trait`, `pub mod`, and `pub type` all require `///` doc comments. If
-   clippy's `missing_docs` lint fires, add the doc — don't suppress it.
+   clippy's `missing_docs` lint fires, add the doc - don't suppress it.
 
 2. **Module-level docs** (`//!`) go at the top of each `lib.rs` and any module
    that represents a major subsystem. Explain *what* the module provides and
@@ -109,14 +109,14 @@ overrides. Run `cargo fmt --all` before committing. CI rejects unformatted code.
 
 ### Write tests first
 
-Every change — bug fix, new feature, refactor — starts with a failing test:
+Every change - bug fix, new feature, refactor - starts with a failing test:
 
-1. **Red** — Write a test that captures the expected behavior. Run it; confirm it fails.
-2. **Green** — Write the minimum code to make the test pass.
-3. **Refactor** — Clean up while keeping all tests green.
+1. **Red** - Write a test that captures the expected behavior. Run it; confirm it fails.
+2. **Green** - Write the minimum code to make the test pass.
+3. **Refactor** - Clean up while keeping all tests green.
 
 If you are fixing a bug, the first commit should be a test that reproduces it.
-**Commit the failing tests before the implementation — that commit is the
+**Commit the failing tests before the implementation - that commit is the
 spec.**
 
 Two habits that separate a real test from a hopeful one:
@@ -133,7 +133,7 @@ Two habits that separate a real test from a hopeful one:
 
 **Derive every assertion from the specification or from real API data. Never from
 what the implementation currently does.** A test written by reading the code
-cannot detect a wrong implementation, because it was copied from one — it
+cannot detect a wrong implementation, because it was copied from one - it
 converts a bug into a guarantee and makes the fix look like the regression.
 
 This is not hypothetical. Two examples from this workspace:
@@ -143,13 +143,13 @@ This is not hypothetical. Two examples from this workspace:
   a non-conformant server passed its own suite for as long as it existed.
 - `initialize` omitted the required `protocolVersion`, making the server
   unusable from any spec-compliant client. Its test asserted
-  `serverInfo.is_some() || protocolVersion.is_some()` — and `serverInfo` is
+  `serverInfo.is_some() || protocolVersion.is_some()` - and `serverInfo` is
   always present.
 
 So: open the spec, or capture a real response, and assert what *that* says. If
 the implementation disagrees, the test is doing its job.
 
-### Every test must be able to fail — prove it, don't reason about it
+### Every test must be able to fail - prove it, don't reason about it
 
 **Revert the fix and watch the suite go red. Record the mutations in the commit
 message.** Do not settle for asking yourself what a wrong implementation would
@@ -186,7 +186,7 @@ Three ways this goes wrong, each of which happened:
   quietly dropped a non-object `structuredContent`, so a handler emitting a bare
   array produced valid output and the test that existed to catch it stayed
   green. If a guard makes bad input safe, a test downstream of the guard cannot
-  see the upstream defect — assert on what the *producer* emitted.
+  see the upstream defect - assert on what the *producer* emitted.
 
 Vacuity patterns that have all appeared here:
 
@@ -194,20 +194,20 @@ Vacuity patterns that have all appeared here:
 |---|---|
 | `assert!(a.is_some() \|\| b.is_some())` | Short-circuits on an always-present `a`; `b` is never checked |
 | Asserting presence rather than value | Satisfied by any hardcoded constant |
-| wiremock asserting a request was *sent* | Says nothing about whether the response was *understood* — a field that silently deserializes to `None` passes |
+| wiremock asserting a request was *sent* | Says nothing about whether the response was *understood* - a field that silently deserializes to `None` passes |
 | A mock body with only the fields the code reads | Too minimal for a deserialization bug to surface |
 | Asserting a count or a shape the code just produced | Restates the implementation |
 
 The wiremock case is worth calling out because the whole `client_tests.rs`
 suite has it: those tests verify request shaping, and cannot catch a model that
-drops a field. That is why `fixture_parity_tests.rs` exists separately — it
+drops a field. That is why `fixture_parity_tests.rs` exists separately - it
 deserializes captured responses and asserts the fields actually arrive.
 
 ### Verify across the whole set, never one instance
 
 **Drive assertions from the registry, not from a hand-picked example**, so that
 a new member fails the test rather than being silently skipped. Where a list
-exists in code — `TOOL_SPECS`, `SUPPORTED_PROTOCOL_VERSIONS` — iterate it.
+exists in code - `TOOL_SPECS`, `SUPPORTED_PROTOCOL_VERSIONS` - iterate it.
 
 One-instance verification failed three separate times in a single review, and it
 looks like diligence every time:
@@ -223,14 +223,14 @@ them.** A guessed identifier that returns nothing proves nothing about the code.
 
 Iterating the registry is not sufficient on its own, either. Asserting
 `for x in LIST { f(x) == x }` proves only `find(x in LIST) == x`, which holds for
-any contents of `LIST` — including one that has never heard of the value you
+any contents of `LIST` - including one that has never heard of the value you
 care about. Anchor at least one assertion to a literal drawn from outside the
 code, as `PUBLISHED_MCP_REVISIONS` does against `SUPPORTED_PROTOCOL_VERSIONS`.
 
 ### One grep is not coverage
 
-For work whose size is unknown — every call site, every unused item, every place
-a parameter is honoured — **do not stop at a number you picked in advance, and
+For work whose size is unknown - every call site, every unused item, every place
+a parameter is honoured - **do not stop at a number you picked in advance, and
 do not search only one way.** Keep going until two consecutive rounds turn up
 nothing new, and search along axes that are blind to each other:
 
@@ -238,7 +238,7 @@ nothing new, and search along axes that are blind to each other:
 |---|---|
 | Symbol name | The direct callers |
 | String literal | Reflection, config keys, MCP tool names, CLI subcommands dispatched by string |
-| Import and dependency graph | Re-exports — `data_gov::catalog` re-exports catalog types, so a grep for `data_gov_catalog` misses every consumer that goes through it |
+| Import and dependency graph | Re-exports - `data_gov::catalog` re-exports catalog types, so a grep for `data_gov_catalog` misses every consumer that goes through it |
 | Manifests and workflows | `Cargo.toml` features, `justfile` recipes, CI steps |
 | Git history | Things deleted and half-restored, and why something is the way it is |
 
@@ -262,11 +262,11 @@ confirms it.** `data-gov-ckan` is the standing example: all 23 of its wiremock
 tests are driven by inline bodies, and those bodies use UUID-shaped ids such as
 `aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee`. The model types `id` as `uuid::Uuid`.
 CKAN's `id` column is unconstrained text. The suite therefore *guarantees* #63
-rather than catching it — every test feeds the model exactly the assumption the
+rather than catching it - every test feeds the model exactly the assumption the
 model got wrong. No amount of care in writing those bodies would have helped,
 because the author of the body and the author of the type held the same belief.
 
-Reserve hand-written bodies for cases you genuinely cannot capture — a malformed
+Reserve hand-written bodies for cases you genuinely cannot capture - a malformed
 response, a value the live API does not currently produce. A specific error
 status is *not* on that list: capture it.
 
@@ -276,7 +276,7 @@ and they are not the same shape:
 | Fixture | Endpoint | Status | Why it matters |
 |---|---|---|---|
 | `dataset_not_found.json` | `/api/dataset/{absent}` | 404 | A well-formed, empty `SearchResponse`. This is what proves `dataset_by_slug` can tell "no such dataset" from "the API is down" |
-| `search_no_matches.json` | `/search?q={no-match}` | 200 | `{"results": [], "sort": "relevance"}` — **no `total`, no cursor**. A different envelope from the 404 body, which is why every envelope field must stay optional |
+| `search_no_matches.json` | `/search?q={no-match}` | 200 | `{"results": [], "sort": "relevance"}` - **no `total`, no cursor**. A different envelope from the 404 body, which is why every envelope field must stay optional |
 
 ### Every fixture records where it came from
 
@@ -292,7 +292,7 @@ makes a stale set visible without reading the git log.
 **A fixture that cannot be captured goes under `unverified` with a reason.**
 `harvest_record_transformed.json` is the current one: the endpoint 404s for every
 sampled record (#83), so the committed file is the last capture from when it
-still answered. Recording that is the point — an unverified fixture is
+still answered. Recording that is the point - an unverified fixture is
 acceptable, an unverified fixture that looks verified is not.
 
 Re-capture when the API changes, and before changing any model. Fixtures
@@ -309,7 +309,7 @@ Every behaviour needs wrong types, nulls, empty strings, absent fields,
 duplicates, boundary values, malformed input, and unusual orderings.
 
 Backfilling tests for behaviour that predates the current change is expected
-work, not scope creep — particularly when touching an area whose existing
+work, not scope creep - particularly when touching an area whose existing
 coverage turns out to be vacuous.
 
 ### Specification-driven tests
@@ -331,7 +331,7 @@ number: a test written to raise coverage is optimised for executing lines, which
 is exactly the vacuous test this project has already been bitten by. Uncovered
 code is a question to answer, not a defect to paper over.
 
-Unit tests are deterministic — no network, no wall clock, no filesystem, no
+Unit tests are deterministic - no network, no wall clock, no filesystem, no
 randomness. Where behaviour depends on one of those, inject it. The live-API
 tests are `#[ignore]`d and run in their own job for exactly this reason.
 
@@ -363,8 +363,8 @@ the tests. Each of those has been wrong about it.
 
 **`https://catalog.data.gov/openapi.json`** is the Catalog API's own OpenAPI
 document, and it is authoritative in a way the human-readable pages are not.
-Check it — and the equivalent `/openapi.json`, `/swagger.json` or
-`/.well-known/` for any other service — before concluding what an API does or
+Check it - and the equivalent `/openapi.json`, `/swagger.json` or
+`/.well-known/` for any other service - before concluding what an API does or
 does not offer.
 
 This is not a stylistic preference. `/api/dataset/{slug_or_id}`, the exact
@@ -372,7 +372,7 @@ dataset-lookup endpoint, is declared there with its parameter and its 200/404
 responses. It appears nowhere in the prose documentation at
 `resources.data.gov/catalog-api`. Working from the prose alone, the endpoint was
 written off as undocumented and the crate shipped a full-text-search workaround
-in its place for an entire release — a workaround that failed for 15% of
+in its place for an entire release - a workaround that failed for 15% of
 datasets. The same document also shows `/search` has no `slug` parameter at all,
 which is the direct explanation for why `SearchParams::slug` was silently
 ignored.
@@ -385,7 +385,7 @@ as a starting point, not as the contract.
 `SearchParams::slug` shipped as a documented, builder-exposed filter that the
 Catalog API silently ignores: it returns a full unfiltered page with HTTP 200,
 so a caller receives arbitrary results and no error. The fixture test "covering"
-it could not catch this — wiremock asserts the parameter was *sent*, never that
+it could not catch this - wiremock asserts the parameter was *sent*, never that
 the server *honours* it.
 
 Before claiming a query parameter filters, probe the live endpoint and compare
@@ -401,7 +401,7 @@ differently and must not be confused:
 
 | Result | Meaning |
 |--------------------------------|-------------------------------------------|
-| Identical to baseline | Parameter **ignored** — the filter is a no-op |
+| Identical to baseline | Parameter **ignored** - the filter is a no-op |
 | Zero results | Parameter **honoured**, value simply matched nothing |
 
 **Source test values from the API, never invent them.** A guessed value that
@@ -413,8 +413,8 @@ from `/api/organizations` is `noaa`, and the filter works correctly.
 Any time a model or document structure looks like it needs to change, the order
 is fixed and must not be reversed:
 
-1. **Capture fresh fixtures** — `scripts/capture-fixtures.sh`
-2. **Prove the change against them** — show the field really is absent, renamed,
+1. **Capture fresh fixtures** - `scripts/capture-fixtures.sh`
+2. **Prove the change against them** - show the field really is absent, renamed,
    or a different type in current responses
 3. **Then** change the model and update the tests
 
@@ -423,25 +423,25 @@ fixture alone.
 
 **Removing a field is a high bar; removing an identifier is higher.** Fields
 vanishing from a public open-data API is unlikely. A field missing from one
-sample far more often means the sample is unrepresentative — one publisher
-omitting an optional field — than that the API dropped it. Check several records
+sample far more often means the sample is unrepresentative - one publisher
+omitting an optional field - than that the API dropped it. Check several records
 from different publishers, and prefer `Option<T>` with `#[serde(default)]` over
 deletion. Widening a type (`i32` -> `i64`) or adding a `rename` is a lower bar,
 but still needs a captured response showing the real shape.
 
 This is not hypothetical: `ContactPoint::fn_` keys on the literal name `fn_`
 while payloads send `fn`, so every contact name is silently dropped. Only
-fixtures refreshed from reality catch that class of defect — and only if they
+fixtures refreshed from reality catch that class of defect - and only if they
 are refreshed from the API rather than hand-edited to match the code.
 
 ### What to test
 
 For every public function or method:
 
-1. **Happy path** — normal inputs produce correct output
-2. **Edge cases** — empty strings, zero/negative values, None/missing fields
-3. **Error cases** — invalid input returns the correct error variant, not a panic
-4. **Boundary conditions** — pagination limits, filename conflicts, path traversal
+1. **Happy path** - normal inputs produce correct output
+2. **Edge cases** - empty strings, zero/negative values, None/missing fields
+3. **Error cases** - invalid input returns the correct error variant, not a panic
+4. **Boundary conditions** - pagination limits, filename conflicts, path traversal
 
 ### Running tests
 
@@ -490,7 +490,7 @@ use `unreachable!()` with a comment explaining why.
 Never discard an error with `.ok()`, `let _ =`, or an empty `Err(_) => {}`
 unless the error genuinely doesn't matter. If you can't propagate it, at
 minimum log it (`tracing::warn!`, `eprintln!`). A silently swallowed error
-is a debugging nightmare — the operation fails and nothing explains why.
+is a debugging nightmare - the operation fails and nothing explains why.
 
 **Acceptable silent discards:**
 - Fire-and-forget side effects where failure is expected and harmless (e.g.,
@@ -502,7 +502,7 @@ Everything else should either propagate (`?`), log, or surface to the user.
 ### A normal negative answer is not a failure
 
 **Distinguish "the answer is no" from "the request did not work."** They need
-different types, different log levels, and different behaviour from the caller —
+different types, different log levels, and different behaviour from the caller -
 one is the API working correctly, the other needs somebody's attention.
 
 `dataset_by_slug` is the worked example. A 404 means the dataset does not exist,
@@ -520,8 +520,8 @@ The same split applies elsewhere:
   error log, which is worse than not logging.
 - **MCP tools.** A tool that declines for a business reason returns a result
   with `isError: true` and an explanatory content block. A JSON-RPC error object
-  is for protocol and transport faults — a malformed request, an unknown method
-  — not for "no datasets matched".
+  is for protocol and transport faults - a malformed request, an unknown method
+  - not for "no datasets matched".
 - **Empty results.** Zero search hits is a successful search. Never an error.
 
 When it is genuinely unclear which of the two a case is, ask rather than
@@ -543,7 +543,7 @@ are this project's writes:
   rename onto the destination only once the transfer finished, so the final path
   only ever holds a complete file and an interrupted run loses nothing.
 - **Distinct resources get distinct paths.** Two distributions sharing a title
-  must not resolve to the same filename — that is not idempotency, it is data
+  must not resolve to the same filename - that is not idempotency, it is data
   loss reported as success (#52).
 - **Config writes replace, never append.** Setting an API key twice leaves one
   key.
@@ -557,18 +557,18 @@ second run leaves the same state as the first.
   `"invalid jsonrpc version: expected \"2.0\", got \"1.0\""` not `"bad version"`.
 - **Include context.** Name the method, field, or value that caused the error:
   `"data_gov.search: missing parameters"` not `"missing parameters"`.
-- **Don't dump internals.** Error messages are for consumers — omit stack
+- **Don't dump internals.** Error messages are for consumers - omit stack
   traces, memory addresses, and internal type names. Keep them to one or two
   sentences.
 - **Use error enums.** Each crate defines a clear error enum (e.g.,
   `ServerError`, `DataGovError`, `CkanError`). Map external errors with `#[from]`
-  or explicit conversions — don't stringify them prematurely.
+  or explicit conversions - don't stringify them prematurely.
 
 ### No `unsafe`
 
 This project has no need for `unsafe`. Do not add `unsafe` blocks, `unsafe fn`,
 or `unsafe impl`. If a dependency requires unsafe at its boundary, wrap it in a
-safe abstraction — but that situation should not arise here.
+safe abstraction - but that situation should not arise here.
 
 ### No blocking in async contexts
 
@@ -579,7 +579,7 @@ or while a tokio runtime is active. Blocking the executor starves other tasks.
 - Use `tokio::fs` instead of `std::fs` in async code.
 - Use `tokio::time::sleep` instead of `std::thread::sleep`.
 - If you must run blocking code, use `tokio::task::spawn_blocking`.
-- The REPL uses `Runtime::block_on` at the top level — that's fine since it
+- The REPL uses `Runtime::block_on` at the top level - that's fine since it
   owns the runtime. Don't nest `block_on` inside an already-async context.
 
 ## Rust idioms
@@ -590,14 +590,14 @@ Both directions want types rather than bare strings, but they fail in opposite
 ways, and the general "model fixed value sets as enums" rule needs inverting at
 the inbound boundary.
 
-**Outbound — values we choose — get enums.** A `sort` order, an operating mode,
+**Outbound - values we choose - get enums.** A `sort` order, an operating mode,
 a colour setting, an output format: the valid set is closed and we own it, so an
 enum makes the invalid state unrepresentable and hands the caller compile-time
 errors and completion instead of a runtime 400. `OperatingMode`, `ColorMode`,
 and `ReplCommand` are the existing examples. A parameter typed `Option<String>`
 that the API accepts only four values for is a missing enum.
 
-**Inbound — values the server chooses — get permissive types.** A strict type on
+**Inbound - values the server chooses - get permissive types.** A strict type on
 a deserialised field converts one unexpected value into a total failure of the
 whole response. This is the single most productive bug family in this workspace:
 
@@ -624,9 +624,9 @@ instead of `PathBuf` in function parameters when the function doesn't need
 ownership. Clone only when you genuinely need an independent owned copy.
 
 Common smells:
-- `.clone()` immediately before passing to a function — the function should
+- `.clone()` immediately before passing to a function - the function should
   probably take a reference instead.
-- `.to_string()` on a `&str` just to satisfy a `String` parameter — change the
+- `.to_string()` on a `&str` just to satisfy a `String` parameter - change the
   parameter.
 - Cloning inside a loop when a reference would work.
 
@@ -645,7 +645,7 @@ The workspace uses `tracing`. Use the right level:
 **Rules:**
 - Never log secrets (API keys, tokens, passwords) at any level.
 - Log at `warn` or `error` when discarding an error you can't propagate.
-- Don't log in hot paths at `info` or above — keep `info` to startup, shutdown,
+- Don't log in hot paths at `info` or above - keep `info` to startup, shutdown,
   and per-request summaries, not per-chunk download progress.
 - Structured fields (`tracing::info!(method = %name, "request handled")`) are
   preferred over string interpolation.
@@ -679,7 +679,7 @@ to `main`:
 
 1. Cut `release/X.Y.Z` from `main`.
 2. Do each work item on its own branch off the release branch.
-3. Merge finished items into the release branch — never directly into `main`.
+3. Merge finished items into the release branch - never directly into `main`.
 4. Validate the release as a whole.
 5. Tag and publish, then merge the release branch to `main`.
 
@@ -691,7 +691,7 @@ before merging" default.** Concretely, what it authorises and what it does not:
 
 | Action | Authorised? |
 |---|---|
-| Merge a green, complete work-item PR into `release/X.Y.Z` | Yes — this is the workflow |
+| Merge a green, complete work-item PR into `release/X.Y.Z` | Yes - this is the workflow |
 | Merge anything into `main` | No. Ask, every time |
 | Tag or publish to crates.io | No. Ask, every time |
 | Commit directly to `release/X.Y.Z` without a PR | No. Work items get branches and PRs |
@@ -700,19 +700,19 @@ before merging" default.** Concretely, what it authorises and what it does not:
 somewhere else earlier.
 
 **Never stack a pull request on another work branch.** Every work branch targets
-the release branch directly, even when one change logically builds on another —
+the release branch directly, even when one change logically builds on another -
 merge the first, then merge the release branch into the second.
 
 CI triggers on `main` and `release/**` only, so a PR whose base is another
 feature branch receives **no checks at all** and says so quietly:
 `no checks reported`. Retargeting an existing PR does not fix it either, because
-`pull_request` fires on `opened`, `synchronize` and `reopened` — not `edited`.
+`pull_request` fires on `opened`, `synchronize` and `reopened` - not `edited`.
 It takes a fresh push. A stacked PR that looks reviewable while having been
 tested by nothing is the failure mode here, and it is silent.
 
 **`Closes #N` does not fire on a release-branch merge.** GitHub only auto-closes
 from the default branch, so issues stay open until the release reaches `main`.
-That is correct — the fix is not released yet — but it looks broken. Note on
+That is correct - the fix is not released yet - but it looks broken. Note on
 the issue where the work landed rather than closing it by hand.
 
 Expect `CHANGELOG.md` to conflict on every parallel PR, since they all append
@@ -722,23 +722,23 @@ sides; if it becomes tiresome, changelog fragments would remove the class.
 ### Changelog
 
 `CHANGELOG.md` follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
-Every change that a consumer could notice — API changes, bug fixes, behavioural
-changes, CLI or MCP surface changes — **adds an entry under the current
+Every change that a consumer could notice - API changes, bug fixes, behavioural
+changes, CLI or MCP surface changes - **adds an entry under the current
 `## [X.Y.Z] - Unreleased` heading in the same PR that makes the change.** Purely
 internal refactors with no observable effect may be omitted.
 
 #### Section order is mandatory
 
 **`Breaking` comes first, `Changed` second, always.** These are the two
-categories that cost a reader real money if missed — one stops their build, the
-other silently alters what their working code does — so they must never be
+categories that cost a reader real money if missed - one stops their build, the
+other silently alters what their working code does - so they must never be
 buried beneath a list of additions and fixes. Within a release, sections appear
 in exactly this order, omitting any that are empty:
 
 | Order | Section | What belongs here |
 |-------|-----------------|-------------------------------------------------------------|
 | 1 | `Breaking` | Anything requiring a consumer to change their code to compile: removed or renamed public items, changed signatures or field types, altered feature or wire formats. **Removing public API is `Breaking`, not `Removed`.** |
-| 2 | `Changed` | Behaviour changes that still compile: different defaults, different output, different ordering, a fix that alters an existing contract. The dangerous ones — call these out even when they look minor. |
+| 2 | `Changed` | Behaviour changes that still compile: different defaults, different output, different ordering, a fix that alters an existing contract. The dangerous ones - call these out even when they look minor. |
 | 3 | `Security` | Advisories cleared and vulnerabilities fixed. Name the CVE/RUSTSEC/GHSA ID. |
 | 4 | `Added` | New APIs, features, flags, tools. |
 | 5 | `Fixed` | Bugs fixed without changing an intended contract. |
@@ -747,7 +747,7 @@ in exactly this order, omitting any that are empty:
 | 8 | `Infrastructure` | CI, build, tooling. No consumer impact. |
 
 Where a single release has several distinct breaking themes, use qualified
-headings (`### Breaking — Catalog API migration`) and keep them adjacent at the
+headings (`### Breaking - Catalog API migration`) and keep them adjacent at the
 top rather than scattering them.
 
 Each `Breaking` and `Changed` entry states **what a consumer must do**, not only
@@ -778,12 +778,12 @@ just audit                         # RustSec advisories, then OSV/GHSA
 `just audit` runs both halves. `cargo audit` alone is not sufficient:
 in the 2026-07 review it reported two advisories while OSV surfaced seven further
 `openssl` CVEs (five High) that are GHSA-only and absent from the RustSec
-database. Re-run at release time, not just at the start of the work — advisories
+database. Re-run at release time, not just at the start of the work - advisories
 land after the fact, so a clean run expires.
 
 **Scan between the lockfile changing and the first build, not after.** Build
-scripts (`build.rs`) execute arbitrary code at compile time — under `clippy` as
-much as under `build` — so a scan run after the first compile has already run
+scripts (`build.rs`) execute arbitrary code at compile time - under `clippy` as
+much as under `build` - so a scan run after the first compile has already run
 whatever it was meant to warn you about.
 
 **The scan must be unable to pass by accident.** A green result has to mean the
@@ -816,7 +816,7 @@ the behaviour is correct on every platform:
 | Downloads | `dirs::download_dir()` | `$XDG_DOWNLOAD_DIR` | user's own choice |
 
 Never write a dotfile to `$HOME` (`~/.data-gov`, `~/.data-gov-api-key`), and
-never hardcode `~/.config` — that string is wrong on macOS and Windows, and
+never hardcode `~/.config` - that string is wrong on macOS and Windows, and
 ignores `XDG_CONFIG_HOME` on Linux. Honour the environment variable by going
 through `dirs`.
 
@@ -828,7 +828,7 @@ is a bug.
 
 API keys and tokens are read from a file under `dirs::config_dir()` or from the
 environment. Never commit one, never log one, and **never accept one as a
-command-line argument** — `argv` is visible to every process on the machine via
+command-line argument** - `argv` is visible to every process on the machine via
 `ps`.
 
 **Permissions are part of the contract, on the directory as well as the file:**
@@ -839,7 +839,7 @@ command-line argument** — `argv` is visible to every process on the machine vi
 | `<config>/data-gov/api-key` | `0600` | `rw-------`. The execute bit in `0700` is meaningless on a key file; `0600` is what ssh, gpg, and netrc use |
 
 When creating either, set the mode at creation rather than `chmod`-ing
-afterwards — a file created `0644` and tightened a moment later was
+afterwards - a file created `0644` and tightened a moment later was
 world-readable in between. In Rust, use
 `std::os::unix::fs::OpenOptionsExt::mode()` on the `OpenOptions` (and
 `DirBuilderExt::mode()` for the directory), behind `#[cfg(unix)]`.
@@ -861,14 +861,14 @@ that are easy to read and reason about in isolation.
 
 2. **One concern per function.** A function should do one thing. If it has
    multiple levels of nesting, multiple sequential phases, or you're tempted to
-   add section comments inside it — extract helper functions.
+   add section comments inside it - extract helper functions.
 
 3. **No file exceeds 1000 lines.** If a file approaches this limit, split it.
    Prefer many small files over few large ones.
 
 4. **Public API surface is intentional.** Only `pub` what consumers need.
    Internal helpers should be `pub(crate)` or private. A module's public items
-   are its contract — keep it narrow.
+   are its contract - keep it narrow.
 
 5. **Flat over deep.** Prefer `mod foo; mod bar;` siblings over deep nesting.
    One level of `submodule/` is fine; two levels is a smell.
@@ -887,7 +887,7 @@ keeping deliberately:
 So: no `reqwest::Response`, `serde_json::Value`, or `clap` type in a signature
 that domain logic depends on, and no download or search logic inside a request
 handler. A handler that is more than argument parsing, one domain call, and
-response formatting has domain logic in the wrong layer — the MCP server and the
+response formatting has domain logic in the wrong layer - the MCP server and the
 CLI should be two thin faces over identical behaviour, and they diverge the
 moment either grows logic of its own.
 
@@ -940,7 +940,7 @@ library or an existing dependency does not cover it.
 
 ### Current state (as of 2026-03)
 
-- **reqwest** `0.13.x` — note that `query` is now an explicit feature in 0.13
+- **reqwest** `0.13.x` - note that `query` is now an explicit feature in 0.13
 - **serde** `1.0.x`, **tokio** `1.x`, **clap** `4.5.x`, **thiserror** `2.0.x`
 
 ### Dependency hygiene
@@ -973,7 +973,7 @@ and tests everything, with no other machine-local state.
 ### Nothing machine-specific or personal reaches git
 
 **No detail of the machine you happen to be working on belongs in anything that
-lands in the repository** — not in code, configs, manifests, docs, comments,
+lands in the repository** - not in code, configs, manifests, docs, comments,
 commit messages, or PR descriptions. That covers absolute home paths, usernames,
 internal hostnames, IP addresses, personal ports, email addresses, and account
 identifiers.
@@ -1001,7 +1001,7 @@ that way: never commit a payload from a private or authenticated endpoint, and
 never paste a real credential into a fixture even in a redacted-looking form.
 Hand-written fixtures use obviously fake values.
 
-### Read your own diff adversarially — twice
+### Read your own diff adversarially - twice
 
 Before requesting review, reread the change looking for: untrusted input
 crossing a trust boundary (network responses, MCP tool arguments, CLI
@@ -1017,7 +1017,7 @@ look at it.
 
 This is written from a fix that shipped a fresh bug. Correcting the MCP content
 blocks (#60) introduced a `structuredContent` that was a bare JSON array for two
-of the five tools — a new spec violation, created by the change that existed to
+of the five tools - a new spec violation, created by the change that existed to
 remove a spec violation. It survived because verification exercised one tool and
 generalised, and because nobody re-reviewed the repair.
 
@@ -1033,14 +1033,14 @@ given the same code and none of the author's reasoning, defeated **all ten**.
 The author had read them twice.
 
 The mechanism is not carelessness. Having just written the implementation, your
-model of *wrong* is anchored to it — you check the mistakes you nearly made, not
+model of *wrong* is anchored to it - you check the mistakes you nearly made, not
 the ones you cannot see. A fresh context does not share the anchor. So:
 
 - Give the reviewer **the requirement and the diff, never your conclusion**. The
   moment a reviewer knows what you decided, they are checking your reasoning
   rather than the code.
-- Where more than one reviewer runs, give each a **distinct lens** — correctness,
-  security, does-the-failure-actually-reproduce — rather than repeating one pass.
+- Where more than one reviewer runs, give each a **distinct lens** - correctness,
+  security, does-the-failure-actually-reproduce - rather than repeating one pass.
   Separate lenses catch what redundancy cannot.
 - This applies to every deliverable, not only code. A design, a fixture set, or
   a document gets the same two passes against its own bar.
@@ -1048,7 +1048,7 @@ the ones you cannot see. A fresh context does not share the anchor. So:
 ### A finding has to survive an attempt to kill it
 
 **The burden of proof sits on the finding, not on the code.** Before acting on
-one, name the concrete failure — the inputs, the state, the wrong result — and
+one, name the concrete failure - the inputs, the state, the wrong result - and
 check it against reality. Drop it when you cannot show that failure.
 
 This is the most expensive failure mode in this repository's review history.
@@ -1063,7 +1063,7 @@ diligence:
 | `cargo audit` passes silently when it cannot fetch the database (#99) | It already exits 1. Measured: online 0, offline 1, offline with `--stale` 1. Filed, then closed as invalid |
 
 Three of the four came from testing an invented value against a live API and
-reading "no result" as "broken" — which is why sourcing test values from the API
+reading "no result" as "broken" - which is why sourcing test values from the API
 is its own rule. The fourth was a premise nobody checked before filing.
 
 A plausible-but-wrong finding costs more than the defect it claims to find:
@@ -1077,8 +1077,8 @@ independent check from someone who did not raise it.
 summary, the PR, or the issue.** Silent truncation reads as full coverage to
 whoever receives it, and they cannot see the gap you saw.
 
-Both sides of this happened here. The slug investigation reported its bounds —
-"15% unresolvable on a uniform sample of 578, 27% past cursor depth 400" — and
+Both sides of this happened here. The slug investigation reported its bounds -
+"15% unresolvable on a uniform sample of 578, 27% past cursor depth 400" - and
 those numbers were what made the fix arguable. The MCP verification did not: it
 exercised one of five tools and reported the result as though it covered the
 set, which is precisely how a bare-array `structuredContent` reached a release.
@@ -1090,7 +1090,7 @@ Scan dependencies whenever the lockfile changed, before the first build.
 
 Before any release:
 
-- [ ] `just audit` passes — RustSec *and* OSV
+- [ ] `just audit` passes - RustSec *and* OSV
 - [ ] User-supplied paths are sanitized via `data_gov::util::sanitize_path_component()`
 - [ ] MCP `output_dir` parameter rejects `..`
 - [ ] No secrets (API keys, tokens) in logs or error messages
@@ -1109,28 +1109,29 @@ once.
 
 **Test Suite** (matrix: stable, beta, MSRV 1.90)
 1. **Format check** (`just fmt-check`, stable only)
-2. **Clippy** (`just lint`, stable only)
-3. **Build** (`just build`)
-4. **Tests** (`just test`)
-5. **rustls-only build** (`just check-rustls`) — the configuration
+2. **Plain-ASCII check** (`just check-ascii`, stable only) - the working docs
+3. **Clippy** (`just lint`, stable only)
+4. **Build** (`just build`)
+5. **Tests** (`just test`)
+6. **rustls-only build** (`just check-rustls`) - the configuration
    `--all-features` never compiles
 
 Test selection matters here. `--workspace` covers unit tests, every `tests/`
 integration target, and doc tests. Selecting `--lib` instead silently skips both
 binary crates (`data-gov-mcp-server` has no `lib.rs`; the CLI is a `[[bin]]`) and
-every `tests/` target — 37 of 181 tests would run, while `clippy --all-targets`
+every `tests/` target - 37 of 181 tests would run, while `clippy --all-targets`
 still compiles the rest so nothing looks wrong. Do not narrow this back.
 
 **Other jobs**
-6. **Examples** (`just examples`) — compiles all workspace examples; they make
+7. **Examples** (`just examples`) - compiles all workspace examples; they make
    real API calls, so they are built but never run
-7. **Documentation build** (`just docs`)
-8. **Security audit** — `cargo audit` *plus* an OSV/GHSA lockfile scan. Both are
+8. **Documentation build** (`just docs`)
+9. **Security audit** - `cargo audit` *plus* an OSV/GHSA lockfile scan. Both are
    required; see the dependency-freshness section for why `cargo audit` alone is
    insufficient. This job does not use `just audit`: locally that recipe calls
    the `osv-scanner` CLI, while CI runs the upstream scanner action. Same two
    databases, different delivery.
-9. **Live API Tests** (`just test-live`) — opt-in via `workflow_dispatch`, runs
+10. **Live API Tests** (`just test-live`) - opt-in via `workflow_dispatch`, runs
    the `#[ignore]`d network tests. Deliberately not gating: a data.gov outage
    must not turn PRs red.
 
@@ -1147,7 +1148,7 @@ tree, the checked-out branch, or build artefacts. Convention:
 
 **Anything that edits files gets its own tree.** A background agent pointed at a
 live worktree will write into it, and the result is a working copy of unknown
-provenance — during the 2026-07 review two agent runs added three files and
+provenance - during the 2026-07 review two agent runs added three files and
 modified five while a change was being built in the same directory, and the test
 failures could no longer be attributed. Give parallel work isolated worktrees,
 brief each on its scope, and check first for shared files: a manifest edit or a
@@ -1156,7 +1157,7 @@ changelog entry in two trees at once serialises whether you planned it or not.
 ### Decide at the top, build in the branches
 
 Do the investigation, the API probing, and the design decision **before** cutting
-the work up — those need the whole problem in view, and this API punishes
+the work up - those need the whole problem in view, and this API punishes
 guessing. Then give each unit its own branch and its own worktree, with a brief
 that carries the decisions already made, so nobody re-derives a settled question
 or re-probes an endpoint that has already been characterised.
@@ -1164,7 +1165,7 @@ or re-probes an endpoint that has already been characterised.
 **A brief that a fresh reader cannot act on means the investigation is not
 finished.** It needs: the problem and why it matters, the files and interfaces
 in play, the constraints, and what "done" looks like. Point at the issue rather
-than restating it — that is what the tracker entry is for.
+than restating it - that is what the tracker entry is for.
 
 The one thing that stays out of a brief is your own conclusion, and only when you
 want independent judgement. A reviewer who knows what you decided reviews your
@@ -1179,8 +1180,8 @@ fixes the shape.
 
 The slug fix is what this looks like when it works. Two candidates were live:
 raise `per_page` so the full-text search finds more, or use the exact-lookup
-endpoint. Measurement killed the first — 83 of 87 failures returned *zero* hits,
-so a bigger page could not have helped — and that measurement is the entire
+endpoint. Measurement killed the first - 83 of 87 failures returned *zero* hits,
+so a bigger page could not have helped - and that measurement is the entire
 argument for the endpoint. Iterating on the first idea would have produced a
 larger page size, a slower client, and the same bug.
 
@@ -1193,14 +1194,54 @@ ask again.
 - Claim an issue when you start it, so parallel work does not collide.
 - Link the change to the issue: `Closes #N` to auto-close, `Refs #N` when it
   only partially addresses it. Note that `Closes` does not fire on a
-  release-branch merge — see **Release branches**.
+  release-branch merge - see **Release branches**.
 - Anything deferred, discovered, or out of scope becomes a tracker entry, not a
   code comment. Entries assume fresh eyes: what the work is, why it is needed,
   and acceptance criteria, enough for someone who was not there to pick it up.
 - A large multi-part effort gets an epic with the work items linked from it.
-- On multi-session work, leave a short status note before stopping — what
-  landed, what is in progress, what is blocked — so state is reconstructable
+- Keep the entry current as work moves, not only at open and close. A short
+  comment recording a decision, a blocker, or a measurement is what makes the
+  tracker reconstructable later - several issues in this repo were settled by a
+  number somebody recorded in a comment.
+- On multi-session work, leave a short status note before stopping - what
+  landed, what is in progress, what is blocked - so state is reconstructable
   without replaying the git log.
+
+### Commits
+
+Conventional-commit subjects, scoped to the crate where it helps:
+
+```
+fix(catalog): resolve datasets by slug through the exact-lookup endpoint
+test(catalog): record fixture provenance and capture the negative responses
+build: enforce warnings mechanically, add a just runner, and gate rustls-only
+docs: fold the newest shared standards into CLAUDE.md
+```
+
+- **One concern per commit.** A gate change and a model change do not travel
+  together, even when the same task produced both.
+- **Never commit against a failing gate.** `just check` is the bar, and
+  `--no-verify` is not an answer.
+- **Commit `Cargo.lock`.** It is what makes the MSRV leg of CI meaningful.
+- **The body carries the reasoning the diff cannot**: what was measured, what
+  was ruled out, which mutations were run. A subject line says what changed; the
+  body is where "83 of 87 failures returned zero hits" lives.
+
+### Writing
+
+Prose in this repository - docs, comments, commit messages, issues, PR bodies -
+is **plain ASCII**. Use `-` rather than an em- or en-dash, `->` rather than an
+arrow glyph, `...` rather than an ellipsis character, and straight quotes. The
+point is that a human editing the file can type every character in it without
+hunting for a compose key.
+
+`CLAUDE.md` and the `justfile` hold to this. The READMEs deliberately do not:
+their emoji headings and box-drawing trees are presentation, and rewriting them
+would cost more than it returns.
+
+Keep sentences short and active, one main clause each, and use one word per
+meaning throughout - `distribution` is not sometimes `resource`. Technical
+prose is read by people in a hurry and by tools that do not infer.
 
 ## Reference: where the authoritative sources are
 
@@ -1213,7 +1254,7 @@ caveats that made them worth recording.
 | Source | Use it for | Caveat |
 |---|---|---|
 | `https://catalog.data.gov/openapi.json` | **The contract.** Endpoint paths, parameters, responses | Authoritative. Check here first |
-| `https://resources.data.gov/catalog-api/` | Narrative guide, examples | Incomplete — omits `/api/dataset/{slug_or_id}` entirely |
+| `https://resources.data.gov/catalog-api/` | Narrative guide, examples | Incomplete - omits `/api/dataset/{slug_or_id}` entirely |
 | `https://api.data.gov/docs/developer-manual/` | Gateway architecture, API-key rate limits | DEMO_KEY is 30/hour and 50/day; a signed-up key is 1,000/hour |
 | `https://open.gsa.gov/api/` | GSA's API catalogue | **Stale.** Lists only the retired CKAN v3 API, with no deprecation notice, and does not mention the current Catalog API at all |
 
@@ -1242,7 +1283,7 @@ of them High, were GHSA-only and invisible to `cargo audit`. Run both.
 ### Reference implementations
 
 `~/Projects/adelie-ai/mcp-core` is a hand-rolled MCP server core used by around
-a dozen servers, and a useful cross-check on protocol questions — it
+a dozen servers, and a useful cross-check on protocol questions - it
 independently arrives at the same negotiate-or-fall-back design and the same
 `listChanged` capability shape. It is **not usable as a dependency here**: it is
 git-only and unpublished, and `cargo publish` rejects git dependencies. The
