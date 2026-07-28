@@ -40,6 +40,17 @@ fn loop_action(result: RustyResult<String>) -> LoopAction {
     }
 }
 
+/// Whether `run()`'s loop should read another line or stop.
+///
+/// A plain enum rather than a bare `bool`, so the call site in `run()`
+/// reads as "keep looping" / "stop looping" instead of an unlabeled
+/// `true`/`false` a reviewer has to trace back to its meaning.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LoopControl {
+    Continue,
+    Stop,
+}
+
 /// REPL state and logic
 pub struct DataGovRepl {
     client: DataGovClient,
@@ -71,45 +82,73 @@ impl DataGovRepl {
             let prompt = self.build_prompt();
             let readline = rl.readline(&prompt);
 
-            match loop_action(readline) {
-                LoopAction::Process(line) => {
-                    let trimmed = line.trim();
-
-                    // Skip empty lines and comments
-                    if trimmed.is_empty() || trimmed.starts_with('#') {
-                        continue;
-                    }
-
-                    rl.add_history_entry(line.as_str())?;
-
-                    match ReplCommand::from_str(&line) {
-                        Ok(command) => {
-                            if let ReplCommand::Quit = command {
-                                println!("Goodbye! 👋");
-                                break;
-                            }
-
-                            if let Err(e) = self.handle_command(command) {
-                                println!("{} {}", color_red_bold("Error:"), e);
-                            }
-                        }
-                        Err(e) => {
-                            println!("{} {}", color_red_bold("Invalid command:"), e);
-                        }
-                    }
-                }
-                LoopAction::Reprompt => {
-                    println!("CTRL-C");
-                    continue;
-                }
-                LoopAction::Exit(msg) => {
-                    println!("{msg}");
-                    break;
-                }
+            if self.process_readline_result(readline, &mut rl)? == LoopControl::Stop {
+                break;
             }
         }
 
         Ok(())
+    }
+
+    /// Handle one `readline()` outcome: decide the action via
+    /// [`loop_action`], perform its side effects (recording history,
+    /// dispatching the command, printing errors), and report whether
+    /// `run()`'s loop should read another line.
+    ///
+    /// Split out from `run()` so the *wiring* around `loop_action` — not
+    /// just its pure decision — can be driven directly by a test without a
+    /// real terminal: `rustyline` needs an actual (or pty) terminal to
+    /// ever produce `ReadlineError::Interrupted` for real, so nothing
+    /// short of this seam can exercise "does the REPL actually keep going
+    /// after Ctrl-C" outside of one. A test supplies a canned
+    /// `RustyResult<String>` directly and asserts on the returned
+    /// `LoopControl` — exactly the wiring that regressed when `Reprompt`'s
+    /// `continue` became a `break` (#69.4).
+    fn process_readline_result(
+        &mut self,
+        result: RustyResult<String>,
+        rl: &mut DefaultEditor,
+    ) -> RustyResult<LoopControl> {
+        match loop_action(result) {
+            LoopAction::Process(line) => {
+                let trimmed = line.trim();
+
+                // Skip empty lines and comments
+                if trimmed.is_empty() || trimmed.starts_with('#') {
+                    return Ok(LoopControl::Continue);
+                }
+
+                rl.add_history_entry(line.as_str())?;
+
+                match ReplCommand::from_str(&line) {
+                    Ok(command) => {
+                        if let ReplCommand::Quit = command {
+                            println!("Goodbye! 👋");
+                            return Ok(LoopControl::Stop);
+                        }
+
+                        if let Err(e) = self.handle_command(command) {
+                            println!("{} {}", color_red_bold("Error:"), e);
+                        }
+                    }
+                    Err(e) => {
+                        println!("{} {}", color_red_bold("Invalid command:"), e);
+                    }
+                }
+
+                Ok(LoopControl::Continue)
+            }
+            LoopAction::Reprompt => {
+                println!("CTRL-C");
+                // Must keep looping — this is the exact wiring decision
+                // that regressed to `break` under #69.4.
+                Ok(LoopControl::Continue)
+            }
+            LoopAction::Exit(msg) => {
+                println!("{msg}");
+                Ok(LoopControl::Stop)
+            }
+        }
     }
 
     fn build_prompt(&self) -> String {
@@ -201,5 +240,84 @@ mod tests {
             LoopAction::Process(line) => assert_eq!(line, "search foo"),
             _ => panic!("expected LoopAction::Process"),
         }
+    }
+
+    // --- process_readline_result: the real `run()` wiring, not just
+    // loop_action's pure decision (#69.4) ---
+
+    fn test_repl() -> DataGovRepl {
+        let client = DataGovClient::with_config(data_gov::DataGovConfig::default())
+            .expect("test client must build");
+        DataGovRepl::new(client).expect("test repl must build")
+    }
+
+    #[test]
+    fn ctrl_c_wiring_keeps_the_loop_running() {
+        // This is the wiring `ctrl_c_reprompts_instead_of_exiting` (above)
+        // cannot reach: that test only proves `loop_action` classifies
+        // Ctrl-C as `Reprompt`. It says nothing about what `run()`'s loop
+        // *does* with a `Reprompt` — and swapping that arm's `continue`
+        // for a `break` passed all 90 tests before this one existed.
+        let mut repl = test_repl();
+        let mut rl = DefaultEditor::new().expect("test editor must build");
+
+        let control = repl
+            .process_readline_result(Err(ReadlineError::Interrupted), &mut rl)
+            .expect("Reprompt must not itself error");
+
+        assert_eq!(
+            control,
+            LoopControl::Continue,
+            "Ctrl-C must tell run()'s loop to keep going, not stop"
+        );
+    }
+
+    #[test]
+    fn ctrl_c_wiring_does_not_stop_processing_that_follows() {
+        // Proves the loop genuinely carries on past a Ctrl-C within the
+        // same session — not just that one isolated call returns
+        // `Continue` — by feeding a real command through immediately
+        // afterward on the same `repl`/`rl` and checking it, too, reports
+        // "keep going" (a non-Quit command never stops the loop).
+        let mut repl = test_repl();
+        let mut rl = DefaultEditor::new().expect("test editor must build");
+
+        let after_interrupt = repl
+            .process_readline_result(Err(ReadlineError::Interrupted), &mut rl)
+            .expect("Reprompt must not itself error");
+        assert_eq!(after_interrupt, LoopControl::Continue);
+
+        let after_next_line = repl
+            .process_readline_result(Ok("info".to_string()), &mut rl)
+            .expect("a valid command must not error the wiring");
+        assert_eq!(
+            after_next_line,
+            LoopControl::Continue,
+            "the line typed right after Ctrl-C must still be processed"
+        );
+    }
+
+    #[test]
+    fn quit_wiring_stops_the_loop() {
+        let mut repl = test_repl();
+        let mut rl = DefaultEditor::new().expect("test editor must build");
+
+        let control = repl
+            .process_readline_result(Ok("quit".to_string()), &mut rl)
+            .expect("quit must not itself error");
+
+        assert_eq!(control, LoopControl::Stop);
+    }
+
+    #[test]
+    fn ctrl_d_wiring_stops_the_loop() {
+        let mut repl = test_repl();
+        let mut rl = DefaultEditor::new().expect("test editor must build");
+
+        let control = repl
+            .process_readline_result(Err(ReadlineError::Eof), &mut rl)
+            .expect("Ctrl-D must not itself error");
+
+        assert_eq!(control, LoopControl::Stop);
     }
 }
