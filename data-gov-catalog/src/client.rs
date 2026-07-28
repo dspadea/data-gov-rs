@@ -161,6 +161,32 @@ impl std::fmt::Display for CatalogError {
 
 impl std::error::Error for CatalogError {}
 
+/// Whether [`SearchParams::spatial_filter`] restricts results to datasets
+/// that advertise spatial coverage, or to ones that don't.
+///
+/// The Catalog API accepts only these two tokens on the wire and silently
+/// ignores anything else -- confirmed live: `spatial_filter=BOGUS` returns a
+/// full unfiltered page with HTTP 200, the same as omitting the parameter,
+/// with no error at all. Modelling the set as an enum makes an invalid
+/// value a compile error instead of a request the server quietly discards.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SpatialFilter {
+    /// Only datasets with `has_spatial: true`.
+    Geospatial,
+    /// Only datasets with `has_spatial: false`.
+    NonGeospatial,
+}
+
+impl SpatialFilter {
+    /// The literal token the Catalog API expects on the wire.
+    fn as_query_value(self) -> &'static str {
+        match self {
+            SpatialFilter::Geospatial => "geospatial",
+            SpatialFilter::NonGeospatial => "non-geospatial",
+        }
+    }
+}
+
 /// Parameters for [`CatalogClient::search`].
 ///
 /// Constructed with a builder: start from [`SearchParams::new`] and chain
@@ -180,11 +206,24 @@ pub struct SearchParams {
     pub org_type: Option<String>,
     /// Exact-match keyword filters. Repeated on the wire.
     pub keyword: Vec<String>,
-    /// `geospatial` or `non-geospatial`.
-    pub spatial_filter: Option<String>,
+    /// Restrict to datasets with (or without) spatial coverage.
+    pub spatial_filter: Option<SpatialFilter>,
     /// GeoJSON geometry used for bounding-box / shape queries.
     pub spatial_geometry: Option<Value>,
-    /// Whether to require containment (true) vs. intersection (false).
+    /// Whether a dataset's shape must be contained by
+    /// [`spatial_geometry`](Self::spatial_geometry) (`true`) or merely
+    /// intersect it (`false`).
+    ///
+    /// Has no observable effect set on its own -- confirmed live: a search
+    /// with only `spatial_within=true` and no `spatial_geometry` returns
+    /// results identical to the unfiltered baseline. It only changes
+    /// anything alongside `spatial_geometry`. Confirmed live there too: a
+    /// tiny query geometry over Antarctica (nowhere any dataset's shape sits)
+    /// combined with `spatial_within=true` returns zero results, while the
+    /// same geometry with `spatial_within=false` returns the datasets whose
+    /// shape merely intersects it (global-coverage datasets such as
+    /// `world-ocean-atlas-2023`) -- proof the parameter is a real modifier
+    /// of `spatial_geometry`, not a phantom.
     pub spatial_within: Option<bool>,
     /// Opaque cursor from a previous [`SearchResponse::after`](models::SearchResponse::after).
     pub after: Option<String>,
@@ -243,8 +282,8 @@ impl SearchParams {
     }
 
     /// Set the spatial-filter mode.
-    pub fn spatial_filter(mut self, mode: impl Into<String>) -> Self {
-        self.spatial_filter = Some(mode.into());
+    pub fn spatial_filter(mut self, mode: SpatialFilter) -> Self {
+        self.spatial_filter = Some(mode);
         self
     }
 
@@ -254,7 +293,9 @@ impl SearchParams {
         self
     }
 
-    /// Require containment vs. intersection for spatial matches.
+    /// Require containment vs. intersection for spatial matches. See
+    /// [`SearchParams::spatial_within`] for what this does and does not
+    /// affect on its own.
     pub fn spatial_within(mut self, within: bool) -> Self {
         self.spatial_within = Some(within);
         self
@@ -287,8 +328,8 @@ impl SearchParams {
         for kw in &self.keyword {
             q.push(("keyword", kw.clone()));
         }
-        if let Some(v) = &self.spatial_filter {
-            q.push(("spatial_filter", v.clone()));
+        if let Some(v) = self.spatial_filter {
+            q.push(("spatial_filter", v.as_query_value().to_owned()));
         }
         if let Some(v) = &self.spatial_geometry {
             q.push(("spatial_geometry", v.to_string()));

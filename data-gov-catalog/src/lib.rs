@@ -30,5 +30,5 @@ pub mod models;
 
 pub use client::{
     CatalogClient, CatalogError, Configuration, DEFAULT_CONNECT_TIMEOUT, DEFAULT_TIMEOUT,
-    SearchParams,
+    SearchParams, SpatialFilter,
 };
