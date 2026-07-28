@@ -430,6 +430,10 @@ async fn resource_format_autocomplete_returns_formats() {
 // Error handling
 // ---------------------------------------------------------------------------
 
+// `http_404_returns_api_error_with_status` covers the fallback path
+// deliberately: a plain-text, non-JSON error body (a stock web server or
+// proxy error page rather than CKAN's own envelope) has no structure to
+// parse, so the raw text is the best message available.
 #[tokio::test]
 async fn http_404_returns_api_error_with_status() {
     let server = MockServer::start().await;
@@ -479,6 +483,77 @@ async fn http_500_returns_api_error() {
     }
 }
 
+/// Real capture: open.canada.ca's 404 body for `package_show`. This is
+/// CKAN's documented error envelope (`ErrorResponse` / `ErrorResponseError`
+/// -- `__type` and `message`), which the crate ships and never referenced.
+/// `ApiError.message` must be the parsed "Not found", not the raw envelope.
+#[tokio::test]
+async fn http_error_extracts_message_from_ckans_structured_error_envelope() {
+    let server = MockServer::start().await;
+    let body = include_str!("fixtures/package_show_not_found.json");
+
+    Mock::given(method("GET"))
+        .and(path("/action/package_show"))
+        .respond_with(ResponseTemplate::new(404).set_body_raw(body, "application/json"))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let client = test_client(&server.uri());
+    let err = client
+        .package_show("nonexistent")
+        .await
+        .expect_err("should fail");
+
+    match err {
+        CkanError::ApiError { status, message } => {
+            assert_eq!(status, 404);
+            assert_eq!(message, "Not found");
+        }
+        other => panic!("expected ApiError, got: {:?}", other),
+    }
+}
+
+/// Real capture: open.canada.ca's 409 body for `package_show` called with no
+/// `id`. CKAN's validation-error shape replaces the documented `message`
+/// field with per-field arrays, so it does not fit `ErrorResponseError`
+/// (whose `message` is required). The message must still surface that
+/// structure -- rendering the raw `error` object -- rather than discarding it
+/// or falling back to a generic literal.
+#[tokio::test]
+async fn http_validation_error_renders_the_raw_error_object_as_message() {
+    let server = MockServer::start().await;
+    let body = include_str!("fixtures/package_show_validation_error.json");
+
+    Mock::given(method("GET"))
+        .and(path("/action/package_show"))
+        .respond_with(ResponseTemplate::new(409).set_body_raw(body, "application/json"))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let client = test_client(&server.uri());
+    let err = client
+        .package_show("nonexistent")
+        .await
+        .expect_err("should fail");
+
+    match err {
+        CkanError::ApiError { status, message } => {
+            assert_eq!(status, 409);
+            assert!(message.contains("name_or_id"), "message: {message}");
+            assert!(message.contains("Missing value"), "message: {message}");
+            // Distinguishes "parsed just the error object" from "fell back to
+            // the whole raw body", which also contains those substrings.
+            assert!(
+                !message.contains("\"success\""),
+                "message should be the error object alone, not the whole envelope: {message}"
+            );
+        }
+        other => panic!("expected ApiError, got: {:?}", other),
+    }
+}
+
 #[tokio::test]
 async fn success_false_returns_api_error() {
     let server = MockServer::start().await;
@@ -500,7 +575,72 @@ async fn success_false_returns_api_error() {
         .expect_err("should fail");
 
     match err {
-        CkanError::ApiError { status: 400, .. } => {}
+        CkanError::ApiError { status: 400, message } => {
+            assert_eq!(message, "something went wrong");
+        }
+        other => panic!("expected ApiError with status 400, got: {:?}", other),
+    }
+}
+
+/// The HTTP-200-with-`success:false` path, CKAN's validation-error shape.
+/// `ActionResponse` did not declare an `error` field at all, so serde simply
+/// dropped it during deserialization and the whole object was lost -- not
+/// just left unparsed, as with the non-2xx path.
+#[tokio::test]
+async fn success_false_with_validation_style_error_renders_the_raw_error_object() {
+    let server = MockServer::start().await;
+
+    Mock::given(method("GET"))
+        .and(path("/action/package_search"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "help": "", "success": false, "result": null,
+            "error": { "name_or_id": ["Missing value"], "__type": "Validation Error" }
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let client = test_client(&server.uri());
+    let err = client
+        .package_search(Some("test"), None, None, None)
+        .await
+        .expect_err("should fail");
+
+    match err {
+        CkanError::ApiError { status: 400, message } => {
+            assert!(message.contains("name_or_id"), "message: {message}");
+            assert!(message.contains("Missing value"), "message: {message}");
+        }
+        other => panic!("expected ApiError with status 400, got: {:?}", other),
+    }
+}
+
+/// When CKAN sends `success: false` with no `error` field at all, there is
+/// genuinely nothing to parse. The literal fallback message is correct here,
+/// not a symptom of the bug the other tests in this section cover.
+#[tokio::test]
+async fn success_false_with_no_error_field_uses_fallback_message() {
+    let server = MockServer::start().await;
+
+    Mock::given(method("GET"))
+        .and(path("/action/package_search"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "help": "", "success": false, "result": null
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let client = test_client(&server.uri());
+    let err = client
+        .package_search(Some("test"), None, None, None)
+        .await
+        .expect_err("should fail");
+
+    match err {
+        CkanError::ApiError { status: 400, message } => {
+            assert_eq!(message, "CKAN API reported failure");
+        }
         other => panic!("expected ApiError with status 400, got: {:?}", other),
     }
 }
@@ -557,8 +697,15 @@ async fn malformed_result_returns_parse_error() {
     );
 }
 
+/// `RequestError` is documented as covering connection failures, timeouts,
+/// and DNS resolution -- transport, not content. A body that arrived intact
+/// but is not valid JSON is a decode failure, so it must be `ParseError`, the
+/// variant documented as covering exactly that. Before the fix, `call_action`
+/// deserialized straight from the `reqwest::Response` in one step, so a
+/// malformed body and a dropped connection produced the same variant and
+/// were indistinguishable to a caller matching on it.
 #[tokio::test]
-async fn malformed_json_body_returns_request_error() {
+async fn malformed_json_body_returns_parse_error() {
     let server = MockServer::start().await;
 
     Mock::given(method("GET"))
@@ -575,8 +722,8 @@ async fn malformed_json_body_returns_request_error() {
         .expect_err("should fail");
 
     assert!(
-        matches!(err, CkanError::RequestError(_)),
-        "expected RequestError, got: {:?}",
+        matches!(err, CkanError::ParseError(_)),
+        "expected ParseError, got: {:?}",
         err
     );
 }
