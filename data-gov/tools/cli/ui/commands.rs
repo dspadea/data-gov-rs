@@ -121,36 +121,44 @@ impl SessionContext {
     }
 
     /// Handle relative path navigation (no leading `/`).
+    ///
+    /// Splits on `/` and folds each segment in order, the way a shell folds
+    /// a relative path one component at a time. `.` and empty segments
+    /// (from a leading, trailing, or doubled `/`) are no-ops; `..` goes up
+    /// one level (or is a no-op at root); anything else is an org name (at
+    /// root) or a dataset name (at an org) — and an error if a dataset is
+    /// already selected, since there's nowhere deeper to go.
     fn apply_relative(&mut self, path: &str) -> Result<(), String> {
-        let path = path.trim_end_matches('/');
-
-        if path == ".." {
-            // Go up one level
-            if self.dataset.is_some() {
-                self.dataset = None;
-            } else if self.org.is_some() {
-                self.org = None;
-            }
-            // Already at root — no-op
-            return Ok(());
-        }
-
         if path.is_empty() {
             return Err("empty path".to_string());
         }
 
-        if self.dataset.is_some() {
-            return Err(format!(
-                "already in a dataset; use '..' to go up first, or use an absolute path: /org/{path}"
-            ));
-        }
-
-        if self.org.is_some() {
-            // At org level — relative path is a dataset
-            self.dataset = Some(path.to_string());
-        } else {
-            // At root — relative path is an org
-            self.org = Some(path.to_string());
+        for segment in path.split('/') {
+            match segment {
+                "" | "." => {} // no-op
+                ".." => {
+                    if self.dataset.is_some() {
+                        self.dataset = None;
+                    } else if self.org.is_some() {
+                        self.org = None;
+                    }
+                    // Already at root — no-op
+                }
+                name => {
+                    if self.dataset.is_some() {
+                        return Err(format!(
+                            "already in a dataset; use '..' to go up first, or use an absolute path: /org/{path}"
+                        ));
+                    }
+                    if self.org.is_some() {
+                        // At org level — the segment is a dataset.
+                        self.dataset = Some(name.to_string());
+                    } else {
+                        // At root — the segment is an org.
+                        self.org = Some(name.to_string());
+                    }
+                }
+            }
         }
 
         Ok(())
@@ -199,6 +207,27 @@ pub fn parse_command_args(s: &str) -> Vec<String> {
     args
 }
 
+/// Expand a leading `~` or `~/` against the user's home directory.
+///
+/// The REPL's tokenizer does no shell-style expansion, so unlike a real
+/// shell (which expands `~` before `--download-dir` ever sees it),
+/// `PathBuf::from("~/dgtest")` would otherwise reach the config verbatim and
+/// `validate_download_dir` would create a literal `~` directory. Only a
+/// leading `~` is special — `foo~bar` is a literal path component, exactly
+/// as it is in a shell.
+fn expand_tilde(raw: &str) -> Result<PathBuf, String> {
+    if raw == "~" {
+        return dirs::home_dir()
+            .ok_or_else(|| "could not determine home directory to expand '~'".to_string());
+    }
+    if let Some(rest) = raw.strip_prefix("~/") {
+        let home = dirs::home_dir()
+            .ok_or_else(|| "could not determine home directory to expand '~'".to_string())?;
+        return Ok(home.join(rest));
+    }
+    Ok(PathBuf::from(raw))
+}
+
 impl ReplCommand {
     pub fn from_parts(parts: &[String]) -> Result<Self, String> {
         if parts.is_empty() {
@@ -212,12 +241,30 @@ impl ReplCommand {
                 if parts.len() < 2 {
                     return Err("Usage: search <query> [limit]".to_string());
                 }
-                let query = parts[1..].join(" ");
-                let limit = if parts.len() > 2 {
-                    parts.last().and_then(|s| s.parse().ok())
-                } else {
-                    None
-                };
+                // Parse the limit off the tail FIRST, then build the query
+                // from what remains — never the other way round, or the
+                // limit token stays embedded in the text sent to the API.
+                //
+                // Decision: a numeric trailing token is *always* read as the
+                // limit, never as query text, even for a query that
+                // genuinely ends in a number (e.g. "route 66"). The
+                // alternative — guessing from context whether a trailing
+                // number is "meant" as a limit — has no reliable signal to
+                // guess from, so the rule is kept mechanical: shape decides
+                // meaning. A one-word query is always literal, since
+                // stripping it as a limit would leave nothing to search for.
+                let mut rest = &parts[1..];
+                let mut limit = None;
+                if rest.len() > 1
+                    && let Ok(n) = rest[rest.len() - 1].parse::<i32>()
+                {
+                    if !(1..=1000).contains(&n) {
+                        return Err(format!("limit must be between 1 and 1000, got {n}"));
+                    }
+                    limit = Some(n);
+                    rest = &rest[..rest.len() - 1];
+                }
+                let query = rest.join(" ");
                 Ok(ReplCommand::Search { query, limit })
             }
             "show" | "describe" | "d" => {
@@ -257,7 +304,7 @@ impl ReplCommand {
                     return Err("Usage: lcd <path>".to_string());
                 }
                 Ok(ReplCommand::SetDir {
-                    path: PathBuf::from(&parts[1]),
+                    path: expand_tilde(&parts[1])?,
                 })
             }
             "info" | "status" => Ok(ReplCommand::Info),
