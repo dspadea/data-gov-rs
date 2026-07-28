@@ -6,6 +6,7 @@
 use data_gov_catalog::{CatalogClient, CatalogError, Configuration, SearchParams};
 use serde_json::json;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 use wiremock::matchers::{method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -610,4 +611,39 @@ async fn dataset_by_slug_distinguishes_a_server_error_from_a_missing_dataset() {
         Err(CatalogError::ApiError { status, .. }) => assert_eq!(status, 503),
         other => panic!("503 must surface as an ApiError, not as a missing dataset: {other:?}"),
     }
+}
+
+/// #48: a host that accepts the connection but never finishes the response
+/// must not hang the caller forever. `Configuration::with_timeouts` lets a
+/// caller pick a short bound; wiremock's delay (5s) is far longer than the
+/// configured timeout (100ms), so a client that honours the timeout returns
+/// promptly and a client that does not (a bare `reqwest::Client::new()`)
+/// would still be waiting when this test's own harness gives up.
+#[tokio::test]
+async fn a_short_configured_timeout_bounds_a_stalled_request() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/search"))
+        .respond_with(ResponseTemplate::new(200).set_delay(Duration::from_secs(5)))
+        .mount(&server)
+        .await;
+
+    let mut config =
+        Configuration::with_timeouts(Duration::from_millis(50), Duration::from_millis(100));
+    config.base_path = server.uri();
+    let client = CatalogClient::new(Arc::new(config));
+
+    let start = Instant::now();
+    let result = client.search(SearchParams::new().q("x")).await;
+    let elapsed = start.elapsed();
+
+    assert!(
+        matches!(result, Err(CatalogError::RequestError(_))),
+        "an unresponsive server must produce a RequestError, not hang or succeed: got {result:?}"
+    );
+    assert!(
+        elapsed < Duration::from_secs(2),
+        "took {elapsed:?} against a 100ms configured timeout and a 5s server delay; \
+         the timeout is not being applied to the client"
+    );
 }
