@@ -15,7 +15,7 @@ use crate::ui::{
 use crate::util;
 use data_gov_catalog::{
     CatalogClient, SearchParams,
-    models::{Dataset, Distribution, Organization, SearchHit, SearchResponse},
+    models::{Dataset, Distribution, SearchHit, SearchResponse},
 };
 
 /// Async client for exploring data.gov datasets.
@@ -195,40 +195,6 @@ impl DataGovClient {
         Ok(match limit {
             Some(n) if n >= 0 => iter.take(n as usize).collect(),
             _ => iter.collect(),
-        })
-    }
-
-    /// Fetch full organization records for the catalog.
-    pub async fn list_organization_records(&self) -> Result<Vec<Organization>> {
-        Ok(self.catalog.organizations().await?.organizations)
-    }
-
-    /// Fetch organization name suggestions matching `partial`.
-    ///
-    /// Implemented as a client-side case-insensitive filter over
-    /// [`CatalogClient::organizations`](data_gov_catalog::CatalogClient::organizations).
-    pub async fn autocomplete_organizations(
-        &self,
-        partial: &str,
-        limit: Option<i32>,
-    ) -> Result<Vec<String>> {
-        let needle = partial.to_lowercase();
-        let orgs = self.catalog.organizations().await?;
-        let matches = orgs.organizations.into_iter().filter(|o| {
-            let name_hit = o
-                .name
-                .as_deref()
-                .is_some_and(|n| n.to_lowercase().contains(&needle));
-            let slug_hit = o
-                .slug
-                .as_deref()
-                .is_some_and(|s| s.to_lowercase().contains(&needle));
-            name_hit || slug_hit
-        });
-        let names = matches.filter_map(|o| o.name.or(o.slug));
-        Ok(match limit {
-            Some(n) if n >= 0 => names.take(n as usize).collect(),
-            _ => names.collect(),
         })
     }
 

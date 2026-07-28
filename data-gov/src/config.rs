@@ -130,11 +130,6 @@ impl DataGovConfig {
         }
     }
 
-    /// Get the full download directory for a specific dataset.
-    pub fn get_dataset_download_dir(&self, dataset_name: &str) -> PathBuf {
-        self.get_base_download_dir().join(dataset_name)
-    }
-
     /// Override the Catalog API base URL (e.g., for testing with a mock server).
     pub fn with_base_url<S: Into<String>>(mut self, base_url: S) -> Self {
         let mut catalog_config = (*self.catalog_config).clone();
