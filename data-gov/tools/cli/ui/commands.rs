@@ -535,6 +535,86 @@ mod tests {
         assert!(ctx.dataset.is_none());
     }
 
+    // --- SessionContext: multi-segment relative paths (#69.1) ---
+
+    #[test]
+    fn test_relative_multi_segment_from_root_sets_org_and_dataset() {
+        let mut ctx = SessionContext::default();
+        ctx.apply_navigate("epa/some-dataset").unwrap();
+        assert_eq!(ctx.org, Some("epa".to_string()));
+        assert_eq!(ctx.dataset, Some("some-dataset".to_string()));
+    }
+
+    #[test]
+    fn test_relative_dotdot_dotdot_from_dataset_reaches_root() {
+        let mut ctx = SessionContext {
+            org: Some("epa-gov".to_string()),
+            dataset: Some("air-quality".to_string()),
+            last_listing: None,
+        };
+        ctx.apply_navigate("../..").unwrap();
+        assert!(ctx.org.is_none());
+        assert!(ctx.dataset.is_none());
+    }
+
+    #[test]
+    fn test_relative_dotdot_sibling_org_from_org_level() {
+        let mut ctx = SessionContext {
+            org: Some("epa-gov".to_string()),
+            dataset: None,
+            last_listing: None,
+        };
+        ctx.apply_navigate("../noaa").unwrap();
+        assert_eq!(ctx.org, Some("noaa".to_string()));
+        assert!(ctx.dataset.is_none());
+    }
+
+    #[test]
+    fn test_relative_multi_segment_from_dataset_errors() {
+        let mut ctx = SessionContext {
+            org: Some("epa-gov".to_string()),
+            dataset: Some("air-quality".to_string()),
+            last_listing: None,
+        };
+        let result = ctx.apply_navigate("another/thing");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("already in a dataset"));
+    }
+
+    // --- SessionContext: `cd .` is a no-op (#69.2) ---
+
+    #[test]
+    fn test_dot_from_root_is_noop() {
+        let mut ctx = SessionContext::default();
+        ctx.apply_navigate(".").unwrap();
+        assert!(ctx.org.is_none());
+        assert!(ctx.dataset.is_none());
+    }
+
+    #[test]
+    fn test_dot_from_org_is_noop() {
+        let mut ctx = SessionContext {
+            org: Some("epa-gov".to_string()),
+            dataset: None,
+            last_listing: None,
+        };
+        ctx.apply_navigate(".").unwrap();
+        assert_eq!(ctx.org, Some("epa-gov".to_string()));
+        assert!(ctx.dataset.is_none());
+    }
+
+    #[test]
+    fn test_dot_from_dataset_is_noop() {
+        let mut ctx = SessionContext {
+            org: Some("epa-gov".to_string()),
+            dataset: Some("air-quality".to_string()),
+            last_listing: None,
+        };
+        ctx.apply_navigate(".").unwrap();
+        assert_eq!(ctx.org, Some("epa-gov".to_string()));
+        assert_eq!(ctx.dataset, Some("air-quality".to_string()));
+    }
+
     // --- SessionContext: prompt_label ---
 
     #[test]
@@ -619,6 +699,50 @@ mod tests {
         assert_eq!(path, PathBuf::from("/tmp"));
     }
 
+    // --- lcd tilde expansion (#69.3) ---
+
+    #[test]
+    fn test_lcd_tilde_alone_expands_to_home() {
+        let home = dirs::home_dir().expect("test environment must have a home directory");
+        let result = ReplCommand::from_str("lcd ~");
+        let Ok(ReplCommand::SetDir { path }) = result else {
+            panic!("Expected SetDir command");
+        };
+        assert_eq!(path, home);
+    }
+
+    #[test]
+    fn test_lcd_tilde_slash_expands_against_home() {
+        let home = dirs::home_dir().expect("test environment must have a home directory");
+        let result = ReplCommand::from_str("lcd ~/dgtest");
+        let Ok(ReplCommand::SetDir { path }) = result else {
+            panic!("Expected SetDir command");
+        };
+        assert_eq!(path, home.join("dgtest"));
+        // Never a literal "~" path component.
+        assert!(!path.components().any(|c| c.as_os_str() == "~"));
+    }
+
+    #[test]
+    fn test_lcd_without_tilde_is_unchanged() {
+        let result = ReplCommand::from_str("lcd ./downloads");
+        let Ok(ReplCommand::SetDir { path }) = result else {
+            panic!("Expected SetDir command");
+        };
+        assert_eq!(path, PathBuf::from("./downloads"));
+    }
+
+    #[test]
+    fn test_lcd_tilde_mid_path_is_left_alone() {
+        // Only a *leading* "~" is a home-directory reference; "foo~bar" is a
+        // literal path component in a shell, and stays literal here too.
+        let result = ReplCommand::from_str("lcd foo~bar");
+        let Ok(ReplCommand::SetDir { path }) = result else {
+            panic!("Expected SetDir command");
+        };
+        assert_eq!(path, PathBuf::from("foo~bar"));
+    }
+
     #[test]
     fn test_parse_show_without_dataset() {
         let result = ReplCommand::from_str("show");
@@ -626,5 +750,82 @@ mod tests {
             panic!("Expected Show command");
         };
         assert!(dataset_id.is_none());
+    }
+
+    // --- Command parsing: search query/limit split (#54) ---
+
+    #[test]
+    fn test_search_with_limit_removes_limit_token_from_query() {
+        let result = ReplCommand::from_str("search climate change 5");
+        let Ok(ReplCommand::Search { query, limit }) = result else {
+            panic!("Expected Search command");
+        };
+        assert_eq!(query, "climate change");
+        assert_eq!(limit, Some(5));
+    }
+
+    #[test]
+    fn test_search_quoted_multiword_query_with_limit() {
+        let result = ReplCommand::from_str("search \"electric vehicle\" 10");
+        let Ok(ReplCommand::Search { query, limit }) = result else {
+            panic!("Expected Search command");
+        };
+        assert_eq!(query, "electric vehicle");
+        assert_eq!(limit, Some(10));
+    }
+
+    #[test]
+    fn test_search_without_limit_keeps_full_query() {
+        let result = ReplCommand::from_str("search electric vehicle");
+        let Ok(ReplCommand::Search { query, limit }) = result else {
+            panic!("Expected Search command");
+        };
+        assert_eq!(query, "electric vehicle");
+        assert_eq!(limit, None);
+    }
+
+    #[test]
+    fn test_search_single_numeric_word_is_the_whole_query_not_a_limit() {
+        // With only one word after "search", there's nothing left to search
+        // for if we strip it as a limit, so it must stay part of the query.
+        let result = ReplCommand::from_str("search 2020");
+        let Ok(ReplCommand::Search { query, limit }) = result else {
+            panic!("Expected Search command");
+        };
+        assert_eq!(query, "2020");
+        assert_eq!(limit, None);
+    }
+
+    #[test]
+    fn test_search_rejects_non_positive_limit() {
+        let result = ReplCommand::from_str("search climate 0");
+        assert!(result.is_err());
+        let result = ReplCommand::from_str("search climate -5");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_search_rejects_limit_over_api_maximum() {
+        // The Catalog API rejects per_page outside 1..=1000; reject it at the
+        // CLI boundary with a clear usage error instead of forwarding it and
+        // letting the API return a 400.
+        let result = ReplCommand::from_str("search census 2020");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("1000"));
+    }
+
+    #[test]
+    fn test_search_trailing_in_range_number_is_always_treated_as_limit() {
+        // Decision: a numeric trailing token is always parsed as the limit,
+        // never as query text, even when it happens to be a legitimate part
+        // of the search terms (e.g. "route 66"). This keeps the rule
+        // predictable: the last token's shape (numeric or not) is the only
+        // thing that decides its meaning, with no additional heuristics.
+        let result = ReplCommand::from_str("search route 66");
+        let Ok(ReplCommand::Search { query, limit }) = result else {
+            panic!("Expected Search command");
+        };
+        assert_eq!(query, "route");
+        assert_eq!(limit, Some(66));
     }
 }
