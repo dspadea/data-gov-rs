@@ -101,3 +101,29 @@ impl DataGovError {
 
 /// Type alias for Results using [`DataGovError`].
 pub type Result<T> = std::result::Result<T, DataGovError>;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// #77: `validation_error` had no test that called it directly -- every
+    /// exercise of it went through `data_gov::util`'s checks, which
+    /// construct the variant rather than call the constructor by name.
+    /// It has real callers today (every download-URL and path-containment
+    /// check in `util.rs`), but this pins the constructor's own contract:
+    /// the variant and the message it was given, not a message some other
+    /// function happened to produce.
+    #[test]
+    fn validation_error_builds_a_validation_error_carrying_the_given_message() {
+        let err = DataGovError::validation_error("destination is outside the chosen directory");
+        assert!(
+            matches!(err, DataGovError::ValidationError { .. }),
+            "got {err:?}"
+        );
+        assert!(
+            err.to_string()
+                .contains("destination is outside the chosen directory"),
+            "got: {err}"
+        );
+    }
+}

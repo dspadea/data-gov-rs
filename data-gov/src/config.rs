@@ -4,6 +4,13 @@ use std::fmt;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+/// Fallback user agent when `catalog_config.user_agent` holds `None`.
+///
+/// `CatalogConfiguration::default()` always sets `Some(..)`, so this is only
+/// reached when a caller builds a `CatalogConfiguration` directly and clears
+/// the field. It matches the catalog crate's own default text.
+const DEFAULT_USER_AGENT: &str = concat!("data-gov-rs/", env!("CARGO_PKG_VERSION"));
+
 /// Operating mode for the client
 #[derive(Debug, Clone, PartialEq)]
 pub enum OperatingMode {
@@ -22,8 +29,6 @@ pub struct DataGovConfig {
     pub mode: OperatingMode,
     /// Base download directory for files (before dataset subdirectory)
     pub base_download_dir: PathBuf,
-    /// User agent for HTTP requests
-    pub user_agent: String,
     /// Maximum concurrent downloads
     pub max_concurrent_downloads: usize,
     /// How long a download may stall, in seconds.
@@ -55,7 +60,7 @@ impl fmt::Debug for DataGovConfig {
             .field("catalog_config", &self.catalog_config)
             .field("mode", &self.mode)
             .field("base_download_dir", &self.base_download_dir)
-            .field("user_agent", &self.user_agent)
+            .field("user_agent", &self.user_agent())
             .field("max_concurrent_downloads", &self.max_concurrent_downloads)
             .field("download_timeout_secs", &self.download_timeout_secs)
             .field(
@@ -79,7 +84,6 @@ impl Default for DataGovConfig {
             catalog_config: Arc::new(CatalogConfiguration::default()),
             mode: OperatingMode::Interactive,
             base_download_dir: Self::get_default_download_dir(),
-            user_agent: concat!("data-gov-rs/", env!("CARGO_PKG_VERSION")).to_string(),
             max_concurrent_downloads: 3,
             download_timeout_secs: 300,
             allow_private_network_downloads: false,
@@ -126,11 +130,6 @@ impl DataGovConfig {
         }
     }
 
-    /// Get the full download directory for a specific dataset.
-    pub fn get_dataset_download_dir(&self, dataset_name: &str) -> PathBuf {
-        self.get_base_download_dir().join(dataset_name)
-    }
-
     /// Override the Catalog API base URL (e.g., for testing with a mock server).
     pub fn with_base_url<S: Into<String>>(mut self, base_url: S) -> Self {
         let mut catalog_config = (*self.catalog_config).clone();
@@ -140,12 +139,30 @@ impl DataGovConfig {
     }
 
     /// Set a custom user agent.
+    ///
+    /// `catalog_config.user_agent` is the single place this value lives (see
+    /// [`Self::user_agent`]), so a catalog request and a download can never
+    /// disagree about which identity they are sending (#106).
     pub fn with_user_agent<S: Into<String>>(mut self, user_agent: S) -> Self {
-        self.user_agent = user_agent.into();
         let mut catalog_config = (*self.catalog_config).clone();
-        catalog_config.user_agent = Some(self.user_agent.clone());
+        catalog_config.user_agent = Some(user_agent.into());
         self.catalog_config = Arc::new(catalog_config);
         self
+    }
+
+    /// The user agent sent with catalog requests and downloads.
+    ///
+    /// Derived from `catalog_config.user_agent` -- the only place this value
+    /// is stored -- rather than duplicated on `DataGovConfig` itself, so
+    /// there is nowhere for a catalog request and a download to disagree
+    /// about which identity they are sending (#106). Falls back to the crate
+    /// default if a caller built `catalog_config` directly and cleared its
+    /// user agent to `None`.
+    pub fn user_agent(&self) -> &str {
+        self.catalog_config
+            .user_agent
+            .as_deref()
+            .unwrap_or(DEFAULT_USER_AGENT)
     }
 
     /// Set the maximum concurrent downloads.
@@ -201,5 +218,34 @@ impl DataGovConfig {
     /// Borrow the configured status reporter.
     pub fn status_reporter(&self) -> Option<&Arc<dyn StatusReporter + Send + Sync>> {
         self.status_reporter.as_ref()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct NullReporter;
+    impl StatusReporter for NullReporter {}
+
+    /// #77: `without_status_reporter` had zero callers, zero tests. It is
+    /// the natural complement of `with_status_reporter`, which the CLI does
+    /// use to wire up its UI callbacks, so it is kept rather than removed.
+    /// A pure setter with two possible outcomes is cheap to fully prove.
+    #[test]
+    fn without_status_reporter_clears_a_previously_configured_reporter() {
+        let config = DataGovConfig::new()
+            .with_status_reporter(Arc::new(NullReporter))
+            .without_status_reporter();
+        assert!(
+            config.status_reporter().is_none(),
+            "without_status_reporter must clear whatever with_status_reporter set"
+        );
+    }
+
+    #[test]
+    fn without_status_reporter_is_a_no_op_when_none_was_configured() {
+        let config = DataGovConfig::new().without_status_reporter();
+        assert!(config.status_reporter().is_none());
     }
 }

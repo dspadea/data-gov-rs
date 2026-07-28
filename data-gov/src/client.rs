@@ -15,7 +15,7 @@ use crate::ui::{
 use crate::util;
 use data_gov_catalog::{
     CatalogClient, SearchParams,
-    models::{Dataset, Distribution, Organization, SearchHit, SearchResponse},
+    models::{Dataset, Distribution, SearchHit, SearchResponse},
 };
 
 /// Async client for exploring data.gov datasets.
@@ -57,7 +57,32 @@ impl DataGovClient {
     }
 
     /// Create a new DataGov client with custom configuration.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DataGovError::ConfigError`] when `max_concurrent_downloads`
+    /// or `download_timeout_secs` is zero. Both are `pub` fields on a struct
+    /// that is not `#[non_exhaustive]`, so a struct literal can reach either
+    /// one without the builder that would otherwise clamp it -- and neither
+    /// zero has a useful meaning: a zero-permit semaphore never closes
+    /// (#73), and a zero-second connect/read timeout fails every download
+    /// immediately, in a way that reads as a network problem rather than a
+    /// configuration one (#107). Rejecting here, rather than clamping, means
+    /// the caller finds out at construction instead of at the first silent
+    /// failure.
     pub fn with_config(config: DataGovConfig) -> Result<Self> {
+        if config.max_concurrent_downloads == 0 {
+            return Err(DataGovError::config_error(
+                "max_concurrent_downloads must be at least 1, got 0",
+            ));
+        }
+        if config.download_timeout_secs == 0 {
+            return Err(DataGovError::config_error(
+                "download_timeout_secs must be at least 1, got 0 (a zero-second \
+                 connect/read timeout would fail every download immediately)",
+            ));
+        }
+
         let catalog = CatalogClient::new(config.catalog_config.clone());
 
         let allow_private = config.allow_private_network_downloads;
@@ -68,7 +93,7 @@ impl DataGovClient {
         let http_client = reqwest::Client::builder()
             .connect_timeout(stall)
             .read_timeout(stall)
-            .user_agent(&config.user_agent)
+            .user_agent(config.user_agent())
             .dns_resolver(util::GuardedResolver::new(allow_private))
             // Redirects are followed by `util::fetch_checked`, not here. A
             // reqwest policy runs synchronously, so it cannot resolve a name
@@ -170,40 +195,6 @@ impl DataGovClient {
         Ok(match limit {
             Some(n) if n >= 0 => iter.take(n as usize).collect(),
             _ => iter.collect(),
-        })
-    }
-
-    /// Fetch full organization records for the catalog.
-    pub async fn list_organization_records(&self) -> Result<Vec<Organization>> {
-        Ok(self.catalog.organizations().await?.organizations)
-    }
-
-    /// Fetch organization name suggestions matching `partial`.
-    ///
-    /// Implemented as a client-side case-insensitive filter over
-    /// [`CatalogClient::organizations`](data_gov_catalog::CatalogClient::organizations).
-    pub async fn autocomplete_organizations(
-        &self,
-        partial: &str,
-        limit: Option<i32>,
-    ) -> Result<Vec<String>> {
-        let needle = partial.to_lowercase();
-        let orgs = self.catalog.organizations().await?;
-        let matches = orgs.organizations.into_iter().filter(|o| {
-            let name_hit = o
-                .name
-                .as_deref()
-                .is_some_and(|n| n.to_lowercase().contains(&needle));
-            let slug_hit = o
-                .slug
-                .as_deref()
-                .is_some_and(|s| s.to_lowercase().contains(&needle));
-            name_hit || slug_hit
-        });
-        let names = matches.filter_map(|o| o.name.or(o.slug));
-        Ok(match limit {
-            Some(n) if n >= 0 => names.take(n as usize).collect(),
-            _ => names.collect(),
         })
     }
 
@@ -433,13 +424,14 @@ impl DataGovClient {
             .map(|p| p.to_path_buf())
             .unwrap_or_else(|| self.config.get_base_download_dir());
 
-        // Clamped here rather than only in `with_max_concurrent_downloads`,
-        // because the field is `pub` and a struct literal reaches it without
-        // passing through the builder. A zero-permit semaphore is never
-        // closed, so `acquire()` would stay pending forever.
-        let semaphore = Arc::new(tokio::sync::Semaphore::new(
-            self.config.max_concurrent_downloads.max(1),
-        ));
+        // `with_config` already refuses to build a client whose
+        // `max_concurrent_downloads` is zero (#107), but this stays a
+        // defense-in-depth backstop: a config assembled some other way must
+        // still not produce a zero-permit semaphore, which is never closed
+        // and would leave `acquire()` pending forever.
+        let semaphore = Arc::new(tokio::sync::Semaphore::new(Self::download_permits(
+            self.config.max_concurrent_downloads,
+        )));
 
         let status_reporter = self.reporter();
         let allow_private_network = self.config.allow_private_network_downloads;
@@ -518,6 +510,17 @@ impl DataGovClient {
 
     fn reporter(&self) -> Option<Arc<dyn StatusReporter + Send + Sync>> {
         self.config.status_reporter.clone()
+    }
+
+    /// Number of concurrent download permits to allocate for `max`.
+    ///
+    /// Never zero. `with_config` already rejects a zero
+    /// `max_concurrent_downloads` before a `DataGovClient` can exist
+    /// (#107), but this stays a defense-in-depth backstop for a config
+    /// assembled some other way: `Semaphore::new(0)` is never closed, so
+    /// `acquire()` would stay pending forever with no error (#73).
+    fn download_permits(max: usize) -> usize {
+        max.max(1)
     }
 
     async fn perform_download(
@@ -731,6 +734,10 @@ impl DataGovClient {
     }
 
     /// Check that the base download directory exists and is writable.
+    ///
+    /// Callers may run this concurrently against the same directory -- the
+    /// MCP server does, on every download where `outputDir` is omitted --
+    /// so the write-test probe must never share a name across calls (#112).
     pub async fn validate_download_dir(&self) -> Result<()> {
         let base_dir = self.config.get_base_download_dir();
 
@@ -744,11 +751,24 @@ impl DataGovClient {
             )));
         }
 
-        let test_file = base_dir.join(".write_test");
+        let test_file = base_dir.join(Self::probe_file_name());
         tokio::fs::write(&test_file, b"test").await?;
         tokio::fs::remove_file(&test_file).await?;
 
         Ok(())
+    }
+
+    /// A file name for `validate_download_dir`'s write-test probe.
+    ///
+    /// Unique per process and per call, on the same principle as
+    /// [`Self::partial_path`]: two concurrent probes in the same directory
+    /// must never share a name. Before this, a fixed name (`.write_test`)
+    /// meant one call's `remove_file` could race another's write and see
+    /// `ENOENT` for a directory that was perfectly writable (#112).
+    fn probe_file_name() -> String {
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        let serial = NEXT.fetch_add(1, Ordering::Relaxed);
+        format!(".data-gov-write-test-{}-{serial}", std::process::id())
     }
 
     /// Get the current base download directory.
@@ -1009,6 +1029,108 @@ mod tests {
             .validate_download_dir()
             .await
             .expect("should succeed");
-        assert!(!tmp.path().join(".write_test").exists());
+        let mut entries = tokio::fs::read_dir(tmp.path()).await.expect("read tempdir");
+        assert!(
+            entries.next_entry().await.expect("read entry").is_none(),
+            "no probe file of any name should remain in the directory"
+        );
+    }
+
+    /// #112: `validate_download_dir` used to probe with a fixed name,
+    /// `.write_test`. `handle_download_resources` in the MCP server calls it
+    /// on every download where `outputDir` is omitted -- the common case for
+    /// an agent -- and the MCP run loop dispatches those concurrently since
+    /// #65. Two overlapping calls on the same directory used to write the
+    /// same file, then race to remove it: whichever call's `remove_file`
+    /// lost the race saw `ENOENT` for a directory that was perfectly
+    /// writable, and reported `isError: true` for no real reason.
+    ///
+    /// This spawns many concurrent calls against one directory and asserts
+    /// every one succeeds -- a test that calls `validate_download_dir` once
+    /// cannot observe this, because the race needs two probes racing on the
+    /// same path at the same time.
+    #[tokio::test]
+    async fn concurrent_validate_download_dir_calls_never_collide_on_the_probe_file() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let client = Arc::new(client_with_download_dir(tmp.path().to_path_buf()));
+
+        let mut tasks = Vec::new();
+        for _ in 0..64 {
+            let client = Arc::clone(&client);
+            tasks.push(tokio::spawn(
+                async move { client.validate_download_dir().await },
+            ));
+        }
+
+        for (i, task) in tasks.into_iter().enumerate() {
+            let result = task.await.expect("task must not panic");
+            assert!(
+                result.is_ok(),
+                "concurrent call {i} must not fail on another call's probe file: {result:?}"
+            );
+        }
+    }
+
+    // === #107: with_config rejects the zero values a struct literal or a
+    // clamp-free builder path can produce ===
+
+    #[test]
+    fn with_config_rejects_a_zero_download_timeout() {
+        let config = crate::config::DataGovConfig {
+            download_timeout_secs: 0,
+            ..crate::config::DataGovConfig::default()
+        };
+        let err = DataGovClient::with_config(config)
+            .expect_err("a zero-second connect/read timeout must be rejected, not clamped");
+        match err {
+            DataGovError::ConfigError { message } => {
+                assert!(
+                    message.contains("download_timeout_secs"),
+                    "the error must name the field, got: {message}"
+                );
+            }
+            other => panic!("expected ConfigError, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn with_config_rejects_a_zero_max_concurrent_downloads() {
+        let config = crate::config::DataGovConfig {
+            max_concurrent_downloads: 0,
+            ..crate::config::DataGovConfig::default()
+        };
+        let err = DataGovClient::with_config(config)
+            .expect_err("a zero-permit semaphore must be rejected, not built");
+        match err {
+            DataGovError::ConfigError { message } => {
+                assert!(
+                    message.contains("max_concurrent_downloads"),
+                    "the error must name the field, got: {message}"
+                );
+            }
+            other => panic!("expected ConfigError, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn with_config_accepts_the_smallest_valid_values() {
+        let config = crate::config::DataGovConfig {
+            download_timeout_secs: 1,
+            max_concurrent_downloads: 1,
+            ..crate::config::DataGovConfig::default()
+        };
+        DataGovClient::with_config(config).expect("1 is a valid value for both fields");
+    }
+
+    /// #73's point-of-use clamp in `download_distributions` stays as a
+    /// backstop even though `with_config` now refuses to build a client
+    /// whose `max_concurrent_downloads` is zero: a config assembled some
+    /// other way must still not produce a zero-permit semaphore, which is
+    /// never closed and would stall `acquire()` forever with no error.
+    #[test]
+    fn download_permits_never_returns_zero() {
+        assert_eq!(DataGovClient::download_permits(0), 1);
+        assert_eq!(DataGovClient::download_permits(1), 1);
+        assert_eq!(DataGovClient::download_permits(5), 5);
     }
 }
