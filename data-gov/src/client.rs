@@ -70,21 +70,10 @@ impl DataGovClient {
             .read_timeout(stall)
             .user_agent(&config.user_agent)
             .dns_resolver(util::GuardedResolver::new(allow_private))
-            .redirect(reqwest::redirect::Policy::custom(move |attempt| {
-                let target = attempt.url().clone();
-                if attempt.previous().len() > util::MAX_REDIRECT_HOPS {
-                    return attempt.error(util::RefusedDestination::new(format!(
-                        "download abandoned after {} redirects",
-                        util::MAX_REDIRECT_HOPS
-                    )));
-                }
-                match util::check_url_without_dns(&target, allow_private) {
-                    Ok(_) => attempt.follow(),
-                    Err(message) => attempt.error(util::RefusedDestination::new(format!(
-                        "redirect to `{target}` refused: {message}"
-                    ))),
-                }
-            }))
+            // Redirects are followed by `util::fetch_checked`, not here. A
+            // reqwest policy runs synchronously, so it cannot resolve a name
+            // and cannot judge a hop whose host is one.
+            .redirect(reqwest::redirect::Policy::none())
             .build()?;
 
         Ok(Self {
@@ -572,16 +561,12 @@ impl DataGovClient {
             return Err(err);
         }
 
-        let response = match http_client.get(url).send().await {
+        // Every hop of the redirect chain goes through the same check the URL
+        // above did, including the last one, and no request is made for a hop
+        // that has not passed it.
+        let response = match util::fetch_checked(http_client, url, allow_private_network).await {
             Ok(resp) => resp,
             Err(err) => {
-                // A refusal decided by the redirect policy or by the DNS
-                // resolver arrives as the cause of a transport error. Report
-                // the reason, not "error sending request".
-                let err = match util::refusal_in(&err) {
-                    Some(message) => DataGovError::validation_error(message),
-                    None => DataGovError::from(err),
-                };
                 notify_failure(err.to_string(), &status_reporter);
                 return Err(err);
             }

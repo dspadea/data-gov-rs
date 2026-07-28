@@ -17,9 +17,16 @@ use crate::error::{DataGovError, Result};
 
 /// The most redirect hops a download may take before it is abandoned.
 ///
-/// A custom [`reqwest::redirect::Policy`] does not inherit the default
-/// chain limit, so the cap is stated here and enforced by the policy.
+/// The client follows redirects itself rather than delegating to reqwest, so
+/// no chain limit is inherited from anywhere and the cap is enforced by
+/// [`fetch_checked`].
 pub(crate) const MAX_REDIRECT_HOPS: usize = 10;
+
+/// The response statuses that name somewhere else to go.
+///
+/// The same set reqwest follows. 301, 302 and 303 may change the method for a
+/// request that was not a GET; 307 and 308 never do.
+const REDIRECT_STATUSES: [u16; 5] = [301, 302, 303, 307, 308];
 
 /// An address range a download is not allowed to reach.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -63,10 +70,10 @@ impl BlockedRange {
 
 /// A download destination the client refused to reach.
 ///
-/// It travels as the cause of a [`reqwest::Error`], so a refusal decided
-/// inside the redirect policy or the DNS resolver - neither of which can
-/// return a [`DataGovError`] - is recoverable by [`refusal_in`] and can be
-/// reported as a validation failure rather than as a transport failure.
+/// It travels as the cause of a [`reqwest::Error`], so a refusal decided inside
+/// the DNS resolver - which cannot return a [`DataGovError`] - is recoverable
+/// by [`refusal_in`] and can be reported as a validation failure rather than as
+/// a transport failure.
 #[derive(Debug)]
 pub(crate) struct RefusedDestination(String);
 
@@ -87,20 +94,21 @@ impl StdError for RefusedDestination {}
 
 /// A DNS resolver that will not hand back an address a download may not reach.
 ///
-/// The redirect policy runs in a synchronous callback, so it cannot resolve a
-/// name, and a redirect to a *name* that points at a private address would
-/// otherwise pass unchecked. reqwest calls this resolver for every connection
-/// it opens, redirect hops included, and connects only to the addresses it
-/// returns.
+/// [`fetch_checked`] judges the host of every URL a download requests, redirect
+/// hops included. This is the layer below it: reqwest calls this resolver when
+/// it opens a connection, and connects only to the addresses it returns, so the
+/// addresses actually connected to are checked and not only the ones the URL
+/// check saw.
 ///
 /// # A limit worth stating
 ///
-/// A host that is a name has to be resolved before it can be judged, and DNS
-/// is under the control of whoever published the record. This narrows the
-/// window - the addresses checked here are the addresses reqwest connects to -
-/// but it does not remove the class. A name whose answer changes between two
-/// lookups, or a record served through an HTTP proxy this resolver never sees,
-/// is outside what a client at this layer can decide.
+/// The two layers exist because a name is resolved twice - once to judge it,
+/// once to connect - and DNS is under the control of whoever published the
+/// record. Checking the addresses reqwest connects to narrows that window; it
+/// does not close it. Two cases stay outside what a client at this layer can
+/// decide: an answer that changes between the two lookups, and a connection
+/// made through an HTTP proxy, where reqwest resolves the proxy's host and this
+/// resolver never sees the destination's at all.
 #[derive(Debug)]
 pub(crate) struct GuardedResolver {
     allow_private: bool,
@@ -275,6 +283,103 @@ pub(crate) async fn check_download_url(raw: &str, allow_private: bool) -> Result
         }
     }
     Ok(())
+}
+
+/// Fetch `url`, following redirects here so that every hop is checked.
+///
+/// reqwest's own redirect handling runs in a synchronous callback, which cannot
+/// resolve a name and therefore cannot judge a hop whose host is one. This
+/// follows the chain instead, and puts every hop - the first and the last
+/// included - through the same [`check_download_url`] before the request for it
+/// is made.
+///
+/// Downloads are GET requests, and every status in [`REDIRECT_STATUSES`] either
+/// preserves GET (307, 308) or reduces to GET (301, 302, 303), so the method is
+/// the same on every hop. A `Location` is resolved against the URL it arrived
+/// on, so a relative reference reaches the host it actually names.
+///
+/// # Errors
+///
+/// Returns [`DataGovError::ValidationError`] when a hop is refused, when a
+/// `Location` cannot be resolved, or when the chain passes
+/// [`MAX_REDIRECT_HOPS`], and [`DataGovError::HttpError`] when a request fails
+/// for a transport reason.
+///
+/// # A limit worth stating
+///
+/// This closes the case where a redirect to a name was followed with nothing
+/// having judged the name. It does not make a hostile proxy safe. With a proxy
+/// configured, the name is resolved twice - once here, and once by the proxy -
+/// and the two answers can differ, exactly as they can differ between this
+/// check and the connection reqwest opens without a proxy. Judging the name
+/// ourselves is what a client at this layer can do; guaranteeing that the proxy
+/// judged the same name the same way is not.
+pub(crate) async fn fetch_checked(
+    http_client: &reqwest::Client,
+    url: &str,
+    allow_private: bool,
+) -> Result<reqwest::Response> {
+    let mut target = Url::parse(url).map_err(|err| {
+        DataGovError::validation_error(format!("download URL `{url}` does not parse: {err}"))
+    })?;
+    let mut hops = 0usize;
+
+    loop {
+        check_download_url(target.as_str(), allow_private).await?;
+
+        let response =
+            http_client
+                .get(target.clone())
+                .send()
+                .await
+                .map_err(|err| match refusal_in(&err) {
+                    // The resolver decides refusals where a `DataGovError` cannot
+                    // be returned, and attaches the reason to the transport error.
+                    Some(message) => DataGovError::validation_error(message),
+                    None => DataGovError::from(err),
+                })?;
+
+        let Some(next) = redirect_target(&response, &target)? else {
+            return Ok(response);
+        };
+
+        hops += 1;
+        if hops > MAX_REDIRECT_HOPS {
+            return Err(DataGovError::validation_error(format!(
+                "download of `{url}` abandoned after {MAX_REDIRECT_HOPS} redirects"
+            )));
+        }
+        target = next;
+    }
+}
+
+/// Where `response` points next, or `None` when it is not a usable redirect.
+///
+/// A 3xx carrying no `Location` names nowhere to go, so it is handed back as an
+/// ordinary response and reported as the failed download it is.
+///
+/// # Errors
+///
+/// Returns [`DataGovError::ValidationError`] when the `Location` is not text or
+/// does not resolve against `current`.
+fn redirect_target(response: &reqwest::Response, current: &Url) -> Result<Option<Url>> {
+    if !REDIRECT_STATUSES.contains(&response.status().as_u16()) {
+        return Ok(None);
+    }
+    let Some(value) = response.headers().get(reqwest::header::LOCATION) else {
+        return Ok(None);
+    };
+    let location = value.to_str().map_err(|_| {
+        DataGovError::validation_error(format!(
+            "redirect from `{current}` carries a Location header that is not text"
+        ))
+    })?;
+    let next = current.join(location).map_err(|err| {
+        DataGovError::validation_error(format!(
+            "redirect from `{current}` to `{location}` does not resolve: {err}"
+        ))
+    })?;
+    Ok(Some(next))
 }
 
 /// Recover a refusal that a transport error is carrying as its cause.
