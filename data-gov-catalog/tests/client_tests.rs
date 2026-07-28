@@ -3,7 +3,7 @@
 //! These tests never hit the network. Fixtures live in `tests/fixtures/` and
 //! are trimmed captures of real responses.
 
-use data_gov_catalog::{CatalogClient, CatalogError, Configuration, SearchParams};
+use data_gov_catalog::{CatalogClient, CatalogError, Configuration, SearchParams, SpatialFilter};
 use serde_json::json;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -90,6 +90,136 @@ async fn search_with_org_slug_passes_filter() {
         .search(SearchParams::new().q("climate").org_slug("nasa"))
         .await
         .expect("filtered search succeeds");
+}
+
+/// #77: `org_type` had zero callers and zero tests. Proves the parameter
+/// reaches the query string in the right shape; the live half (does the
+/// server actually honour it) is `live_org_type_filters_to_the_requested_type`
+/// in `integration_tests.rs`.
+#[tokio::test]
+async fn search_with_org_type_passes_filter() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/search"))
+        .and(query_param("org_type", "Federal Government"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_raw(fixture("search_filtered.json"), "application/json"),
+        )
+        .mount(&server)
+        .await;
+
+    client_for(&server)
+        .search(SearchParams::new().org_type("Federal Government"))
+        .await
+        .expect("org_type-filtered search succeeds");
+}
+
+/// #77: `spatial_filter` was a bare `String` builder, so an invalid value
+/// like the server's own silently-ignored `"BOGUS"` compiled fine and did
+/// the wrong thing at runtime. `SpatialFilter` makes the two values the
+/// Catalog API actually accepts the only ones representable.
+#[tokio::test]
+async fn search_with_spatial_filter_sends_the_wire_value_for_each_variant() {
+    for (variant, wire_value) in [
+        (SpatialFilter::Geospatial, "geospatial"),
+        (SpatialFilter::NonGeospatial, "non-geospatial"),
+    ] {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/search"))
+            .and(query_param("spatial_filter", wire_value))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_raw(fixture("search_filtered.json"), "application/json"),
+            )
+            .mount(&server)
+            .await;
+
+        client_for(&server)
+            .search(SearchParams::new().spatial_filter(variant))
+            .await
+            .unwrap_or_else(|e| panic!("{variant:?} search succeeds: {e}"));
+    }
+}
+
+/// #77: `spatial_geometry` had zero callers and zero tests. Proves the
+/// GeoJSON geometry reaches the query string as the value the server
+/// expects: the JSON-encoded geometry, not a GeoJSON-flavoured struct or a
+/// URL-encoded form body.
+#[tokio::test]
+async fn search_with_spatial_geometry_sends_the_geometry_as_json() {
+    let server = MockServer::start().await;
+    let geometry = json!({"type": "Point", "coordinates": [-77.0369, 38.9072]});
+    Mock::given(method("GET"))
+        .and(path("/search"))
+        .and(query_param("spatial_geometry", geometry.to_string()))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_raw(fixture("search_filtered.json"), "application/json"),
+        )
+        .mount(&server)
+        .await;
+
+    client_for(&server)
+        .search(SearchParams::new().spatial_geometry(geometry))
+        .await
+        .expect("spatial_geometry-filtered search succeeds");
+}
+
+/// #77: `spatial_within` had zero callers and zero tests, and alone it has
+/// no observable effect on the live API (confirmed by probe: identical to
+/// the unfiltered baseline). It only changes anything alongside
+/// `spatial_geometry` -- this proves both `true` and `false` still reach
+/// the wire distinctly, which is the shaping half; the honoured-differently
+/// half is `live_spatial_within_changes_results_alongside_geometry` in
+/// `integration_tests.rs`.
+#[tokio::test]
+async fn search_with_spatial_within_sends_true_and_false() {
+    for within in [true, false] {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/search"))
+            .and(query_param("spatial_within", within.to_string()))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_raw(fixture("search_filtered.json"), "application/json"),
+            )
+            .mount(&server)
+            .await;
+
+        client_for(&server)
+            .search(SearchParams::new().spatial_within(within))
+            .await
+            .unwrap_or_else(|e| panic!("spatial_within={within} search succeeds: {e}"));
+    }
+}
+
+/// #77: `location_geometry` had zero callers and zero tests. Proves the
+/// request lands on `/api/location/{id}` and the GeoJSON body comes back as
+/// a `Value` untouched, against a real captured response (`location.json`,
+/// id `5` = California).
+#[tokio::test]
+async fn location_geometry_parses_the_geometry_response() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api/location/5"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_raw(fixture("location.json"), "application/json"),
+        )
+        .mount(&server)
+        .await;
+
+    let geometry = client_for(&server)
+        .location_geometry("5")
+        .await
+        .expect("location_geometry succeeds");
+
+    assert!(
+        geometry.get("geometry").and_then(|v| v.as_str()).is_some(),
+        "expected a `geometry` string field, got {geometry}"
+    );
+    assert_eq!(geometry.get("id").and_then(|v| v.as_str()), Some("5"));
 }
 
 #[tokio::test]
