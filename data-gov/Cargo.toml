@@ -40,6 +40,12 @@ wiremock = "0.6"
 tokio = { version = "1", features = ["full"] }
 serde_json = "1.0"
 tempfile = "3"
+# Process-level CLI tests (tests/cli_process_tests.rs): drives the real
+# built binary with argv, separated stdio, and an observed exit code —
+# nothing else in this crate's dev-dependencies can do that. Versions
+# confirmed current via `cargo info` against the live crates.io index.
+assert_cmd = "2.2.2"
+predicates = "3.1.4"
 
 [features]
 default = ["native-tls"]
