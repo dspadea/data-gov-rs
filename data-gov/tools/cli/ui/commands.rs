@@ -215,6 +215,19 @@ pub fn parse_command_args(s: &str) -> Vec<String> {
 /// `validate_download_dir` would create a literal `~` directory. Only a
 /// leading `~` is special — `foo~bar` is a literal path component, exactly
 /// as it is in a shell.
+///
+/// A leading `~user` (someone else's home directory) is rejected outright
+/// rather than expanded: resolving it needs a passwd-database lookup and a
+/// new dependency, and this is a download directory, not a shell. Silently
+/// falling through to a literal `~user` path component — which is what a
+/// download directory setter, unlike a real shell, would otherwise do —
+/// reports `Success!` while creating a directory the caller almost
+/// certainly did not intend.
+///
+/// # Errors
+///
+/// Returns `Err` when home-directory resolution fails, or when `raw`
+/// starts with `~` but is neither `~` alone nor `~/...`.
 fn expand_tilde(raw: &str) -> Result<PathBuf, String> {
     if raw == "~" {
         return dirs::home_dir()
@@ -224,6 +237,12 @@ fn expand_tilde(raw: &str) -> Result<PathBuf, String> {
         let home = dirs::home_dir()
             .ok_or_else(|| "could not determine home directory to expand '~'".to_string())?;
         return Ok(home.join(rest));
+    }
+    if raw.starts_with('~') && raw.len() > 1 {
+        return Err(format!(
+            "'{raw}' is not supported: only '~' and '~/...' (your own home directory) \
+             expand — another user's home directory does not. Use an absolute path instead."
+        ));
     }
     Ok(PathBuf::from(raw))
 }
@@ -788,6 +807,33 @@ mod tests {
             panic!("Expected SetDir command");
         };
         assert_eq!(path, PathBuf::from("foo~bar"));
+    }
+
+    // --- lcd `~user` is rejected, not silently created as a literal dir ---
+
+    #[test]
+    fn test_lcd_tilde_someone_elses_home_is_rejected_with_a_clear_error() {
+        let result = ReplCommand::from_str("lcd ~someuser/shared");
+        let Err(message) = result else {
+            panic!("'~someuser/shared' must not silently become a literal directory: {result:?}");
+        };
+        assert!(
+            message.contains("~someuser/shared"),
+            "error should name the rejected form: {message}"
+        );
+        assert!(
+            message.contains("not supported"),
+            "error should say the form is unsupported: {message}"
+        );
+    }
+
+    #[test]
+    fn test_lcd_tilde_root_is_rejected_with_a_clear_error() {
+        let result = ReplCommand::from_str("lcd ~root");
+        assert!(
+            result.is_err(),
+            "'~root' must not silently become a literal './~root' directory"
+        );
     }
 
     #[test]
