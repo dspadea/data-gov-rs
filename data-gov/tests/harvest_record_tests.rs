@@ -40,8 +40,7 @@ async fn get_dataset_by_harvest_record_deserializes_the_transformed_dataset() {
     // slug-addressed fixtures), so its content changes on every recapture.
     // Read the title out of the raw body rather than hardcoding a value that
     // would go stale the next time scripts/capture-fixtures.sh runs.
-    let raw: serde_json::Value =
-        serde_json::from_str(&body).expect("fixture must be valid JSON");
+    let raw: serde_json::Value = serde_json::from_str(&body).expect("fixture must be valid JSON");
     let expected_title = raw["title"]
         .as_str()
         .expect("fixture has no title; recapture before trusting this test");
