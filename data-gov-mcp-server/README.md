@@ -56,6 +56,15 @@ and an `arguments` object. Discover them at runtime with `tools/list`.
 - `tools/list` — List available tools and their schemas.
 - `tools/call` — Invoke a tool by name with arguments.
 - `initialize`, `initialized`, `shutdown` — MCP protocol lifecycle.
+- `ping` — Keepalive. Answers with an empty result.
+- `notifications/cancelled` — Stops work on the request named by `requestId`.
+  The cancelled request is never answered. A `requestId` that is unknown or
+  has already finished is ignored.
+
+Requests are dispatched concurrently, so a long download does not delay
+anything sent after it. Responses may therefore arrive in a different order
+from the requests; correlate them by `id`, as JSON-RPC requires. Each request
+runs under a 15-minute ceiling.
 
 A typical `tools/call` request:
 
@@ -71,8 +80,32 @@ A typical `tools/call` request:
 }
 ```
 
+Every message needs `"jsonrpc": "2.0"`; the member is required and a message
+without it is rejected with `-32600`. A request also needs an `id` that is a
+string or an integer — never `null`. A message with no `id` at all is a
+notification, and notifications are never answered.
+
 Responses mirror the JSON-RPC 2.0 schema and either contain a `result`
 payload or an `error` object.
+
+### How failures are reported
+
+The two kinds are reported differently, and they mean different things:
+
+- **A tool that ran and failed** returns a normal `result` with
+  `"isError": true` and the reason in `content` — an upstream outage, a
+  dataset with no matching downloadable distributions, a dataset with no DCAT
+  metadata. This is what MCP asks for, so a model can read the reason and try
+  something else. `isError` is always present, `false` on success.
+- **A protocol fault** returns a JSON-RPC `error` object — an unknown method
+  or tool (`-32601`), or arguments that do not match the tool's schema
+  (`-32602`).
+
+Tool arguments are validated against the advertised `inputSchema`, which
+declares `additionalProperties: false` for every tool. A property the schema
+does not declare is refused by name rather than dropped, so a misspelling such
+as `output_dir` for `outputDir` fails loudly instead of silently running with
+a different argument.
 
 #### Direct method dispatch (non-MCP clients)
 
@@ -91,11 +124,11 @@ next call:
 
 ```jsonc
 // Page 1
-{"method":"tools/call","params":{"name":"data_gov_search","arguments":{"query":"climate","limit":20}}}
+{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"data_gov_search","arguments":{"query":"climate","limit":20}}}
 // response: { "results": [...], "after": "WzgxLjM...", ... }
 
 // Page 2 — pass the cursor back as `after`
-{"method":"tools/call","params":{"name":"data_gov_search","arguments":{"query":"climate","limit":20,"after":"WzgxLjM..."}}}
+{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"data_gov_search","arguments":{"query":"climate","limit":20,"after":"WzgxLjM..."}}}
 ```
 
 ## VSCode Integration
