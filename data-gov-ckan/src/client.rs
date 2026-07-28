@@ -12,10 +12,12 @@ const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
 /// Configuration for the CKAN client
 #[derive(Clone)]
 pub struct Configuration {
-    /// Base URL for the CKAN API (e.g., `https://open.canada.ca/data/en/api/3`).
+    /// Base URL for the CKAN API (e.g., `https://demo.ckan.org/api/3`).
     ///
-    /// data.gov retired its CKAN endpoint in 2026; do not point this at
-    /// `catalog.data.gov`. Set it to your target CKAN-compatible portal.
+    /// [`Configuration::default`] does not point this at a live portal (see
+    /// its own docs); data.gov retired its CKAN endpoint in 2026, and no
+    /// other CKAN deployment is this crate's "default" one either. Set it to
+    /// your target CKAN-compatible portal.
     pub base_path: String,
     /// User agent string for HTTP requests
     pub user_agent: Option<String>,
@@ -119,13 +121,19 @@ fn build_client(connect_timeout: Duration, timeout: Duration) -> reqwest::Client
 impl Default for Configuration {
     fn default() -> Self {
         Configuration {
-            // catalog.data.gov (the old default) is a confirmed 404: data.gov
-            // retired its CKAN endpoint in 2026. open.canada.ca is a live,
-            // government-run CKAN portal -- verified responding, not
-            // publicly editable -- so a caller who runs this crate's own
-            // quick-start example unmodified sees it actually work (#72.3).
-            // Point this at your own instance for any real use.
-            base_path: "https://open.canada.ca/data/en/api/3".to_owned(),
+            // This crate serves any compliant CKAN deployment, not one
+            // portal, so there is no principled reason to default to one
+            // government's live service over another's -- Canada's,
+            // Ireland's, and Australia's all appear in this crate's own
+            // fixtures with equal standing. Defaulting to any of them sends
+            // live traffic to a third party that never consented to it
+            // (previously open.canada.ca, silently, from every unconfigured
+            // client). `.invalid` is reserved by RFC 2606 and never
+            // resolves, so an unconfigured client fails fast and loud with
+            // RequestError -- not a confusing 404 that reads like the
+            // request itself, rather than the configuration, is broken.
+            // Point this at your own CKAN-compatible portal.
+            base_path: "https://ckan.example.invalid/api/3".to_owned(),
             user_agent: Some(concat!("data-gov-rs/", env!("CARGO_PKG_VERSION")).to_owned()),
             client: build_client(DEFAULT_CONNECT_TIMEOUT, DEFAULT_TIMEOUT),
             basic_auth: None,
