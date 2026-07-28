@@ -543,7 +543,9 @@ impl DataGovClient {
 
         // The destination is judged before anything is created on disk and
         // before the request leaves, so a refused URL costs nothing and leaves
-        // nothing behind.
+        // nothing behind. `fetch_checked` judges it again, which is one extra
+        // lookup and deliberate: it has to be safe called on its own, rather
+        // than safe because this caller happened to check first.
         if let Err(err) = util::check_download_url(url, allow_private_network).await {
             notify_failure(err.to_string(), &status_reporter);
             return Err(err);
