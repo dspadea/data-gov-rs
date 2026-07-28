@@ -3,9 +3,10 @@
 //! These tests never hit the network. Fixtures live in `tests/fixtures/` and
 //! are trimmed captures of real responses.
 
-use data_gov_catalog::{CatalogClient, CatalogError, Configuration, SearchParams};
+use data_gov_catalog::{CatalogClient, CatalogError, Configuration, SearchParams, SpatialFilter};
 use serde_json::json;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 use wiremock::matchers::{method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -89,6 +90,136 @@ async fn search_with_org_slug_passes_filter() {
         .search(SearchParams::new().q("climate").org_slug("nasa"))
         .await
         .expect("filtered search succeeds");
+}
+
+/// #77: `org_type` had zero callers and zero tests. Proves the parameter
+/// reaches the query string in the right shape; the live half (does the
+/// server actually honour it) is `live_org_type_filters_to_the_requested_type`
+/// in `integration_tests.rs`.
+#[tokio::test]
+async fn search_with_org_type_passes_filter() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/search"))
+        .and(query_param("org_type", "Federal Government"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_raw(fixture("search_filtered.json"), "application/json"),
+        )
+        .mount(&server)
+        .await;
+
+    client_for(&server)
+        .search(SearchParams::new().org_type("Federal Government"))
+        .await
+        .expect("org_type-filtered search succeeds");
+}
+
+/// #77: `spatial_filter` was a bare `String` builder, so an invalid value
+/// like the server's own silently-ignored `"BOGUS"` compiled fine and did
+/// the wrong thing at runtime. `SpatialFilter` makes the two values the
+/// Catalog API actually accepts the only ones representable.
+#[tokio::test]
+async fn search_with_spatial_filter_sends_the_wire_value_for_each_variant() {
+    for (variant, wire_value) in [
+        (SpatialFilter::Geospatial, "geospatial"),
+        (SpatialFilter::NonGeospatial, "non-geospatial"),
+    ] {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/search"))
+            .and(query_param("spatial_filter", wire_value))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_raw(fixture("search_filtered.json"), "application/json"),
+            )
+            .mount(&server)
+            .await;
+
+        client_for(&server)
+            .search(SearchParams::new().spatial_filter(variant))
+            .await
+            .unwrap_or_else(|e| panic!("{variant:?} search succeeds: {e}"));
+    }
+}
+
+/// #77: `spatial_geometry` had zero callers and zero tests. Proves the
+/// GeoJSON geometry reaches the query string as the value the server
+/// expects: the JSON-encoded geometry, not a GeoJSON-flavoured struct or a
+/// URL-encoded form body.
+#[tokio::test]
+async fn search_with_spatial_geometry_sends_the_geometry_as_json() {
+    let server = MockServer::start().await;
+    let geometry = json!({"type": "Point", "coordinates": [-77.0369, 38.9072]});
+    Mock::given(method("GET"))
+        .and(path("/search"))
+        .and(query_param("spatial_geometry", geometry.to_string()))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_raw(fixture("search_filtered.json"), "application/json"),
+        )
+        .mount(&server)
+        .await;
+
+    client_for(&server)
+        .search(SearchParams::new().spatial_geometry(geometry))
+        .await
+        .expect("spatial_geometry-filtered search succeeds");
+}
+
+/// #77: `spatial_within` had zero callers and zero tests, and alone it has
+/// no observable effect on the live API (confirmed by probe: identical to
+/// the unfiltered baseline). It only changes anything alongside
+/// `spatial_geometry` -- this proves both `true` and `false` still reach
+/// the wire distinctly, which is the shaping half; the honoured-differently
+/// half is `live_spatial_within_changes_results_alongside_geometry` in
+/// `integration_tests.rs`.
+#[tokio::test]
+async fn search_with_spatial_within_sends_true_and_false() {
+    for within in [true, false] {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/search"))
+            .and(query_param("spatial_within", within.to_string()))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_raw(fixture("search_filtered.json"), "application/json"),
+            )
+            .mount(&server)
+            .await;
+
+        client_for(&server)
+            .search(SearchParams::new().spatial_within(within))
+            .await
+            .unwrap_or_else(|e| panic!("spatial_within={within} search succeeds: {e}"));
+    }
+}
+
+/// #77: `location_geometry` had zero callers and zero tests. Proves the
+/// request lands on `/api/location/{id}` and the GeoJSON body comes back as
+/// a `Value` untouched, against a real captured response (`location.json`,
+/// id `5` = California).
+#[tokio::test]
+async fn location_geometry_parses_the_geometry_response() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api/location/5"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_raw(fixture("location.json"), "application/json"),
+        )
+        .mount(&server)
+        .await;
+
+    let geometry = client_for(&server)
+        .location_geometry("5")
+        .await
+        .expect("location_geometry succeeds");
+
+    assert!(
+        geometry.get("geometry").and_then(|v| v.as_str()).is_some(),
+        "expected a `geometry` string field, got {geometry}"
+    );
+    assert_eq!(geometry.get("id").and_then(|v| v.as_str()), Some("5"));
 }
 
 #[tokio::test]
@@ -211,6 +342,137 @@ async fn dataset_by_slug_percent_encodes_hostile_slugs_into_one_path_segment() {
             "{hostile:?} must not introduce a query string: {}",
             requests[0].url
         );
+    }
+}
+
+/// A single hostile id, probed against one endpoint template.
+///
+/// Shared by the four `#71.1` tests below: `harvest_record`,
+/// `harvest_record_raw`, `harvest_record_transformed`, and
+/// `location_geometry` all still built their path with a bare
+/// `format!("/prefix/{id}/suffix")`. `Url::parse` removes dot-segments
+/// *after* percent-decoding, so an unencoded `..` or `%2e` can redirect the
+/// GET to a different path, and a bare `#` or `?` strands the rest of the
+/// value in the fragment or query instead of the path -- which is the
+/// silent-success case: an unrelated JSON object then deserializes into an
+/// all-`None` model with no error at all.
+struct HostilePathCase {
+    /// The id supplied to the client method.
+    hostile: &'static str,
+    /// What the resulting request path must start with.
+    prefix: &'static str,
+    /// How many `/` characters the full path must contain: proof the hostile
+    /// id landed in exactly one path segment rather than adding or removing
+    /// segments.
+    slash_count: usize,
+}
+
+const HOSTILE_IDS: [&str; 8] = [
+    "../search",
+    "..%2Fsearch",
+    "a/b",
+    "with space",
+    "quote\"inside",
+    "sem;colon",
+    "q?uery=1",
+    "frag#ment",
+];
+
+/// Mount a catch-all 200 responder, issue one request, and assert it landed
+/// on exactly one path segment under `case.prefix`.
+async fn assert_hostile_id_stays_in_one_segment(
+    case: &HostilePathCase,
+    body: serde_json::Value,
+    call: impl AsyncFnOnce(&CatalogClient, &str) -> (),
+) {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(body))
+        .mount(&server)
+        .await;
+
+    call(&client_for(&server), case.hostile).await;
+
+    let requests = server.received_requests().await.expect("recorded requests");
+    assert_eq!(requests.len(), 1, "{:?}: exactly one request", case.hostile);
+    let path = requests[0].url.path();
+
+    assert!(
+        path.starts_with(case.prefix),
+        "{:?} escaped the endpoint: requested {path}",
+        case.hostile
+    );
+    assert_eq!(
+        path.matches('/').count(),
+        case.slash_count,
+        "{:?} must occupy exactly one path segment, got {path}",
+        case.hostile
+    );
+    assert!(
+        requests[0].url.query().is_none(),
+        "{:?} must not introduce a query string: {}",
+        case.hostile,
+        requests[0].url
+    );
+}
+
+#[tokio::test]
+async fn harvest_record_percent_encodes_hostile_ids_into_one_path_segment() {
+    for hostile in HOSTILE_IDS {
+        let case = HostilePathCase {
+            hostile,
+            prefix: "/harvest_record/",
+            slash_count: 2,
+        };
+        assert_hostile_id_stays_in_one_segment(&case, json!({}), async |client, id| {
+            let _ = client.harvest_record(id).await;
+        })
+        .await;
+    }
+}
+
+#[tokio::test]
+async fn harvest_record_raw_percent_encodes_hostile_ids_into_one_path_segment() {
+    for hostile in HOSTILE_IDS {
+        let case = HostilePathCase {
+            hostile,
+            prefix: "/harvest_record/",
+            slash_count: 3,
+        };
+        assert_hostile_id_stays_in_one_segment(&case, json!({}), async |client, id| {
+            let _ = client.harvest_record_raw(id).await;
+        })
+        .await;
+    }
+}
+
+#[tokio::test]
+async fn harvest_record_transformed_percent_encodes_hostile_ids_into_one_path_segment() {
+    for hostile in HOSTILE_IDS {
+        let case = HostilePathCase {
+            hostile,
+            prefix: "/harvest_record/",
+            slash_count: 3,
+        };
+        assert_hostile_id_stays_in_one_segment(&case, json!({}), async |client, id| {
+            let _ = client.harvest_record_transformed(id).await;
+        })
+        .await;
+    }
+}
+
+#[tokio::test]
+async fn location_geometry_percent_encodes_hostile_ids_into_one_path_segment() {
+    for hostile in HOSTILE_IDS {
+        let case = HostilePathCase {
+            hostile,
+            prefix: "/api/location/",
+            slash_count: 3,
+        };
+        assert_hostile_id_stays_in_one_segment(&case, json!({}), async |client, id| {
+            let _ = client.location_geometry(id).await;
+        })
+        .await;
     }
 }
 
@@ -479,4 +741,116 @@ async fn dataset_by_slug_distinguishes_a_server_error_from_a_missing_dataset() {
         Err(CatalogError::ApiError { status, .. }) => assert_eq!(status, 503),
         other => panic!("503 must surface as an ApiError, not as a missing dataset: {other:?}"),
     }
+}
+
+/// #48: a host that accepts the connection but never finishes the response
+/// must not hang the caller forever. `Configuration::with_timeouts` lets a
+/// caller pick a short bound; wiremock's delay (5s) is far longer than the
+/// configured timeout (100ms), so a client that honours the timeout returns
+/// promptly and a client that does not (a bare `reqwest::Client::new()`)
+/// would still be waiting when this test's own harness gives up.
+#[tokio::test]
+async fn a_short_configured_timeout_bounds_a_stalled_request() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/search"))
+        .respond_with(ResponseTemplate::new(200).set_delay(Duration::from_secs(5)))
+        .mount(&server)
+        .await;
+
+    let mut config =
+        Configuration::with_timeouts(Duration::from_millis(50), Duration::from_millis(100));
+    config.base_path = server.uri();
+    let client = CatalogClient::new(Arc::new(config));
+
+    let start = Instant::now();
+    let result = client.search(SearchParams::new().q("x")).await;
+    let elapsed = start.elapsed();
+
+    assert!(
+        matches!(result, Err(CatalogError::RequestError(_))),
+        "an unresponsive server must produce a RequestError, not hang or succeed: got {result:?}"
+    );
+    assert!(
+        elapsed < Duration::from_secs(2),
+        "took {elapsed:?} against a 100ms configured timeout and a 5s server delay; \
+         the timeout is not being applied to the client"
+    );
+}
+
+/// Values that have no representation as a URL path segment.
+///
+/// Percent-encoding cannot save these: the URL standard removes dot-segments
+/// after decoding, and treats `%2E` as a dot for that purpose, so an id of
+/// `..` turns `/harvest_record/{id}/transformed` into `/transformed`. An empty
+/// id leaves `//`. All three must be refused before a request goes out.
+const UNREPRESENTABLE_IDS: [&str; 3] = ["", ".", ".."];
+
+/// Assert every unrepresentable id is refused, and that nothing is requested.
+async fn assert_unrepresentable_ids_are_refused(
+    label: &str,
+    call: impl AsyncFn(&CatalogClient, &str) -> Result<(), CatalogError>,
+) {
+    for id in UNREPRESENTABLE_IDS {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({})))
+            .mount(&server)
+            .await;
+
+        let outcome = call(&client_for(&server), id).await;
+
+        assert!(
+            matches!(outcome, Err(CatalogError::InvalidPathSegment(ref got)) if got == id),
+            "{label} with id {id:?} must fail with InvalidPathSegment, got {outcome:?}"
+        );
+        assert!(
+            server
+                .received_requests()
+                .await
+                .expect("recorded requests")
+                .is_empty(),
+            "{label} with id {id:?} must not reach the network"
+        );
+    }
+}
+
+#[tokio::test]
+async fn dataset_by_slug_refuses_slugs_that_cannot_be_a_path_segment() {
+    assert_unrepresentable_ids_are_refused("dataset_by_slug", async |client, id| {
+        client.dataset_by_slug(id).await.map(|_| ())
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn location_geometry_refuses_ids_that_cannot_be_a_path_segment() {
+    assert_unrepresentable_ids_are_refused("location_geometry", async |client, id| {
+        client.location_geometry(id).await.map(|_| ())
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn harvest_record_refuses_ids_that_cannot_be_a_path_segment() {
+    assert_unrepresentable_ids_are_refused("harvest_record", async |client, id| {
+        client.harvest_record(id).await.map(|_| ())
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn harvest_record_raw_refuses_ids_that_cannot_be_a_path_segment() {
+    assert_unrepresentable_ids_are_refused("harvest_record_raw", async |client, id| {
+        client.harvest_record_raw(id).await.map(|_| ())
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn harvest_record_transformed_refuses_ids_that_cannot_be_a_path_segment() {
+    assert_unrepresentable_ids_are_refused("harvest_record_transformed", async |client, id| {
+        client.harvest_record_transformed(id).await.map(|_| ())
+    })
+    .await;
 }

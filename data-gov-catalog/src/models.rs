@@ -271,14 +271,15 @@ pub struct ContactPoint {
     #[serde(default, rename = "@type", skip_serializing_if = "Option::is_none")]
     pub type_hint: Option<String>,
     /// Full name of the contact.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, rename = "fn", skip_serializing_if = "Option::is_none")]
     pub fn_: Option<String>,
     /// Email URI (e.g. `mailto:ops@example.gov`).
     #[serde(default, skip_serializing_if = "Option::is_none", rename = "hasEmail")]
     pub has_email: Option<String>,
 }
 
-// `fn` is a keyword; accept it via `fn_` with a rename.
+// `fn` is a keyword; the field is named `fn_` and mapped back to the wire
+// name `fn` with `rename = "fn"` above.
 impl ContactPoint {
     /// Create a [`ContactPoint`] with the DCAT `fn` field populated.
     pub fn with_name(name: impl Into<String>) -> Self {
@@ -392,4 +393,33 @@ pub struct HarvestRecord {
     /// DCAT-US transformation of `source_raw`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_transform: Option<Value>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `ContactPoint::with_name` had never been called or tested (#77): its
+    /// only claim of correctness was its own rustdoc. Prove it actually
+    /// populates the field the DCAT `fn` rename reads from, and that the
+    /// value it produces serializes under the real wire key.
+    #[test]
+    fn with_name_populates_the_fn_field_and_serializes_under_the_wire_key() {
+        let contact = ContactPoint::with_name("Jane Doe");
+
+        assert_eq!(contact.fn_.as_deref(), Some("Jane Doe"));
+        assert_eq!(contact.type_hint, None);
+        assert_eq!(contact.has_email, None);
+
+        let serialized = serde_json::to_value(&contact).expect("ContactPoint serializes");
+        assert_eq!(
+            serialized.get("fn").and_then(Value::as_str),
+            Some("Jane Doe"),
+            "with_name's value must round-trip through the `fn` wire key: got {serialized}"
+        );
+        assert!(
+            serialized.get("fn_").is_none(),
+            "must not emit the schema-invalid key `fn_`: got {serialized}"
+        );
+    }
 }

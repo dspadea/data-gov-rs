@@ -4,12 +4,49 @@ use crate::models;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 use std::sync::Arc;
+use std::time::Duration;
+
+/// Default TCP/TLS connect timeout applied by [`Configuration::default`].
+///
+/// Kept generous relative to [`DEFAULT_TIMEOUT`]: a slow handshake on a
+/// loaded host is common and is not itself the failure this bounds. What it
+/// rules out is a connection that never completes at all.
+pub const DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Default overall request timeout applied by [`Configuration::default`].
+///
+/// Matches the value in this crate's README configuration example, so the
+/// documented posture and the shipped default agree.
+pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Build a [`reqwest::Client`] with an explicit connect and overall timeout.
+///
+/// Falls back to [`reqwest::Client::new`] (no timeout at all) only if the
+/// builder itself fails. In practice that happens for a TLS backend
+/// misconfiguration, never for a timeout value -- but [`Default::default`]
+/// has no `Result` to propagate through, so a fallback is the only option
+/// that does not turn a working call into a panic.
+fn build_client(connect_timeout: Duration, timeout: Duration) -> reqwest::Client {
+    reqwest::Client::builder()
+        .connect_timeout(connect_timeout)
+        .timeout(timeout)
+        .build()
+        .unwrap_or_default()
+}
 
 /// Configuration for the Catalog API client.
 ///
 /// The defaults target the public data.gov endpoint. Override `base_path`
 /// to point at a staging instance or at `https://api.data.gov/catalog`
 /// once the announced migration lands.
+///
+/// There is deliberately no `timeout` field here: a [`reqwest::Client`]
+/// bakes its timeouts in at construction and cannot be reconfigured
+/// afterward, so a field that did not also rebuild `client` would silently
+/// stop applying the moment someone set it. Use
+/// [`Configuration::with_timeouts`] to get a client with different bounds,
+/// or build `client` yourself for anything beyond timeouts (a proxy, custom
+/// headers, connection pooling).
 #[derive(Debug, Clone)]
 pub struct Configuration {
     /// Base URL for the Catalog API (e.g. `https://catalog.data.gov`).
@@ -25,6 +62,30 @@ impl Configuration {
     pub fn new() -> Self {
         Self::default()
     }
+
+    /// Build a [`Configuration`] whose client uses the given timeouts
+    /// instead of [`DEFAULT_CONNECT_TIMEOUT`] and [`DEFAULT_TIMEOUT`].
+    ///
+    /// `base_path` and `user_agent` are left at their defaults; set them
+    /// afterward (both fields are `pub`) if they need to change too.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use data_gov_catalog::Configuration;
+    /// use std::time::Duration;
+    ///
+    /// let config = Configuration::with_timeouts(
+    ///     Duration::from_secs(5),
+    ///     Duration::from_secs(15),
+    /// );
+    /// ```
+    pub fn with_timeouts(connect_timeout: Duration, timeout: Duration) -> Self {
+        Self {
+            client: build_client(connect_timeout, timeout),
+            ..Self::default()
+        }
+    }
 }
 
 impl Default for Configuration {
@@ -32,7 +93,7 @@ impl Default for Configuration {
         Self {
             base_path: "https://catalog.data.gov".to_owned(),
             user_agent: Some(concat!("data-gov-rs/", env!("CARGO_PKG_VERSION")).to_owned()),
-            client: reqwest::Client::new(),
+            client: build_client(DEFAULT_CONNECT_TIMEOUT, DEFAULT_TIMEOUT),
         }
     }
 }
@@ -40,10 +101,33 @@ impl Default for Configuration {
 /// Percent-encode a single URL path segment.
 ///
 /// Everything outside the unreserved set is escaped, including `/` and `.`, so
-/// a value containing `..`, `%2e` or a slash cannot escape its segment and
-/// redirect the request to a different endpoint. `.` is escaped rather than
-/// passed through precisely so that `..` cannot survive as a dot-segment.
-fn encode_path_segment(segment: &str) -> String {
+/// a value containing a slash, a `#`, a `?`, or `..` as a substring cannot
+/// escape its segment and redirect the request to a different endpoint.
+///
+/// Encoding is not sufficient on its own. Three values have no representation
+/// as a path segment at all and are refused instead:
+///
+/// | Value | What the URL parser does with it |
+/// |---|---|
+/// | `..` | Removes the segment *and* its parent: `/harvest_record/../raw` becomes `/raw` |
+/// | `.` | Removes the segment: `/harvest_record/./raw` becomes `/harvest_record/raw` |
+/// | `""` | Leaves an empty segment, so the path carries `//` |
+///
+/// Percent-encoding does not help for the first two. The URL standard looks for
+/// dot-segments *after* decoding, and treats `%2E` as a dot for that purpose, so
+/// `%2E%2E` collapses exactly as `..` does. Verified against `url` 2.5: an id of
+/// `..` turns `/harvest_record/{id}/transformed` into `/transformed`.
+///
+/// Only a value that is entirely dots is affected. `../search` is safe, because
+/// the encoded slash keeps it one segment.
+///
+/// # Errors
+///
+/// [`CatalogError::InvalidPathSegment`] when `segment` is `""`, `"."`, or `".."`.
+fn encode_path_segment(segment: &str) -> Result<String, CatalogError> {
+    if matches!(segment, "" | "." | "..") {
+        return Err(CatalogError::InvalidPathSegment(segment.to_owned()));
+    }
     let mut out = String::with_capacity(segment.len());
     for byte in segment.bytes() {
         match byte {
@@ -51,7 +135,7 @@ fn encode_path_segment(segment: &str) -> String {
             other => out.push_str(&format!("%{other:02X}")),
         }
     }
-    out
+    Ok(out)
 }
 
 /// Async client for the Catalog API.
@@ -84,6 +168,14 @@ pub enum CatalogError {
         /// Server-provided response body (often a JSON error document).
         message: String,
     },
+    /// A caller-supplied id or slug cannot be carried in a URL path segment.
+    ///
+    /// Percent-encoding is not enough for every value. A segment that is
+    /// exactly `.` or `..` is removed by URL normalization even when encoded,
+    /// because the URL standard treats `%2E` as a dot when it looks for
+    /// dot-segments. Such a value would silently retarget the request at a
+    /// different endpoint, so it is refused before any request is made.
+    InvalidPathSegment(String),
 }
 
 impl std::fmt::Display for CatalogError {
@@ -94,11 +186,41 @@ impl std::fmt::Display for CatalogError {
             CatalogError::ApiError { status, message } => {
                 write!(f, "Catalog API error ({status}): {message}")
             }
+            CatalogError::InvalidPathSegment(value) => write!(
+                f,
+                "invalid identifier {value:?}: it cannot be carried in a URL path segment"
+            ),
         }
     }
 }
 
 impl std::error::Error for CatalogError {}
+
+/// Whether [`SearchParams::spatial_filter`] restricts results to datasets
+/// that advertise spatial coverage, or to ones that don't.
+///
+/// The Catalog API accepts only these two tokens on the wire and silently
+/// ignores anything else -- confirmed live: `spatial_filter=BOGUS` returns a
+/// full unfiltered page with HTTP 200, the same as omitting the parameter,
+/// with no error at all. Modelling the set as an enum makes an invalid
+/// value a compile error instead of a request the server quietly discards.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SpatialFilter {
+    /// Only datasets with `has_spatial: true`.
+    Geospatial,
+    /// Only datasets with `has_spatial: false`.
+    NonGeospatial,
+}
+
+impl SpatialFilter {
+    /// The literal token the Catalog API expects on the wire.
+    fn as_query_value(self) -> &'static str {
+        match self {
+            SpatialFilter::Geospatial => "geospatial",
+            SpatialFilter::NonGeospatial => "non-geospatial",
+        }
+    }
+}
 
 /// Parameters for [`CatalogClient::search`].
 ///
@@ -119,16 +241,27 @@ pub struct SearchParams {
     pub org_type: Option<String>,
     /// Exact-match keyword filters. Repeated on the wire.
     pub keyword: Vec<String>,
-    /// `geospatial` or `non-geospatial`.
-    pub spatial_filter: Option<String>,
+    /// Restrict to datasets with (or without) spatial coverage.
+    pub spatial_filter: Option<SpatialFilter>,
     /// GeoJSON geometry used for bounding-box / shape queries.
     pub spatial_geometry: Option<Value>,
-    /// Whether to require containment (true) vs. intersection (false).
+    /// Whether a dataset's shape must be contained by
+    /// [`spatial_geometry`](Self::spatial_geometry) (`true`) or merely
+    /// intersect it (`false`).
+    ///
+    /// Has no observable effect set on its own -- confirmed live: a search
+    /// with only `spatial_within=true` and no `spatial_geometry` returns
+    /// results identical to the unfiltered baseline. It only changes
+    /// anything alongside `spatial_geometry`. Confirmed live there too: a
+    /// tiny query geometry over Antarctica (nowhere any dataset's shape sits)
+    /// combined with `spatial_within=true` returns zero results, while the
+    /// same geometry with `spatial_within=false` returns the datasets whose
+    /// shape merely intersects it (global-coverage datasets such as
+    /// `world-ocean-atlas-2023`) -- proof the parameter is a real modifier
+    /// of `spatial_geometry`, not a phantom.
     pub spatial_within: Option<bool>,
     /// Opaque cursor from a previous [`SearchResponse::after`](models::SearchResponse::after).
     pub after: Option<String>,
-    /// Exact-match slug filter (single dataset lookup).
-    pub slug: Option<String>,
 }
 
 impl SearchParams {
@@ -184,8 +317,8 @@ impl SearchParams {
     }
 
     /// Set the spatial-filter mode.
-    pub fn spatial_filter(mut self, mode: impl Into<String>) -> Self {
-        self.spatial_filter = Some(mode.into());
+    pub fn spatial_filter(mut self, mode: SpatialFilter) -> Self {
+        self.spatial_filter = Some(mode);
         self
     }
 
@@ -195,7 +328,9 @@ impl SearchParams {
         self
     }
 
-    /// Require containment vs. intersection for spatial matches.
+    /// Require containment vs. intersection for spatial matches. See
+    /// [`SearchParams::spatial_within`] for what this does and does not
+    /// affect on its own.
     pub fn spatial_within(mut self, within: bool) -> Self {
         self.spatial_within = Some(within);
         self
@@ -204,12 +339,6 @@ impl SearchParams {
     /// Set the pagination cursor.
     pub fn after(mut self, after: impl Into<String>) -> Self {
         self.after = Some(after.into());
-        self
-    }
-
-    /// Filter to an exact slug match (single-dataset lookup).
-    pub fn slug(mut self, slug: impl Into<String>) -> Self {
-        self.slug = Some(slug.into());
         self
     }
 
@@ -234,8 +363,8 @@ impl SearchParams {
         for kw in &self.keyword {
             q.push(("keyword", kw.clone()));
         }
-        if let Some(v) = &self.spatial_filter {
-            q.push(("spatial_filter", v.clone()));
+        if let Some(v) = self.spatial_filter {
+            q.push(("spatial_filter", v.as_query_value().to_owned()));
         }
         if let Some(v) = &self.spatial_geometry {
             q.push(("spatial_geometry", v.to_string()));
@@ -245,9 +374,6 @@ impl SearchParams {
         }
         if let Some(v) = &self.after {
             q.push(("after", v.clone()));
-        }
-        if let Some(v) = &self.slug {
-            q.push(("slug", v.clone()));
         }
         q
     }
@@ -373,7 +499,7 @@ impl CatalogClient {
         &self,
         slug: &str,
     ) -> Result<Option<models::SearchHit>, CatalogError> {
-        let path = format!("/api/dataset/{}", encode_path_segment(slug));
+        let path = format!("/api/dataset/{}", encode_path_segment(slug)?);
         let response: Option<models::SearchResponse> = self.get_json_optional(&path).await?;
 
         // Belt and braces: the endpoint is exact, but a hit whose slug differs
@@ -431,13 +557,13 @@ impl CatalogClient {
     /// shape is unconstrained GeoJSON and callers typically hand it straight
     /// to a mapping library.
     pub async fn location_geometry(&self, id: &str) -> Result<Value, CatalogError> {
-        let path = format!("/api/location/{id}");
+        let path = format!("/api/location/{}", encode_path_segment(id)?);
         self.get_json(&path, &[(); 0]).await
     }
 
     /// Retrieve a harvest record's metadata envelope.
     pub async fn harvest_record(&self, id: &str) -> Result<models::HarvestRecord, CatalogError> {
-        let path = format!("/harvest_record/{id}");
+        let path = format!("/harvest_record/{}", encode_path_segment(id)?);
         self.get_json(&path, &[(); 0]).await
     }
 
@@ -447,7 +573,7 @@ impl CatalogClient {
     /// XML fragments, and DCAT records through the same surface — so the
     /// result is returned as [`serde_json::Value`].
     pub async fn harvest_record_raw(&self, id: &str) -> Result<Value, CatalogError> {
-        let path = format!("/harvest_record/{id}/raw");
+        let path = format!("/harvest_record/{}/raw", encode_path_segment(id)?);
         self.get_json(&path, &[(); 0]).await
     }
 
@@ -456,7 +582,45 @@ impl CatalogClient {
         &self,
         id: &str,
     ) -> Result<models::Dataset, CatalogError> {
-        let path = format!("/harvest_record/{id}/transformed");
+        let path = format!("/harvest_record/{}/transformed", encode_path_segment(id)?);
         self.get_json(&path, &[(); 0]).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Pins the values the README's configuration section documents (#48):
+    /// a request against an unresponsive host must fail well inside the
+    /// overall timeout, and the connect timeout is comfortably shorter than
+    /// the overall one so a stalled handshake is distinguishable from a
+    /// stalled response. `reqwest::Client` exposes no getter for the
+    /// timeouts it was built with, so the enforcement itself is proven by
+    /// `client_tests::a_short_configured_timeout_bounds_a_stalled_request`,
+    /// which exercises the same `build_client` path through
+    /// `Configuration::with_timeouts`; this test guards the constants that
+    /// path feeds `Configuration::default` with.
+    #[test]
+    fn default_timeouts_are_finite_and_match_the_documented_values() {
+        assert_eq!(DEFAULT_CONNECT_TIMEOUT, Duration::from_secs(10));
+        assert_eq!(DEFAULT_TIMEOUT, Duration::from_secs(30));
+        assert!(
+            DEFAULT_CONNECT_TIMEOUT < DEFAULT_TIMEOUT,
+            "connect timeout must be shorter than the overall request timeout"
+        );
+    }
+
+    /// `Configuration::default()` and `Configuration::new()` must build a
+    /// client without panicking or requiring a runtime. Cheap, and the only
+    /// exercise of `Default::default()` in the offline suite -- the live
+    /// integration tests construct one too, but only `#[ignore]`d.
+    #[test]
+    fn configuration_default_and_new_build_without_panicking() {
+        let default_config = Configuration::default();
+        assert_eq!(default_config.base_path, "https://catalog.data.gov");
+
+        let new_config = Configuration::new();
+        assert_eq!(new_config.base_path, default_config.base_path);
     }
 }

@@ -8,7 +8,7 @@
 //! cargo test -p data-gov-catalog --test integration_tests -- --ignored
 //! ```
 
-use data_gov_catalog::{CatalogClient, Configuration, SearchParams};
+use data_gov_catalog::{CatalogClient, Configuration, SearchParams, SpatialFilter};
 use std::sync::Arc;
 
 fn live_client() -> CatalogClient {
@@ -145,4 +145,166 @@ async fn live_dataset_by_slug_does_not_prefix_match() {
             result.and_then(|h| h.slug)
         );
     }
+}
+
+/// #77: `org_type` had never been probed against the live API. `"State
+/// Government"` is sourced from a live `/api/organizations` response (not
+/// invented -- CLAUDE.md's own worked example is `org_slug=noaa-gov`
+/// looking broken because it was guessed rather than sourced).
+#[tokio::test]
+#[ignore = "hits the live data.gov Catalog API"]
+async fn live_org_type_filters_to_the_requested_type() {
+    let client = live_client();
+    let page = client
+        .search(
+            SearchParams::new()
+                .org_type("State Government")
+                .per_page(10),
+        )
+        .await
+        .expect("org_type-filtered search succeeds");
+
+    assert!(!page.results.is_empty(), "expected at least one result");
+    for hit in &page.results {
+        let org_type = hit
+            .organization
+            .as_ref()
+            .and_then(|o| o.organization_type.as_deref());
+        assert_eq!(
+            org_type,
+            Some("State Government"),
+            "org_type=State Government returned a foreign organization type: {:?} ({:?})",
+            org_type,
+            hit.slug
+        );
+    }
+}
+
+/// #77: `spatial_filter` was probed with an *invalid* value in the issue
+/// that flagged it as a phantom, which is exactly the mistake CLAUDE.md
+/// calls out ("spatial_filter is a phantom filter that does nothing" turned
+/// out to mean "was probed with an invalid value"). With valid values it
+/// filters on `has_spatial` in both directions.
+#[tokio::test]
+#[ignore = "hits the live data.gov Catalog API"]
+async fn live_spatial_filter_matches_the_has_spatial_flag() {
+    let client = live_client();
+
+    let geospatial = client
+        .search(
+            SearchParams::new()
+                .spatial_filter(SpatialFilter::Geospatial)
+                .per_page(10),
+        )
+        .await
+        .expect("geospatial-filtered search succeeds");
+    assert!(!geospatial.results.is_empty());
+    for hit in &geospatial.results {
+        assert_eq!(
+            hit.has_spatial,
+            Some(true),
+            "spatial_filter=geospatial returned a non-spatial dataset: {:?}",
+            hit.slug
+        );
+    }
+
+    let non_geospatial = client
+        .search(
+            SearchParams::new()
+                .spatial_filter(SpatialFilter::NonGeospatial)
+                .per_page(10),
+        )
+        .await
+        .expect("non-geospatial-filtered search succeeds");
+    assert!(!non_geospatial.results.is_empty());
+    for hit in &non_geospatial.results {
+        assert_eq!(
+            hit.has_spatial,
+            Some(false),
+            "spatial_filter=non-geospatial returned a spatial dataset: {:?}",
+            hit.slug
+        );
+    }
+}
+
+/// #77: `spatial_within` set alone has no observable effect (a separate,
+/// deliberately unasserted probe: `spatial_within=true` with no
+/// `spatial_geometry` returns the unfiltered baseline). This test is the
+/// live half of the claim that it is a real modifier of `spatial_geometry`
+/// rather than a phantom -- the finding "no observable effect" was correct
+/// but incomplete, since the original probe never tried it alongside the
+/// geometry it modifies.
+///
+/// The query geometry is a 1-degree box over Antarctica, chosen because no
+/// US federal, state, or local dataset's coverage sits there, so any hit
+/// under `within=false` has to come from a genuinely global-scope dataset
+/// (e.g. an ocean or climate reanalysis product) whose shape intersects
+/// everywhere -- not from anything specific to this geometry.
+#[tokio::test]
+#[ignore = "hits the live data.gov Catalog API"]
+async fn live_spatial_within_changes_results_alongside_geometry() {
+    let client = live_client();
+    let antarctic_box = serde_json::json!({
+        "type": "Polygon",
+        "coordinates": [[[10.0, -85.0], [11.0, -85.0], [11.0, -84.0], [10.0, -84.0], [10.0, -85.0]]]
+    });
+
+    let contained = client
+        .search(
+            SearchParams::new()
+                .spatial_filter(SpatialFilter::Geospatial)
+                .spatial_geometry(antarctic_box.clone())
+                .spatial_within(true)
+                .per_page(10),
+        )
+        .await
+        .expect("within=true search succeeds");
+    assert!(
+        contained.results.is_empty(),
+        "expected no dataset shape to be fully contained by a 1-degree Antarctic box, got {:?}",
+        contained
+            .results
+            .iter()
+            .filter_map(|h| h.slug.as_deref())
+            .collect::<Vec<_>>()
+    );
+
+    let intersecting = client
+        .search(
+            SearchParams::new()
+                .spatial_filter(SpatialFilter::Geospatial)
+                .spatial_geometry(antarctic_box)
+                .spatial_within(false)
+                .per_page(10),
+        )
+        .await
+        .expect("within=false search succeeds");
+    assert!(
+        !intersecting.results.is_empty(),
+        "expected globally-scoped datasets to intersect an Antarctic box under within=false"
+    );
+}
+
+/// #77: `location_geometry` had never been called against the live API.
+/// Location id `5` is California, sourced from a live
+/// `/api/locations/search?q=california` response (`locations_search.json`),
+/// and has been stable across the fixture-capture history in this repo.
+#[tokio::test]
+#[ignore = "hits the live data.gov Catalog API"]
+async fn live_location_geometry_returns_californias_boundary() {
+    let client = live_client();
+    let geometry = client
+        .location_geometry("5")
+        .await
+        .expect("location_geometry succeeds");
+
+    let shape = geometry
+        .get("geometry")
+        .and_then(|v| v.as_str())
+        .expect("expected a `geometry` string field");
+    assert!(
+        shape.contains("Polygon"),
+        "expected a GeoJSON polygon shape, got {shape}"
+    );
+    assert_eq!(geometry.get("id").and_then(|v| v.as_str()), Some("5"));
 }

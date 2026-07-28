@@ -145,12 +145,36 @@ Errors are surfaced through [`CatalogError`]:
 
 ## Configuration
 
+`Configuration::default()` (what `CatalogClient::new(Arc::new(Configuration::default()))`
+uses) builds its `reqwest::Client` with a 10-second connect timeout and a
+30-second overall request timeout, so a host that accepts the connection and
+never answers cannot hang a caller forever.
+
+Override just the timeouts with `Configuration::with_timeouts`:
+
+```rust
+use data_gov_catalog::{CatalogClient, Configuration};
+use std::sync::Arc;
+use std::time::Duration;
+
+let config = Configuration::with_timeouts(
+    Duration::from_secs(5),  // connect_timeout
+    Duration::from_secs(15), // timeout
+);
+
+let client = CatalogClient::new(Arc::new(config));
+```
+
+Or supply a fully custom `reqwest::Client` for anything beyond timeouts (a
+proxy, custom headers, connection pooling):
+
 ```rust
 use data_gov_catalog::{CatalogClient, Configuration};
 use std::sync::Arc;
 use std::time::Duration;
 
 let http = reqwest::Client::builder()
+    .connect_timeout(Duration::from_secs(10))
     .timeout(Duration::from_secs(30))
     .build()?;
 

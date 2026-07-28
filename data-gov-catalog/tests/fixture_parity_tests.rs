@@ -121,16 +121,13 @@ fn harvest_record_raw_is_a_dcat_dataset() {
     );
 }
 
-/// Documents a live defect rather than guarding working behaviour.
-///
-/// The Catalog API sends the vCard contact name as `fn`; `ContactPoint::fn_`
-/// has no `rename`, so it keys on the literal string `fn_` and every contact
-/// name deserializes to `None`. The captured fixture contains
+/// Guards against a regression of #61: the Catalog API sends the vCard
+/// contact name as `fn`, and `ContactPoint::fn_` must carry `rename = "fn"`
+/// so the name survives both directions. Losing the rename again would key
+/// deserialization on the literal string `fn_` and drop every contact name
+/// silently. The captured fixture contains
 /// `"contactPoint": {"@type": "vcard:Contact", "fn": "CRDC Team", ...}`.
-///
-/// Un-ignore this when #61 lands; it is the acceptance test for that fix.
 #[test]
-#[ignore = "fails until #61: ContactPoint::fn_ is missing rename = \"fn\""]
 fn contact_point_name_survives_deserialization() {
     // Raw side: what the API actually sent.
     let raw: serde_json::Value = parse("search.json");
@@ -153,6 +150,21 @@ fn contact_point_name_survives_deserialization() {
         contact.fn_.as_deref(),
         raw_name,
         "contact name was dropped: the API sends `fn`, the model expects `fn_`"
+    );
+
+    // Round-trip side: re-serializing must emit the wire name `fn`, not the
+    // schema-invalid `fn_`. A rename that only worked for deserialization
+    // (e.g. `#[serde(alias = "fn")]` instead of `rename`) would pass the
+    // assertion above and still fail this one.
+    let serialized = serde_json::to_value(contact).expect("ContactPoint serializes");
+    assert_eq!(
+        serialized.get("fn").and_then(|v| v.as_str()),
+        raw_name,
+        "re-serialized contactPoint must carry the name under the wire key `fn`"
+    );
+    assert!(
+        serialized.get("fn_").is_none(),
+        "re-serialized contactPoint must not emit the schema-invalid key `fn_`, got {serialized}"
     );
 }
 
