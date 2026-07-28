@@ -49,13 +49,24 @@ fn tool_response_json(value: &Value) -> &Value {
         .get("content")
         .and_then(Value::as_array)
         .expect("ToolResponse must have content array");
-    let json_item = content
-        .iter()
-        .find(|item| item.get("type").and_then(Value::as_str) == Some("json"))
-        .expect("ToolResponse must contain a json item");
-    json_item
-        .get("json")
-        .expect("json item must have inner 'json' field")
+    // `content` is a closed union in MCP; a structured payload rides alongside
+    // it in `structuredContent`, never as a content block.
+    for block in content {
+        let ty = block
+            .get("type")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        assert!(
+            matches!(
+                ty,
+                "text" | "image" | "audio" | "resource_link" | "resource"
+            ),
+            "`{ty}` is not an MCP content type"
+        );
+    }
+    value
+        .get("structuredContent")
+        .expect("tool result must carry structuredContent")
 }
 
 /// Minimal search response body matching the Catalog API shape.
@@ -518,5 +529,101 @@ async fn dispatch_download_resources_rejects_parent_traversal_in_output_dir() {
     match err {
         ServerError::InvalidParams(msg) => assert!(msg.contains("..")),
         other => panic!("expected InvalidParams, got {other:?}"),
+    }
+}
+
+/// MCP 2025-11-25, server/tools: structured content "is returned as a JSON
+/// object in the `structuredContent` field", and `content` is a closed union.
+///
+/// Driven off `TOOL_SPECS` rather than a hand-picked tool. Exercising one tool
+/// is what let two of five ship a bare JSON array in `structuredContent`:
+/// `data_gov.listOrganizations` and `data_gov.autocompleteDatasets` both return
+/// `Vec<String>`, and a single-tool check on `data_gov_search` — which happens
+/// to return an object — reported the shape as conformant.
+///
+/// A new tool added without a fixture here fails rather than being skipped.
+#[tokio::test]
+async fn every_tool_returns_object_shaped_structured_content() {
+    fn arguments_for(tool: &str) -> Value {
+        match tool {
+            "data_gov_search" => json!({"query": "climate", "limit": 1}),
+            "data_gov_dataset" => json!({"slug": "probe-dataset"}),
+            "data_gov_autocomplete_datasets" => json!({"partial": "clim", "limit": 2}),
+            "data_gov_list_organizations" => json!({"limit": 2}),
+            "data_gov_download_resources" => json!({"datasetId": "probe-dataset"}),
+            other => panic!("no fixture arguments for `{other}`; add them with the tool"),
+        }
+    }
+
+    let mock = MockServer::start().await;
+    Mock::given(wm_method("GET"))
+        .and(wm_path("/search"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(search_body("probe-dataset", "Probe Dataset")),
+        )
+        .mount(&mock)
+        .await;
+    Mock::given(wm_method("GET"))
+        .and(wm_path("/api/organizations"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "organizations": [
+                {"id": "1", "name": "NASA", "slug": "nasa"},
+                {"id": "2", "name": "NOAA", "slug": "noaa"}
+            ],
+            "total": 2
+        })))
+        .mount(&mock)
+        .await;
+
+    let server = test_server(&mock.uri());
+
+    for spec in crate::tools::TOOL_SPECS.iter() {
+        let args = arguments_for(spec.tool_name);
+        let outcome = server
+            .dispatch(
+                "tools/call",
+                Some(json!({ "name": spec.tool_name, "arguments": args })),
+            )
+            .await;
+
+        // A tool may legitimately fail against this mock (the download tool
+        // reaches for distributions the fixture has none of). What must never
+        // happen is a *successful* result in a non-conformant shape.
+        let Ok(value) = outcome else { continue };
+
+        for block in value["content"].as_array().expect("content array") {
+            let ty = block["type"].as_str().expect("every block has a type");
+            assert!(
+                matches!(
+                    ty,
+                    "text" | "image" | "audio" | "resource_link" | "resource"
+                ),
+                "{}: `{ty}` is not an MCP content type",
+                spec.tool_name
+            );
+        }
+
+        // Presence is required, not merely checked-if-present. `from_value`
+        // drops a non-object defensively, so `if let Some(..)` here would pass
+        // for a handler that emitted a bare array: the guard would hide exactly
+        // the bug this test exists to catch.
+        let sc = value.get("structuredContent").unwrap_or_else(|| {
+            panic!(
+                "{}: every tool returns machine-readable data, so structuredContent must be \
+                 present. Absent means the handler passed a non-object and the guard in \
+                 ToolResponse::from_value dropped it: {value}",
+                spec.tool_name
+            )
+        });
+        assert!(
+            sc.is_object(),
+            "{}: structuredContent must be a JSON object, got {}: {sc}",
+            spec.tool_name,
+            if sc.is_array() {
+                "an array"
+            } else {
+                "a scalar"
+            }
+        );
     }
 }
