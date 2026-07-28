@@ -69,6 +69,18 @@ HARVEST=$(printf '%s' "$HIT" | python3 -c 'import sys,json;print(json.load(sys.s
 LOCATION=$(curl -sS --fail --max-time 60 -H 'Accept: application/json' "$BASE/api/locations/search?q=california" \
   | python3 -c 'import sys,json;print(json.load(sys.stdin)["locations"][0]["id"])')
 
+# /harvest_record/{id}/transformed 404s when the base record's source_transform
+# is null, and that is the common case: an unfiltered /search?per_page=1 (what
+# $HARVEST above comes from) lands on a record with no transform roughly 6 times
+# out of 7, which is why this fixture used to be a permanent SKIP (#83). census
+# and noaa are the two organizations, of the 18 sampled while investigating #83,
+# that populate a transform on every record -- census is arbitrary between the
+# two. $HARVEST itself is reused for the negative fixture below: it reliably
+# 404s (org "ed"), confirmed during that same investigation.
+HARVEST_WITH_TRANSFORM=$(curl -sS --fail --max-time 60 -H 'Accept: application/json' \
+    "$BASE/search?per_page=1&org_slug=census" \
+  | python3 -c 'import sys,json;print(json.load(sys.stdin)["results"][0]["harvest_record"].rstrip("/").split("/")[-1])')
+
 # If a pinned dataset ever disappears, say so loudly rather than silently
 # capturing a fixture that no longer contains what the tests look for.
 for pinned in "$PINNED_SLUG" "$PINNED_SLUG_TRUNCATED"; do
@@ -80,7 +92,7 @@ for pinned in "$PINNED_SLUG" "$PINNED_SLUG_TRUNCATED"; do
   fi
 done
 
-echo "capturing from $BASE (harvest=$HARVEST location=$LOCATION)"
+echo "capturing from $BASE (harvest=$HARVEST harvest_with_transform=$HARVEST_WITH_TRANSFORM location=$LOCATION)"
 
 # Success responses.
 get "/search?per_page=3"                              search.json
@@ -95,12 +107,16 @@ get "/api/locations/search?q=california"              locations_search.json
 get "/api/location/$LOCATION"                         location.json
 get "/harvest_record/$HARVEST"                        harvest_record.json
 get "/harvest_record/$HARVEST/raw"                    harvest_record_raw.json
-get "/harvest_record/$HARVEST/transformed"            harvest_record_transformed.json
+get "/harvest_record/$HARVEST_WITH_TRANSFORM/transformed" harvest_record_transformed.json
 
 # Negative responses. These are the shapes the client must handle without
 # treating a normal "no" as a failure.
 get "/api/dataset/$ABSENT_SLUG"                       dataset_not_found.json      404
 get "/search?per_page=3&q=$NO_MATCH_QUERY"            search_no_matches.json      200
+# The common case for this endpoint (#83): most harvest records have no
+# populated transform, and $HARVEST (an unfiltered search hit) reliably lands
+# on one of them.
+get "/harvest_record/$HARVEST/transformed"            harvest_record_transformed_not_found.json 404
 
 # Record provenance for everything captured this run, merging over any entry that
 # was already there so a partial run does not erase what it did not touch.

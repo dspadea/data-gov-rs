@@ -121,6 +121,53 @@ fn harvest_record_raw_is_a_dcat_dataset() {
     );
 }
 
+/// #83: this fixture used to be a permanent SKIP, because an unfiltered
+/// `/search?per_page=1` (what most of this file's other harvest fixtures come
+/// from) lands on a record with no populated transform roughly 6 times out of
+/// 7. `scripts/capture-fixtures.sh` now sources this one from `org_slug=census`
+/// instead, which the #83 investigation found populates a transform on every
+/// sampled record, so this proves the capture is a real 200 with a real
+/// `Dataset`, not the stale pre-#83 file.
+#[test]
+fn harvest_record_transformed_is_a_dcat_dataset() {
+    let entry = &manifest()["fixtures"]["harvest_record_transformed.json"];
+    assert_eq!(
+        entry["status"].as_u64(),
+        Some(200),
+        "harvest_record_transformed.json must be captured from a real 200, \
+         not carried over from before #83 was resolved"
+    );
+
+    let dataset: models::Dataset = parse("harvest_record_transformed.json");
+    assert!(dataset.title.is_some(), "transformed record title missing");
+    assert!(
+        !dataset.distribution.is_empty(),
+        "transformed record has no distributions"
+    );
+}
+
+/// #83: the companion negative case. Most harvest records have no populated
+/// transform, and the endpoint answers that with a 404 whose body is
+/// `{"error": "Not Found"}` -- a different shape from `dataset_not_found.json`,
+/// which is a well-formed, empty `SearchResponse`. This is what proves
+/// `harvest_record_transformed` can tell "no transform for this record" from
+/// "the API is down".
+#[test]
+fn the_harvest_transform_not_found_capture_is_a_real_404_body() {
+    let entry = &manifest()["fixtures"]["harvest_record_transformed_not_found.json"];
+    assert_eq!(
+        entry["status"].as_u64(),
+        Some(404),
+        "harvest_record_transformed_not_found.json must be captured from a real 404"
+    );
+
+    let body: serde_json::Value = parse("harvest_record_transformed_not_found.json");
+    assert!(
+        body.get("error").is_some(),
+        "a 404 body should carry an error field; recapture before trusting this test"
+    );
+}
+
 /// Guards against a regression of #61: the Catalog API sends the vCard
 /// contact name as `fn`, and `ContactPoint::fn_` must carry `rename = "fn"`
 /// so the name survives both directions. Losing the rename again would key
