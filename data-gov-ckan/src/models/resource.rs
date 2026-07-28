@@ -51,9 +51,23 @@ pub struct Resource {
     /// Cached URL for the resource
     #[serde(rename = "cache_url", skip_serializing_if = "Option::is_none")]
     pub cache_url: Option<String>,
-    /// Size of the resource in bytes
-    #[serde(rename = "size", skip_serializing_if = "Option::is_none")]
-    pub size: Option<i32>,
+    /// Size of the resource in bytes.
+    ///
+    /// CKAN's `resource.size` column is a `BigInteger`, so this is `i64`
+    /// rather than `i32` -- an `i32` rejects any file over 2 GiB and, because
+    /// `Resource` nests inside `Package.resources` inside
+    /// `PackageSearchResult.results`, takes the whole page down with it.
+    /// Deserialization also tolerates a numeric string (some portals send
+    /// `size` as text); a non-numeric string (e.g. a human-formatted
+    /// `"523 KiB"`, observed on data.qld.gov.au) degrades to `None` rather
+    /// than failing the resource.
+    #[serde(
+        rename = "size",
+        default,
+        deserialize_with = "deserialize_flexible_size",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub size: Option<i64>,
     #[serde(rename = "created", skip_serializing_if = "Option::is_none")]
     pub created: Option<String>,
     #[serde(rename = "last_modified", skip_serializing_if = "Option::is_none")]
@@ -87,4 +101,25 @@ impl Resource {
             datastore_active: None,
         }
     }
+}
+
+/// Accepts `resource.size` as a JSON number, a numeric string, or a
+/// non-numeric string, in that order of preference.
+///
+/// A JSON number widens straight to `i64`. A string is tried as a decimal
+/// integer first; when that fails -- a human-formatted value such as
+/// `"523 KiB"`, observed on a live portal -- the field degrades to `None`
+/// rather than failing deserialization. A missing or `null` field also
+/// yields `None`. One resource's unparseable size must never fail the
+/// dataset it belongs to.
+fn deserialize_flexible_size<'de, D>(deserializer: D) -> Result<Option<i64>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = Option::<serde_json::Value>::deserialize(deserializer)?;
+    Ok(match value {
+        Some(serde_json::Value::Number(n)) => n.as_i64(),
+        Some(serde_json::Value::String(s)) => s.trim().parse::<i64>().ok(),
+        _ => None,
+    })
 }
