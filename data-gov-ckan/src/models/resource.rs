@@ -106,22 +106,48 @@ impl Resource {
 /// Accepts `resource.size` as a JSON number, a numeric string, or a
 /// non-numeric string, in that order of preference.
 ///
-/// A JSON number widens straight to `i64`. A string is tried as a decimal
-/// integer first; when that fails -- a human-formatted value such as
-/// `"523 KiB"`, observed on a live portal -- the field degrades to `None`
-/// rather than failing deserialization. A missing or `null` field also
-/// yields `None`. One resource's unparseable size must never fail the
-/// dataset it belongs to.
+/// A JSON number widens to `i64`, including an integral float (`523.0`):
+/// `serde_json::Number::as_i64` returns `None` for any number written with
+/// a decimal point, even a whole one, so a naive widen would silently lose
+/// every size from a CKAN-compatible backend whose JSON encoder always
+/// emits floats. A genuinely fractional value (`523.7`) or one outside
+/// `i64`'s range still yields `None` rather than a wrong truncation. A
+/// string is tried as a decimal integer first; when that fails -- a
+/// human-formatted value such as `"523 KiB"`, observed on a live portal --
+/// the field degrades to `None` rather than failing deserialization. A
+/// missing or `null` field also yields `None`. One resource's unparseable
+/// size must never fail the dataset it belongs to.
 fn deserialize_flexible_size<'de, D>(deserializer: D) -> Result<Option<i64>, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
     let value = Option::<serde_json::Value>::deserialize(deserializer)?;
     Ok(match value {
-        Some(serde_json::Value::Number(n)) => n.as_i64(),
+        Some(serde_json::Value::Number(n)) => number_to_i64(&n),
         Some(serde_json::Value::String(s)) => s.trim().parse::<i64>().ok(),
         _ => None,
     })
+}
+
+/// Widens a JSON number to `i64`, accepting an integral float alongside a
+/// plain integer literal.
+///
+/// `2^63` is exactly representable as `f64` and is one past `i64::MAX`; any
+/// float with no fractional part in `[-(2^63), 2^63)` therefore converts to
+/// `i64` exactly via `as`, with no rounding surprises at the boundary.
+fn number_to_i64(n: &serde_json::Number) -> Option<i64> {
+    if let Some(i) = n.as_i64() {
+        return Some(i);
+    }
+    const I64_MIN_F64: f64 = -9_223_372_036_854_775_808.0;
+    const I64_MAX_BOUND_F64: f64 = 9_223_372_036_854_775_808.0; // 2^63
+
+    let f = n.as_f64()?;
+    if f.fract() == 0.0 && (I64_MIN_F64..I64_MAX_BOUND_F64).contains(&f) {
+        Some(f as i64)
+    } else {
+        None
+    }
 }
 
 #[cfg(test)]
