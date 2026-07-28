@@ -437,3 +437,45 @@ async fn a_request_id_is_reusable_once_its_request_has_been_answered() {
 
     assert!(session.finish().await.is_empty());
 }
+
+/// Cancelling a request frees its id, and a client that cancels and retries
+/// under the same id - a normal thing to do - must be answered.
+///
+/// This is the reachable half of the epilogue rule in `accept`: a cancelled
+/// task must not deregister an id that a later request has since claimed. The
+/// interleaving that makes the unsafe version lose the retry is not reachable
+/// deterministically from the wire, so this test guards the sequence rather
+/// than the race.
+#[tokio::test]
+async fn an_id_freed_by_cancellation_can_be_used_again() {
+    let mock = MockServer::start().await;
+    let (server, release) = test_server_with_gate(&mock.uri(), SLOW_METHOD);
+    let mut session = Session::start(server);
+
+    session.send(&slow_call(1)).await;
+    session
+        .send(&json!({
+            "jsonrpc": "2.0",
+            "method": "notifications/cancelled",
+            "params": {"requestId": 1, "reason": "retrying"}
+        }))
+        .await;
+    release.notify_one();
+
+    session
+        .send(&json!({"jsonrpc": "2.0", "id": 1, "method": "tools/list"}))
+        .await;
+
+    let retried = session.next_response().await;
+    assert_eq!(retried.get("id"), Some(&json!(1)), "got: {retried}");
+    assert!(
+        retried["result"]["tools"].is_array(),
+        "the retry under the freed id must be answered, not refused and not \
+         swallowed: {retried}"
+    );
+
+    assert!(
+        session.finish().await.is_empty(),
+        "and the cancelled request is still never answered"
+    );
+}

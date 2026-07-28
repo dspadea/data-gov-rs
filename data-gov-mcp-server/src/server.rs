@@ -258,12 +258,23 @@ impl DataGovMcpServer {
                 // Dropping the handler future is what "stop processing the
                 // cancelled request" means here, and no response is sent -
                 // which is what the spec asks for.
+                //
+                // Deliberately no deregistration on this arm. `cancel_request`
+                // is the only thing that can resolve this channel, and it takes
+                // the entry out before it signals. Removing again would be a
+                // no-op at best; at worst the id has already been claimed by a
+                // later request - a client that cancels and retries under the
+                // same id does exactly that - and this would take that request
+                // out of the registry, drop its sender, and cancel it too.
                 _ = cancelled => {}
                 response = server.handle_request(Some(id), request) => {
+                    // Only ever removes this task's own entry: while it ran,
+                    // the id was occupied by this task's sender, because a
+                    // second request under a live id is refused above.
+                    registry.lock().await.remove(&key);
                     send_response(&responses, response).await;
                 }
             }
-            registry.lock().await.remove(&key);
         });
     }
 
