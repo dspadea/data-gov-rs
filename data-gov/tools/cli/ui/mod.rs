@@ -181,6 +181,14 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
         config = config.with_download_dir(PathBuf::from(download_dir));
     }
 
+    // Mirrors `data-gov-mcp-server`'s own `DATA_GOV_BASE_URL` handling: lets
+    // either front door point at a mirror, a proxy, or — for this crate's
+    // own process-level tests — a mock server, without a CLI flag for
+    // something nobody sets by hand day to day.
+    if let Ok(base_url) = std::env::var("DATA_GOV_BASE_URL") {
+        config = config.with_base_url(base_url);
+    }
+
     // Parse color mode
     if let Some(color_str) = matches.get_one::<String>("color") {
         match color_str.parse::<ColorMode>() {
@@ -228,8 +236,12 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
 /// (`#!/usr/bin/env data-gov` passes the script's own path as this
 /// positional):
 ///
-/// 1. If it matches a known command name, dispatch it as a command. Known
-///    commands always win, so `search` never becomes a filename.
+/// 1. If the first token names a known command, dispatch it as that
+///    command — even when the rest of the arguments fail to parse, in
+///    which case *that command's own usage error* is reported. A known
+///    command always wins, so `search` (or a bad `cd` with no path)
+///    never becomes a filename, even if a file of that name sits in the
+///    working directory (#64).
 /// 2. Otherwise, if it names a readable existing file, run it as a script
 ///    (see [`run_script_file`]).
 /// 3. Otherwise, the "Unknown command" error.
@@ -260,8 +272,17 @@ fn run_cli_mode(
             }
         }
         Err(parse_err) => {
+            // Only an *unrecognized* token can fall back to the script
+            // path. A known command whose arguments failed to parse
+            // (e.g. `cd` with no path) must report its own usage error —
+            // it must never be shadowed by a same-named file, or a
+            // directory of scripts named after commands (#64) turns a
+            // typo'd invocation into a silent, wrong script run.
             let script_path = Path::new(command);
-            if script_path.is_file() {
+            let run_as_script =
+                ReplCommand::is_unrecognized_command_error(&parse_err) && script_path.is_file();
+
+            if run_as_script {
                 if let Err(e) = run_script_file(&client, &rt, script_path) {
                     eprintln!("{} {}", color_red_bold_err("Error:"), e);
                     std::process::exit(1);

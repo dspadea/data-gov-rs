@@ -335,10 +335,30 @@ impl ReplCommand {
             }
             "help" | "h" | "?" => Ok(ReplCommand::Help),
             "quit" | "exit" | "q" => Ok(ReplCommand::Quit),
-            _ => Err(format!("Unknown command: {}", parts[0])),
+            _ => Err(format!("{UNKNOWN_COMMAND_PREFIX} {}", parts[0])),
         }
     }
+
+    /// Whether a `from_parts`/`FromStr` error means the first token names
+    /// no known command at all (the catch-all above), as opposed to
+    /// naming a known command whose own arguments failed to parse (a
+    /// `Usage: ...` message from one of the specific arms above).
+    ///
+    /// CLI-mode dispatch needs this distinction *before* falling back to
+    /// running a same-named file as a script: a known command must always
+    /// win and report its own usage error, never be silently shadowed by
+    /// a file that happens to share its name (see `run_cli_mode` in
+    /// `ui/mod.rs`). Checking the error text against the one constant
+    /// both branches share, rather than re-deriving the list of known
+    /// command names separately, means the two can never drift apart.
+    pub fn is_unrecognized_command_error(error: &str) -> bool {
+        error.starts_with(UNKNOWN_COMMAND_PREFIX)
+    }
 }
+
+/// Prefix of the parse error produced when a token names no known command
+/// at all. See [`ReplCommand::is_unrecognized_command_error`].
+const UNKNOWN_COMMAND_PREFIX: &str = "Unknown command:";
 
 impl FromStr for ReplCommand {
     type Err = String;
@@ -920,5 +940,53 @@ mod tests {
         };
         assert_eq!(query, "route");
         assert_eq!(limit, Some(66));
+    }
+
+    // --- is_unrecognized_command_error: the signal CLI dispatch uses to
+    // decide whether a same-named file may run as a script (#64) ---
+
+    #[test]
+    fn is_unrecognized_command_error_true_for_a_token_naming_no_command() {
+        let error = ReplCommand::from_parts(&["totally-bogus-xyz".to_string()]).unwrap_err();
+        assert!(ReplCommand::is_unrecognized_command_error(&error));
+    }
+
+    #[test]
+    fn is_unrecognized_command_error_false_for_a_known_command_with_bad_args() {
+        // "cd" is a known command; with no path it fails to *parse*, but
+        // that failure must never be mistaken for "cd" being unrecognized
+        // — that distinction is exactly what lets a known command win over
+        // a same-named file in the working directory.
+        let error = ReplCommand::from_parts(&["cd".to_string()]).unwrap_err();
+        assert!(!ReplCommand::is_unrecognized_command_error(&error));
+    }
+
+    #[test]
+    fn is_unrecognized_command_error_false_for_every_known_command_alias() {
+        // Verified across the whole alias set, not one hand-picked
+        // instance: every alias that can fail to parse must report itself
+        // as "known", never "unrecognized".
+        for (alias, bad_invocation) in [
+            ("s", vec!["s".to_string()]),
+            (
+                "show",
+                vec!["show".to_string(), "a".to_string(), "b".to_string()],
+            ),
+            ("cd", vec!["cd".to_string()]),
+            (
+                "ls",
+                vec!["ls".to_string(), "a".to_string(), "b".to_string()],
+            ),
+            ("lcd", vec!["lcd".to_string()]),
+            ("next", vec!["next".to_string(), "extra".to_string()]),
+        ] {
+            let error = ReplCommand::from_parts(&bad_invocation)
+                .expect_err(&format!("'{alias}' with bad args must fail to parse"));
+            assert!(
+                !ReplCommand::is_unrecognized_command_error(&error),
+                "'{alias}' is a known command; its own usage error must not \
+                 read as 'unrecognized': {error}"
+            );
+        }
     }
 }
