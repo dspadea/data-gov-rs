@@ -106,8 +106,26 @@ impl DataGovMcpServer {
                     InitializeResult::new(params.protocol_version.as_deref(), params.client_info);
                 Ok(serde_json::to_value(result).map_err(ServerError::Serialization)?)
             }
-            "initialized" => Ok(Value::Null),
-            "shutdown" => Ok(Value::Null),
+            // The client's readiness notification. MCP names it
+            // notifications/initialized in every supported revision back to
+            // 2024-11-05 - never the bare "initialized" this arm used to
+            // answer, which is not an MCP method and could never be sent by a
+            // conformant client. It arrives as a notification with no id, so
+            // this value is normally never observed; a JSON object rather
+            // than `Value::Null` is still correct, because MCP types a
+            // result as an object and a non-conformant client that sends
+            // this with an id deserves a valid one.
+            //
+            // "shutdown" is gone for the same reason, not merged into this
+            // arm: MCP defines no JSON-RPC method by that name in any
+            // revision. A stdio session ends when the client closes stdin
+            // (see Lifecycle > Shutdown); nothing is exchanged on the wire.
+            // Both bare names are what LSP - which MCP's own spec cites as
+            // an influence - calls its own lifecycle methods, and that is
+            // almost certainly how they ended up here.
+            //
+            // https://modelcontextprotocol.io/specification/2025-11-25/basic/lifecycle
+            "notifications/initialized" => Ok(json!({})),
             // MCP ping: "The receiver MUST respond promptly with an empty
             // response." A keepalive answered with -32601 reads to the client
             // as a dead connection.
