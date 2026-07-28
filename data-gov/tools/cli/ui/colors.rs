@@ -3,6 +3,23 @@ use is_terminal::IsTerminal;
 use std::env;
 use std::io::{stderr, stdout};
 
+/// Serializes every test in this crate that manipulates
+/// `colored::control::SHOULD_COLORIZE` — a process-global flag, so any two
+/// tests that touch it concurrently race each other's override regardless
+/// of which module each test lives in.
+///
+/// This crate used to have two of these locks, one private to this module
+/// and a second, unrelated `Mutex` in `display.rs`'s own test module. Two
+/// separate locks guard nothing against each other: `display.rs`'s
+/// `pad_then_colorize` test could set the global override at the same
+/// moment a test here read or reset it, each holding a *different* lock
+/// and believing itself alone. Filtering to the four tests that touch the
+/// global and running them at `--test-threads=8` reproduced the resulting
+/// "colorized string carries no escape bytes" failure in 8 of 40 runs.
+/// Every module that touches the global now imports this one lock instead.
+#[cfg(test)]
+pub(crate) static COLORIZE_OVERRIDE_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 /// Color mode configuration
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ColorMode {
@@ -179,49 +196,111 @@ impl ColorHelper {
         StyleBuilder::new(self.should_color_stdout())
     }
 
-    /// Apply red color, gated on stderr's terminal state. For text that is
-    /// about to be written with `eprintln!` — user-facing error output
-    /// must never be gated on stdout's TTY state (see the struct-level
-    /// note), or redirecting only stderr leaves raw escape sequences in
-    /// the file.
-    pub fn red_err(&self, text: &str) -> ColoredString {
+    /// Apply red color, gated on stderr's terminal state, and return the
+    /// finished (possibly ANSI-escaped) string. For text that is about to
+    /// be written with `eprintln!` — user-facing error output must never
+    /// be gated on stdout's TTY state (see the struct-level note), or
+    /// redirecting only stderr leaves raw escape sequences in the file.
+    ///
+    /// Returns an owned `String`, not a `ColoredString`, because the
+    /// escape decision has to be finalized — via
+    /// [`force_override_for_stderr`](Self::force_override_for_stderr) —
+    /// before this function returns. `colored` only consults its global
+    /// flag when a `ColoredString` is displayed, so handing one back to
+    /// the caller would let the override guard drop, and the flag revert,
+    /// before `.to_string()` ever ran.
+    pub fn red_err(&self, text: &str) -> String {
+        let _guard = self.force_override_for_stderr();
         if self.should_color_stderr() {
-            text.red()
+            text.red().to_string()
         } else {
-            text.normal()
+            text.normal().to_string()
         }
     }
 
     /// Chainable color and formatting methods, gated on stderr.
     pub fn style_err(&self) -> StyleBuilder {
-        StyleBuilder::new(self.should_color_stderr())
+        StyleBuilder::new_for_stderr(self.should_color_stderr(), self.force_override_for_stderr())
+    }
+
+    /// Force `colored`'s process-global colorize flag to match this
+    /// helper's own (stream-aware) stderr decision, returning a guard that
+    /// restores `self.mode`'s own global setting when dropped.
+    ///
+    /// `colored` 3.1.1 computes its Auto-mode flag once, from **stdout's**
+    /// terminal state alone (`ShouldColorize::from_env`, `colored`'s
+    /// `control.rs`), and consults only that global — never this struct's
+    /// own `should_color_stderr` — when a `ColoredString` is finally
+    /// displayed. Left alone, `--color auto` with a piped stdout and a
+    /// real terminal on stderr silently strips stderr's escape codes,
+    /// because the global flag never looked at stderr at all (#58.5 fixed
+    /// the *decision*; this fixes the bytes actually reaching the global
+    /// gate `colored` checks at Display time).
+    ///
+    /// `Always`/`Never` already leave a persistent, stream-agnostic
+    /// override in place from [`ColorMode::apply_as_global_override`], so
+    /// forcing and restoring it here is a harmless no-op for those modes —
+    /// only `Auto` ever observes a different value while the guard is
+    /// alive.
+    fn force_override_for_stderr(&self) -> RestoreOverrideGuard {
+        colored::control::set_override(self.should_color_stderr());
+        RestoreOverrideGuard(self.mode)
+    }
+}
+
+/// Restores `colored`'s process-global override to whatever `ColorMode`
+/// establishes, when dropped. See
+/// [`ColorHelper::force_override_for_stderr`].
+struct RestoreOverrideGuard(ColorMode);
+
+impl Drop for RestoreOverrideGuard {
+    fn drop(&mut self) {
+        self.0.apply_as_global_override();
     }
 }
 
 /// Builder for chaining color and formatting operations
 pub struct StyleBuilder {
     should_color: bool,
+    /// Set only by [`ColorHelper::style_err`] — carried through into
+    /// [`ChainedStyle`] so the override it forces stays in effect for the
+    /// whole `.red(text).bold()...` chain, and is only released once the
+    /// final `ChainedStyle` is dropped (after `.to_string()`/`Display` has
+    /// already run). `style()` (the stdout variant) never sets this:
+    /// `colored`'s own Auto-mode detection is already stdout-based, so
+    /// stdout needs no forcing — see `force_override_for_stderr`.
+    _guard: Option<RestoreOverrideGuard>,
 }
 
 impl StyleBuilder {
     pub fn new(should_color: bool) -> Self {
-        Self { should_color }
+        Self {
+            should_color,
+            _guard: None,
+        }
+    }
+
+    fn new_for_stderr(should_color: bool, guard: RestoreOverrideGuard) -> Self {
+        Self {
+            should_color,
+            _guard: Some(guard),
+        }
     }
 
     pub fn red(self, text: &str) -> ChainedStyle {
-        ChainedStyle::new(text, self.should_color).red()
+        ChainedStyle::new(text, self.should_color, self._guard).red()
     }
 
     pub fn green(self, text: &str) -> ChainedStyle {
-        ChainedStyle::new(text, self.should_color).green()
+        ChainedStyle::new(text, self.should_color, self._guard).green()
     }
 
     pub fn blue(self, text: &str) -> ChainedStyle {
-        ChainedStyle::new(text, self.should_color).blue()
+        ChainedStyle::new(text, self.should_color, self._guard).blue()
     }
 
     pub fn yellow(self, text: &str) -> ChainedStyle {
-        ChainedStyle::new(text, self.should_color).yellow()
+        ChainedStyle::new(text, self.should_color, self._guard).yellow()
     }
 }
 
@@ -229,13 +308,19 @@ impl StyleBuilder {
 pub struct ChainedStyle {
     text: String,
     should_color: bool,
+    /// See [`StyleBuilder::_guard`]. Carried along by every builder method
+    /// below (each takes and returns `Self`), so it lives exactly as long
+    /// as the chain — and is dropped only once the caller's final
+    /// `.to_string()` has finished reading `colored`'s global flag.
+    _guard: Option<RestoreOverrideGuard>,
 }
 
 impl ChainedStyle {
-    fn new(text: &str, should_color: bool) -> Self {
+    fn new(text: &str, should_color: bool, guard: Option<RestoreOverrideGuard>) -> Self {
         Self {
             text: text.to_string(),
             should_color,
+            _guard: guard,
         }
     }
 
@@ -347,13 +432,13 @@ mod tests {
     // --- ColorMode forces colored's own global gate (#58.1) ---
     //
     // `colored::control::SHOULD_COLORIZE` is process-global state, so these
-    // two tests serialize on a lock to avoid racing each other, and clean
-    // up afterward so they don't leak state into unrelated tests.
-    static GLOBAL_OVERRIDE_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    // tests serialize on `COLORIZE_OVERRIDE_TEST_LOCK` (shared with
+    // `display.rs`, see its doc comment) to avoid racing each other, and
+    // clean up afterward so they don't leak state into unrelated tests.
 
     #[test]
     fn always_forces_the_global_colorize_override_on() {
-        let _guard = GLOBAL_OVERRIDE_TEST_LOCK
+        let _guard = COLORIZE_OVERRIDE_TEST_LOCK
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         ColorMode::Always.apply_as_global_override();
@@ -363,11 +448,50 @@ mod tests {
 
     #[test]
     fn never_forces_the_global_colorize_override_off() {
-        let _guard = GLOBAL_OVERRIDE_TEST_LOCK
+        let _guard = COLORIZE_OVERRIDE_TEST_LOCK
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
+        // Start from a state where the ambient default would say "yes,
+        // colorize" (`cargo test`'s own piped stdout otherwise makes
+        // `colored` default to no-colour regardless of what this test
+        // does, which is exactly what made this assertion pass even with
+        // the function body deleted). Forcing `true` first means `Never`
+        // is the only thing that can make the assertion below succeed.
+        colored::control::set_override(true);
         ColorMode::Never.apply_as_global_override();
         assert!(!colored::control::SHOULD_COLORIZE.should_colorize());
         colored::control::unset_override();
+    }
+
+    // --- `colored`'s global gate only ever reflects stdout, not stderr
+    // (see `ColorHelper::force_override_for_stderr`) ---
+
+    #[test]
+    fn auto_mode_colorizes_stderr_even_when_process_stdout_is_not_a_terminal() {
+        let _guard = COLORIZE_OVERRIDE_TEST_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        // Clean slate: no manual override, so `colored`'s own Auto
+        // detection (frozen from this test binary's real stdout — piped
+        // under `cargo test`, so "not a terminal") governs unless
+        // `red_err` forces it correctly for the duration of the call.
+        colored::control::unset_override();
+
+        // stdout piped (false), stderr a real terminal (true) — the exact
+        // shape of `data-gov 2>&1 | less`, or any pipeline that only
+        // redirects stdout.
+        let helper = ColorHelper::with_terminal_state(ColorMode::Auto, false, true);
+        let result = helper.red_err("boom");
+
+        colored::control::unset_override();
+
+        if !helper.no_color {
+            assert!(
+                result.contains('\u{1b}'),
+                "stderr is a real terminal under Auto, so red_err must carry \
+                 real ANSI escapes even though the process's stdout is piped; \
+                 got {result:?}"
+            );
+        }
     }
 }

@@ -306,14 +306,15 @@ mod tests {
         out
     }
 
-    /// `colored::control::SHOULD_COLORIZE` is process-global; serialize on
-    /// this lock so concurrently-running tests can't see each other's
-    /// override, and clean up afterward.
-    static COLOR_OVERRIDE_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    // `colored::control::SHOULD_COLORIZE` is process-global; serialize on
+    // `COLORIZE_OVERRIDE_TEST_LOCK` — shared with `colors.rs`, see its doc
+    // comment — so concurrently-running tests in *either* module can't
+    // race each other's override, and clean up afterward.
+    use crate::ui::colors::COLORIZE_OVERRIDE_TEST_LOCK;
 
     #[test]
     fn pad_then_colorize_pads_to_the_requested_visible_width_when_actually_colorized() {
-        let _guard = COLOR_OVERRIDE_TEST_LOCK
+        let _guard = COLORIZE_OVERRIDE_TEST_LOCK
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         colored::control::set_override(true);

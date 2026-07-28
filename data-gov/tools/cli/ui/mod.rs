@@ -106,7 +106,7 @@ pub fn color_bold(text: &str) -> String {
 pub fn color_red_err(text: &str) -> String {
     COLOR_HELPER
         .get()
-        .map(|h| h.red_err(text).to_string())
+        .map(|h| h.red_err(text))
         .unwrap_or_else(|| text.to_string())
 }
 
