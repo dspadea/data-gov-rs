@@ -227,17 +227,80 @@ any contents of `LIST` — including one that has never heard of the value you
 care about. Anchor at least one assertion to a literal drawn from outside the
 code, as `PUBLISHED_MCP_REVISIONS` does against `SUPPORTED_PROTOCOL_VERSIONS`.
 
+### One grep is not coverage
+
+For work whose size is unknown — every call site, every unused item, every place
+a parameter is honoured — **do not stop at a number you picked in advance, and
+do not search only one way.** Keep going until two consecutive rounds turn up
+nothing new, and search along axes that are blind to each other:
+
+| Axis | Finds what the others miss |
+|---|---|
+| Symbol name | The direct callers |
+| String literal | Reflection, config keys, MCP tool names, CLI subcommands dispatched by string |
+| Import and dependency graph | Re-exports — `data_gov::catalog` re-exports catalog types, so a grep for `data_gov_catalog` misses every consumer that goes through it |
+| Manifests and workflows | `Cargo.toml` features, `justfile` recipes, CI steps |
+| Git history | Things deleted and half-restored, and why something is the way it is |
+
+The re-export row is not hypothetical: `data-gov-mcp-server` reached catalog
+types through the `data_gov::catalog` re-export, so a dependency audit keyed on
+the direct crate name drew the wrong conclusion about who used what.
+
+State which axes you ran. A sweep that reports "no other callers" without saying
+how it looked is an assertion, not a result.
+
 ### Prefer real captured data to synthetic fixtures
 
 Synthetic bodies contain exactly the fields the author thought of, so they
 cannot surface the problems real payloads cause: nulls where a `Vec` is
 expected, absent optional fields that vary by publisher, 90-character truncated
-slugs, unicode in titles, numbers exceeding `i32`. Capture with
-`scripts/capture-fixtures.sh` and serve the real thing.
+slugs, unicode in titles, numbers exceeding `i32`. Capture with `just fixtures`
+and serve the real thing.
 
-Reserve hand-written bodies for cases you cannot capture — a malformed
-response, a specific error status, a value the live API does not currently
-produce.
+**A hand-written fixture encodes the author's assumption, and then the test
+confirms it.** `data-gov-ckan` is the standing example: all 23 of its wiremock
+tests are driven by inline bodies, and those bodies use UUID-shaped ids such as
+`aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee`. The model types `id` as `uuid::Uuid`.
+CKAN's `id` column is unconstrained text. The suite therefore *guarantees* #63
+rather than catching it — every test feeds the model exactly the assumption the
+model got wrong. No amount of care in writing those bodies would have helped,
+because the author of the body and the author of the type held the same belief.
+
+Reserve hand-written bodies for cases you genuinely cannot capture — a malformed
+response, a value the live API does not currently produce. A specific error
+status is *not* on that list: capture it.
+
+**Capture the negatives too, not only the success case.** Both are now pinned,
+and they are not the same shape:
+
+| Fixture | Endpoint | Status | Why it matters |
+|---|---|---|---|
+| `dataset_not_found.json` | `/api/dataset/{absent}` | 404 | A well-formed, empty `SearchResponse`. This is what proves `dataset_by_slug` can tell "no such dataset" from "the API is down" |
+| `search_no_matches.json` | `/search?q={no-match}` | 200 | `{"results": [], "sort": "relevance"}` — **no `total`, no cursor**. A different envelope from the 404 body, which is why every envelope field must stay optional |
+
+### Every fixture records where it came from
+
+`tests/fixtures/MANIFEST.json` holds the endpoint, HTTP status, source host, and
+capture date for every fixture. `just fixtures` writes it; `fixture_parity_tests`
+enforces it. A fixture added without an entry fails the build.
+
+This is mechanical for the usual reason: a fixture with no recorded origin is
+indistinguishable from one somebody hand-wrote to match the code, and that is
+the exact failure the fixture suite exists to prevent. The capture date also
+makes a stale set visible without reading the git log.
+
+**A fixture that cannot be captured goes under `unverified` with a reason.**
+`harvest_record_transformed.json` is the current one: the endpoint 404s for every
+sampled record (#83), so the committed file is the last capture from when it
+still answered. Recording that is the point — an unverified fixture is
+acceptable, an unverified fixture that looks verified is not.
+
+Re-capture when the API changes, and before changing any model. Fixtures
+addressed by slug are pinned to specific long-lived datasets (one ordinary, one
+at the 90-character truncation cap), because tests assert against their
+contents and a fixture whose subject changes every capture cannot be asserted
+on. The script warns loudly if a pinned dataset stops resolving, and never
+truncates a good fixture when a request fails.
 
 ### Cover the edges, and backfill
 
@@ -403,10 +466,8 @@ Refresh the captured responses with:
 just fixtures                             # Recapture from the live Catalog API
 ```
 
-Fixtures addressed by slug are pinned to a specific long-lived dataset, because
-tests assert against their contents; a fixture whose subject changes on every
-capture cannot be asserted on. The script warns if the pinned dataset stops
-resolving, and never truncates an existing fixture when a request fails.
+See **Every fixture records where it came from** for what that writes and what
+the parity tests enforce about it.
 
 ## Error handling
 
@@ -963,6 +1024,68 @@ generalised, and because nobody re-reviewed the repair.
 Anything you deliberately leave unfixed gets a one-line reason recorded in the
 PR, so a reviewer can tell a considered decision from an oversight.
 
+### Self-review is the weakest review; run it from a fresh context
+
+**Reading your own diff harder does not work, and this project has the
+measurement.** Ten MCP tests were written to a rule that asked the author to
+name the wrong implementation each test would catch. A separate adversarial run,
+given the same code and none of the author's reasoning, defeated **all ten**.
+The author had read them twice.
+
+The mechanism is not carelessness. Having just written the implementation, your
+model of *wrong* is anchored to it — you check the mistakes you nearly made, not
+the ones you cannot see. A fresh context does not share the anchor. So:
+
+- Give the reviewer **the requirement and the diff, never your conclusion**. The
+  moment a reviewer knows what you decided, they are checking your reasoning
+  rather than the code.
+- Where more than one reviewer runs, give each a **distinct lens** — correctness,
+  security, does-the-failure-actually-reproduce — rather than repeating one pass.
+  Separate lenses catch what redundancy cannot.
+- This applies to every deliverable, not only code. A design, a fixture set, or
+  a document gets the same two passes against its own bar.
+
+### A finding has to survive an attempt to kill it
+
+**The burden of proof sits on the finding, not on the code.** Before acting on
+one, name the concrete failure — the inputs, the state, the wrong result — and
+check it against reality. Drop it when you cannot show that failure.
+
+This is the most expensive failure mode in this repository's review history.
+Four findings in a single sweep were confidently wrong, and each one looked like
+diligence:
+
+| Finding as raised | What was actually true |
+|---|---|
+| `spatial_filter` is a phantom filter that does nothing | It was probed with an invalid value. With a valid one it filters correctly |
+| Organizations have no `slug` field | The probe printed four keys per object. All 120 have one |
+| `org_slug` is broken | The value was guessed as `noaa-gov`. The real slug is `noaa` |
+| `cargo audit` passes silently when it cannot fetch the database (#99) | It already exits 1. Measured: online 0, offline 1, offline with `--stale` 1. Filed, then closed as invalid |
+
+Three of the four came from testing an invented value against a live API and
+reading "no result" as "broken" — which is why sourcing test values from the API
+is its own rule. The fourth was a premise nobody checked before filing.
+
+A plausible-but-wrong finding costs more than the defect it claims to find:
+somebody changes working code, or files an issue that a later reader trusts. A
+finding that is expensive to fix, or that would change the design, gets an
+independent check from someone who did not raise it.
+
+### Report the limits of what you checked
+
+**When you sample, stop early, skip an area, or abandon a path, say so in the
+summary, the PR, or the issue.** Silent truncation reads as full coverage to
+whoever receives it, and they cannot see the gap you saw.
+
+Both sides of this happened here. The slug investigation reported its bounds —
+"15% unresolvable on a uniform sample of 578, 27% past cursor depth 400" — and
+those numbers were what made the fix arguable. The MCP verification did not: it
+exercised one of five tools and reported the result as though it covered the
+set, which is precisely how a bare-array `structuredContent` reached a release.
+
+"I checked the three largest callers, not all forty" is a useful result. "I
+checked the callers" is not.
+
 Scan dependencies whenever the lockfile changed, before the first build.
 
 Before any release:
@@ -1029,6 +1152,37 @@ modified five while a change was being built in the same directory, and the test
 failures could no longer be attributed. Give parallel work isolated worktrees,
 brief each on its scope, and check first for shared files: a manifest edit or a
 changelog entry in two trees at once serialises whether you planned it or not.
+
+### Decide at the top, build in the branches
+
+Do the investigation, the API probing, and the design decision **before** cutting
+the work up — those need the whole problem in view, and this API punishes
+guessing. Then give each unit its own branch and its own worktree, with a brief
+that carries the decisions already made, so nobody re-derives a settled question
+or re-probes an endpoint that has already been characterised.
+
+**A brief that a fresh reader cannot act on means the investigation is not
+finished.** It needs: the problem and why it matters, the files and interfaces
+in play, the constraints, and what "done" looks like. Point at the issue rather
+than restating it — that is what the tracker entry is for.
+
+The one thing that stays out of a brief is your own conclusion, and only when you
+want independent judgement. A reviewer who knows what you decided reviews your
+reasoning instead of the code.
+
+### Weigh more than one design before committing to one
+
+Where the solution space is genuinely open, sketch two or three approaches from
+different angles and score them against the requirement and the failure cases,
+rather than refining the first idea. Skip it where the existing system already
+fixes the shape.
+
+The slug fix is what this looks like when it works. Two candidates were live:
+raise `per_page` so the full-text search finds more, or use the exact-lookup
+endpoint. Measurement killed the first — 83 of 87 failures returned *zero* hits,
+so a bigger page could not have helped — and that measurement is the entire
+argument for the endpoint. Iterating on the first idea would have produced a
+larger page size, a slower client, and the same bug.
 
 ### Issue and pull request hygiene
 
