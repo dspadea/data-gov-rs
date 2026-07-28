@@ -24,14 +24,22 @@ echo
 
 echo "📋 2. Interactive Mode:"
 echo "----------------------"
-echo "Starting interactive REPL... (type 'quit' to exit)"
 echo "Try these commands:"
 echo "  search solar energy"
-echo "  show consumer-complaint-database"  
+echo "  show consumer-complaint-database"
 echo "  list organizations"
 echo "  help"
 echo "  quit"
 echo
 
-# Start interactive mode
-data-gov
+# Only drop into the REPL when there's a real terminal to type into. Piping
+# this script (or running it from CI, cron, or another script) leaves stdin
+# closed or non-interactive, and the REPL would otherwise sit waiting for
+# input that never comes.
+if [ -t 0 ]; then
+  echo "Starting interactive REPL... (type 'quit' to exit)"
+  data-gov
+else
+  echo "(stdin is not a terminal, so the interactive REPL is not started here.)"
+  echo "Run 'data-gov' yourself to try it."
+fi
