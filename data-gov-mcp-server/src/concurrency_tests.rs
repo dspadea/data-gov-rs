@@ -15,7 +15,7 @@ use wiremock::MockServer;
 
 use crate::test_support::{
     INVALID_PARAMS, INVALID_REQUEST, METHOD_NOT_FOUND, PARSE_ERROR, Session, drive, error_code,
-    gated_server, test_server, test_server_with_gate,
+    gated_server, gated_twice, test_server, test_server_with_gate,
 };
 
 /// The tool method the gate holds in these tests. Held at the dispatch, so no
@@ -32,6 +32,28 @@ fn slow_call(id: i64) -> Value {
             "name": "data_gov_download_resources",
             "arguments": {"datasetId": "held-dataset"}
         }
+    })
+}
+
+/// The same tool, named directly rather than through `tools/call`.
+///
+/// The epilogue hold matches the envelope method, so a test that needs it
+/// takes this door. Both doors reach the same handler.
+fn slow_method_call(id: i64) -> Value {
+    json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "method": SLOW_METHOD,
+        "params": {"datasetId": "held-dataset"}
+    })
+}
+
+/// `notifications/cancelled` naming `id`.
+fn cancellation_of(id: i64) -> Value {
+    json!({
+        "jsonrpc": "2.0",
+        "method": "notifications/cancelled",
+        "params": {"requestId": id, "reason": "retrying"}
     })
 }
 
@@ -442,11 +464,11 @@ async fn a_request_id_is_reusable_once_its_request_has_been_answered() {
 /// Cancelling a request frees its id, and a client that cancels and retries
 /// under the same id - a normal thing to do - must be answered.
 ///
-/// This is the reachable half of the epilogue rule in `accept`: a cancelled
+/// This is the sequential half of the epilogue rule in `accept`: a cancelled
 /// task must not deregister an id that a later request has since claimed. The
-/// interleaving that makes the unsafe version lose the retry is not reachable
-/// deterministically from the wire, so this test guards the sequence rather
-/// than the race.
+/// interleaved half - the same three events with the completion landing last -
+/// is
+/// [`a_completion_does_not_deregister_a_retry_that_claimed_its_id`].
 #[tokio::test]
 async fn an_id_freed_by_cancellation_can_be_used_again() {
     let mock = MockServer::start().await;
@@ -478,6 +500,82 @@ async fn an_id_freed_by_cancellation_can_be_used_again() {
     assert!(
         session.finish().await.is_empty(),
         "and the cancelled request is still never answered"
+    );
+}
+
+/// A request that finishes must give up its own slot in the cancellation
+/// registry and nobody else's.
+///
+/// The window that breaks this is narrow but ordinary: a cancellation arrives
+/// after a task has committed to answering, frees the id, and a retry under
+/// that id claims it before the finishing task removes its entry. Removing by
+/// id alone at that moment takes the retry's entry out, drops its cancellation
+/// sender, and the retry is abandoned in silence - no response, no error, and
+/// a client waiting until its own timeout.
+///
+/// Every step of that is reachable from the wire except the last: nothing
+/// between the handler resolving and the removal awaits anything a client can
+/// influence, so the two read as one step from outside. `tokio::select!` keeps
+/// the branch it did not take alive while the branch body runs, which is why
+/// the cancellation is delivered to a receiver that will never look at it. The
+/// epilogue hold is what turns that window into an order this test states.
+#[tokio::test]
+async fn a_completion_does_not_deregister_a_retry_that_claimed_its_id() {
+    let mock = MockServer::start().await;
+    let gated = gated_twice(&mock.uri(), SLOW_METHOD);
+    let mut session = Session::start(std::sync::Arc::clone(&gated.server));
+
+    // Registers id 1 and stops at the dispatch hold.
+    session.send(&slow_method_call(1)).await;
+
+    // Let its handler resolve. The task commits to the completion arm and
+    // stops in the epilogue, still holding id 1.
+    gated.dispatch.notify_one();
+    gated.arrived.notified().await;
+
+    // The cancellation frees id 1 while that task sits there. Its sender is
+    // still live, so the notification is delivered to a receiver that has
+    // already lost its race.
+    session.send(&cancellation_of(1)).await;
+
+    // The retry claims the freed id, and stops at the dispatch hold in turn.
+    session.send(&slow_method_call(1)).await;
+
+    // The ping sits behind the retry in the stream, so its answer is proof
+    // that the reading task has already registered the retry. Without that,
+    // the ordering below would be a hope rather than a fact.
+    session
+        .send(&json!({"jsonrpc": "2.0", "id": 2, "method": "ping"}))
+        .await;
+    let ping = session.next_response().await;
+    assert_eq!(ping.get("id"), Some(&json!(2)), "got: {ping}");
+
+    // The first task now finishes. This is the moment the defect fires.
+    gated.epilogue.notify_one();
+    let raced = session.next_response().await;
+    assert_eq!(
+        raced.get("id"),
+        Some(&json!(1)),
+        "the cancellation lost its race, so the first request still answers: {raced}"
+    );
+
+    // Release the retry: its dispatch hold, then its own epilogue hold.
+    gated.dispatch.notify_one();
+    gated.epilogue.notify_one();
+
+    let rest = session.finish().await;
+    assert_eq!(
+        rest.len(),
+        1,
+        "the retry must be answered; a completion that deregisters by id alone \
+         takes the retry's entry, drops its cancellation sender, and the retry \
+         ends in silence: {rest:?}"
+    );
+    assert_eq!(
+        rest[0].get("id"),
+        Some(&json!(1)),
+        "and it answers under the id it was sent with: {}",
+        rest[0]
     );
 }
 

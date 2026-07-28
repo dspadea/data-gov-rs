@@ -45,6 +45,23 @@ pub(crate) struct TestGate {
     pub method: &'static str,
     /// Released by the test. Until then the matching dispatch does not return.
     pub release: std::sync::Arc<tokio::sync::Notify>,
+    /// A second hold point for the same method, in the completion epilogue.
+    /// `None` leaves the epilogue unheld, which is what every other test wants.
+    pub epilogue: Option<EpilogueGate>,
+}
+
+/// A hold point between one request's handler resolving and its task giving up
+/// its slot in the cancellation registry.
+///
+/// Nothing in that window awaits anything a test can reach, so from the wire
+/// the two events read as one step. A cancellation and a retry can only be
+/// placed inside the window if something holds it open, which is what this is.
+#[cfg(test)]
+pub(crate) struct EpilogueGate {
+    /// Signalled by the server when a task arrives at the hold point.
+    pub arrived: std::sync::Arc<tokio::sync::Notify>,
+    /// Awaited there. One waiter is released per `notify_one`.
+    pub release: std::sync::Arc<tokio::sync::Notify>,
 }
 
 /// The data.gov MCP server.
@@ -289,6 +306,8 @@ impl DataGovMcpServer {
         let server = Arc::clone(self);
         let responses = responses.clone();
         let registry = Arc::clone(in_flight);
+        #[cfg(test)]
+        let gated_method = request.method.clone();
         tokio::spawn(async move {
             tokio::select! {
                 biased;
@@ -305,6 +324,8 @@ impl DataGovMcpServer {
                 // out of the registry, drop its sender, and cancel it too.
                 _ = cancelled => {}
                 response = server.handle_request(Some(id), request) => {
+                    #[cfg(test)]
+                    server.hold_epilogue(&gated_method).await;
                     // Only ever removes this task's own entry: while it ran,
                     // the id was occupied by this task's sender, because a
                     // second request under a live id is refused above.
@@ -313,6 +334,22 @@ impl DataGovMcpServer {
                 }
             }
         });
+    }
+
+    /// Stop a completing task in its epilogue, where a test asked for it.
+    ///
+    /// `method` is the envelope method, so a test that wants this holds a
+    /// request that names the tool directly rather than wrapping it in
+    /// `tools/call`.
+    #[cfg(test)]
+    async fn hold_epilogue(&self, method: &str) {
+        if let Some(gate) = self.test_gate.as_ref()
+            && gate.method == method
+            && let Some(epilogue) = gate.epilogue.as_ref()
+        {
+            epilogue.arrived.notify_one();
+            epilogue.release.notified().await;
+        }
     }
 
     /// Act on a JSON object that carries no `id`.

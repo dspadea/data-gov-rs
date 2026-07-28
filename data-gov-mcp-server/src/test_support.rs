@@ -12,7 +12,7 @@ use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader, DuplexS
 use tokio::sync::Notify;
 use tokio::task::JoinHandle;
 
-use crate::server::{DEFAULT_REQUEST_TIMEOUT, DataGovMcpServer, TestGate};
+use crate::server::{DEFAULT_REQUEST_TIMEOUT, DataGovMcpServer, EpilogueGate, TestGate};
 use crate::types::ServerError;
 
 /// How long a session waits for a response before calling the loop hung.
@@ -67,6 +67,50 @@ pub(crate) fn test_server(mock_uri: &str) -> DataGovMcpServer {
     }
 }
 
+/// A server that holds `method` twice: once at dispatch, once in the epilogue
+/// of the task that completed it.
+///
+/// The second hold is what makes the cancellation race an ordering rather than
+/// a probability - see [`GatedTwice`].
+pub(crate) fn gated_twice(mock_uri: &str, method: &'static str) -> GatedTwice {
+    let dispatch = Arc::new(Notify::new());
+    let arrived = Arc::new(Notify::new());
+    let epilogue = Arc::new(Notify::new());
+
+    let mut server = test_server(mock_uri);
+    server.test_gate = Some(TestGate {
+        method,
+        release: Arc::clone(&dispatch),
+        epilogue: Some(EpilogueGate {
+            arrived: Arc::clone(&arrived),
+            release: Arc::clone(&epilogue),
+        }),
+    });
+
+    GatedTwice {
+        server: Arc::new(server),
+        dispatch,
+        arrived,
+        epilogue,
+    }
+}
+
+/// The handles for a server built by [`gated_twice`].
+///
+/// Each `Notify` releases one waiter per `notify_one`, and stores a permit when
+/// nobody is waiting yet, so a test can signal before or after the server
+/// arrives without changing the outcome.
+pub(crate) struct GatedTwice {
+    /// The server itself, ready for [`Session::start`].
+    pub server: Arc<DataGovMcpServer>,
+    /// Releases one request from the dispatch hold.
+    pub dispatch: Arc<Notify>,
+    /// Signalled by the server when a task reaches the epilogue hold.
+    pub arrived: Arc<Notify>,
+    /// Releases one task from the epilogue hold.
+    pub epilogue: Arc<Notify>,
+}
+
 /// A server that holds `method` until the returned handle is released.
 ///
 /// The handle is a [`Notify`] with a stored permit, so releasing before the
@@ -90,6 +134,7 @@ pub(crate) fn gated_server(
     server.test_gate = Some(TestGate {
         method,
         release: Arc::clone(&release),
+        epilogue: None,
     });
     (Arc::new(server), release)
 }
