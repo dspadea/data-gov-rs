@@ -1176,3 +1176,44 @@ fn default_configuration_sets_explicit_connect_and_request_timeouts() {
     assert_eq!(config.connect_timeout, std::time::Duration::from_secs(10));
     assert_eq!(config.timeout, std::time::Duration::from_secs(30));
 }
+
+/// The idiomatic way to shorten a timeout is exactly what a consumer reaches
+/// for: `Configuration { timeout: ..., ..Configuration::default() }`. But
+/// `Configuration::default()` already built `client` from its own 10s/30s
+/// values before the struct literal's `connect_timeout`/`timeout` fields are
+/// applied, so this pattern silently keeps the old client -- the two new
+/// fields sit in the struct doing nothing. A mock delays 300ms; both
+/// timeouts are set to 50ms via struct-update syntax, so a client that
+/// actually honoured them would error well under 300ms.
+#[tokio::test]
+async fn setting_timeout_via_struct_update_syntax_has_no_effect_on_the_built_client() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/action/package_search"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(json!({"help": "", "success": true, "result": {}}))
+                .set_delay(std::time::Duration::from_millis(300)),
+        )
+        .mount(&server)
+        .await;
+
+    let config = Arc::new(Configuration {
+        base_path: server.uri(),
+        connect_timeout: std::time::Duration::from_millis(50),
+        timeout: std::time::Duration::from_millis(50),
+        ..Configuration::default()
+    });
+
+    let started = std::time::Instant::now();
+    let result = CkanClient::new(config)
+        .package_search(None, None, None, None)
+        .await;
+    let elapsed = started.elapsed();
+
+    assert!(
+        result.is_err(),
+        "a 50ms timeout set via struct-update syntax must bound a 300ms \
+         delayed response, but the call returned {result:?} after {elapsed:?}"
+    );
+}
