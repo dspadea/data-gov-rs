@@ -26,6 +26,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   values in the published OpenAPI document exactly.
 - **`CatalogError` has new `InvalidPathSegment` and `InvalidPerPage` variants**
   (#71, #111). Code matching the enum exhaustively must add arms.
+- **`harvest_record_transformed` returns `Result<Option<Dataset>>`** (#83). A 404
+  means the harvest record has no populated transform, which is the common
+  answer rather than a failure: across 752 records sampled from 18
+  organizations, only census and noaa populated one at all - roughly 87% of that
+  sample had none. It is now `Ok(None)`, through the same helper
+  `dataset_by_slug` uses. Any other non-2xx is still an error. `data-gov`'s
+  `get_dataset_by_harvest_record` keeps its signature and reports a missing
+  transform as `ResourceNotFound`.
 - **`SearchParams::sort` takes a `SortOrder` enum** (#77), not a string. The API
   silently ignores a value it does not recognise, so a typo returned plausible
   wrong results with no error: live-probed, `sort=BOGUS_NOT_A_SORT` echoes
