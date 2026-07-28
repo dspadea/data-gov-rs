@@ -1,1 +1,290 @@
-{"locations":[{"display_name":"Colorado","id":"6"},{"display_name":"Yuma County, Colorado","id":"357"},{"display_name":"Adams County, Colorado","id":"294"}],"size":3,"total":3}
+{
+  "locations": [
+    {
+      "display_name": "California",
+      "id": "5"
+    },
+    {
+      "display_name": "Solano County, California",
+      "id": "283"
+    },
+    {
+      "display_name": "Sierra County, California",
+      "id": "281"
+    },
+    {
+      "display_name": "Siskiyou County, California",
+      "id": "282"
+    },
+    {
+      "display_name": "Sonoma County, California",
+      "id": "284"
+    },
+    {
+      "display_name": "Stanislaus County, California",
+      "id": "285"
+    },
+    {
+      "display_name": "Sutter County, California",
+      "id": "286"
+    },
+    {
+      "display_name": "Tehama County, California",
+      "id": "287"
+    },
+    {
+      "display_name": "Trinity County, California",
+      "id": "288"
+    },
+    {
+      "display_name": "Tulare County, California",
+      "id": "289"
+    },
+    {
+      "display_name": "Tuolumne County, California",
+      "id": "290"
+    },
+    {
+      "display_name": "Ventura County, California",
+      "id": "291"
+    },
+    {
+      "display_name": "Yolo County, California",
+      "id": "292"
+    },
+    {
+      "display_name": "Yuba County, California",
+      "id": "293"
+    },
+    {
+      "display_name": "Alameda County, California",
+      "id": "236"
+    },
+    {
+      "display_name": "Alpine County, California",
+      "id": "237"
+    },
+    {
+      "display_name": "Amador County, California",
+      "id": "238"
+    },
+    {
+      "display_name": "Butte County, California",
+      "id": "239"
+    },
+    {
+      "display_name": "Calaveras County, California",
+      "id": "240"
+    },
+    {
+      "display_name": "Colusa County, California",
+      "id": "241"
+    },
+    {
+      "display_name": "Contra Costa County, California",
+      "id": "242"
+    },
+    {
+      "display_name": "Del Norte County, California",
+      "id": "243"
+    },
+    {
+      "display_name": "El Dorado County, California",
+      "id": "244"
+    },
+    {
+      "display_name": "Fresno County, California",
+      "id": "245"
+    },
+    {
+      "display_name": "Glenn County, California",
+      "id": "246"
+    },
+    {
+      "display_name": "Humboldt County, California",
+      "id": "247"
+    },
+    {
+      "display_name": "Imperial County, California",
+      "id": "248"
+    },
+    {
+      "display_name": "Inyo County, California",
+      "id": "249"
+    },
+    {
+      "display_name": "Kern County, California",
+      "id": "250"
+    },
+    {
+      "display_name": "Kings County, California",
+      "id": "251"
+    },
+    {
+      "display_name": "Lake County, California",
+      "id": "252"
+    },
+    {
+      "display_name": "Lassen County, California",
+      "id": "253"
+    },
+    {
+      "display_name": "Los Angeles County, California",
+      "id": "254"
+    },
+    {
+      "display_name": "Madera County, California",
+      "id": "255"
+    },
+    {
+      "display_name": "Marin County, California",
+      "id": "256"
+    },
+    {
+      "display_name": "Mariposa County, California",
+      "id": "257"
+    },
+    {
+      "display_name": "Mendocino County, California",
+      "id": "258"
+    },
+    {
+      "display_name": "Merced County, California",
+      "id": "259"
+    },
+    {
+      "display_name": "Modoc County, California",
+      "id": "260"
+    },
+    {
+      "display_name": "Mono County, California",
+      "id": "261"
+    },
+    {
+      "display_name": "Monterey County, California",
+      "id": "262"
+    },
+    {
+      "display_name": "Napa County, California",
+      "id": "263"
+    },
+    {
+      "display_name": "Nevada County, California",
+      "id": "264"
+    },
+    {
+      "display_name": "Orange County, California",
+      "id": "265"
+    },
+    {
+      "display_name": "Placer County, California",
+      "id": "266"
+    },
+    {
+      "display_name": "Plumas County, California",
+      "id": "267"
+    },
+    {
+      "display_name": "Riverside County, California",
+      "id": "268"
+    },
+    {
+      "display_name": "Sacramento County, California",
+      "id": "269"
+    },
+    {
+      "display_name": "San Benito County, California",
+      "id": "270"
+    },
+    {
+      "display_name": "San Bernardino County, California",
+      "id": "271"
+    },
+    {
+      "display_name": "San Diego County, California",
+      "id": "272"
+    },
+    {
+      "display_name": "San Francisco County, California",
+      "id": "273"
+    },
+    {
+      "display_name": "San Joaquin County, California",
+      "id": "274"
+    },
+    {
+      "display_name": "San Luis Obispo County, California",
+      "id": "275"
+    },
+    {
+      "display_name": "San Mateo County, California",
+      "id": "276"
+    },
+    {
+      "display_name": "Santa Barbara County, California",
+      "id": "277"
+    },
+    {
+      "display_name": "Santa Clara County, California",
+      "id": "278"
+    },
+    {
+      "display_name": "Santa Cruz County, California",
+      "id": "279"
+    },
+    {
+      "display_name": "Shasta County, California",
+      "id": "280"
+    },
+    {
+      "display_name": "California, KY (41007)",
+      "id": "46379"
+    },
+    {
+      "display_name": "California, MO (65018)",
+      "id": "54871"
+    },
+    {
+      "display_name": "California Hot Springs, CA (93207)",
+      "id": "62295"
+    },
+    {
+      "display_name": "California City, CA (93505)",
+      "id": "62390"
+    },
+    {
+      "display_name": "California, PA (15419)",
+      "id": "39324"
+    },
+    {
+      "display_name": "California, MO (65018)",
+      "id": "23942"
+    },
+    {
+      "display_name": "California Hot Springs, CA (93207)",
+      "id": "31390"
+    },
+    {
+      "display_name": "California City, CA (93505)",
+      "id": "31485"
+    },
+    {
+      "display_name": "California, MD (20619)",
+      "id": "9049"
+    },
+    {
+      "display_name": "California, PA (15419)",
+      "id": "7601"
+    },
+    {
+      "display_name": "California, MD (20619)",
+      "id": "36122"
+    },
+    {
+      "display_name": "California, KY (41007)",
+      "id": "15421"
+    }
+  ],
+  "size": 100,
+  "total": 71
+}

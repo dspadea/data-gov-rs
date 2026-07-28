@@ -1,0 +1,110 @@
+{
+  "action": "update",
+  "ckan_id": "f63e70dc-3ada-4a0d-b8a0-d7dab8b04f96",
+  "date_created": "2026-05-08T20:16:21.818832",
+  "date_finished": "2026-05-08T20:16:21.838712",
+  "harvest_job_id": "b068b70f-b439-40dc-9b4d-2ce9a9ceddc4",
+  "harvest_source_id": "5ac48d69-f461-4ead-9dc2-b360eaaea04c",
+  "id": "c4d2afc2-0d60-4a75-9a68-46c6a3dec87f",
+  "identifier": "a6312d29-ef5b-4df4-97ea-5da38ce36a7f",
+  "parent_identifier": null,
+  "source_hash": "4dc086c82211340f79b6c5ed4bd15a19fc4236eddb05ee6cead09d160b2ae46d",
+  "source_raw": {
+    "@type": "dcat:Dataset",
+    "accessLevel": "public",
+    "bureauCode": [
+      "018:00"
+    ],
+    "contactPoint": {
+      "@type": "vcard:Contact",
+      "fn": "CRDC Team",
+      "hasEmail": "mailto:odp@ed.gov"
+    },
+    "description": "The 2015-16 tables are based on data collected from all of the nation\u2019s school districts and schools\u2014approximately 17,300 school districts and 96,300 schools. This set of Excel files contains data on students reported as harassed or bullied or disciplined for harassment or bullying on the basis of sex, race, or disability category for all states. Each file contains three spreadsheets: total students, male students, and female students. The Excel file contains data on allegations of harassment or bullying by type of allegations for all states.",
+    "distribution": [
+      {
+        "@type": "dcat:Distribution",
+        "description": "The 2015-16 tables are based on data collected from all of the nation\u2019s school districts and schools\u2014approximately 17,300 school districts and 96,300 schools. This set of Excel files contains data on students reported as harassed or bullied or disciplined for harassment or bullying on the basis of sex, race, or disability category for all states. Each file contains three spreadsheets: total students, male students, and female students. The Excel file contains data on allegations of harassment or bullying by type of allegations for all states.",
+        "downloadURL": "https://civilrightsdata.ed.gov/assets/downloads/2015-2016/Allegations-of-Harassment-or-Bullying.xlsx",
+        "format": "XLSX",
+        "mediaType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "title": "Allegations of Harassment or Bullying"
+      },
+      {
+        "@type": "dcat:Distribution",
+        "description": "The 2015-16 tables are based on data collected from all of the nation\u2019s school districts and schools\u2014approximately 17,300 school districts and 96,300 schools. This set of Excel files contains data on students reported as harassed or bullied or disciplined for harassment or bullying on the basis of sex, race, or disability category for all states. Each file contains three spreadsheets: total students, male students, and female students. The Excel file contains data on allegations of harassment or bullying by type of allegations for all states.",
+        "downloadURL": "https://civilrightsdata.ed.gov/assets/downloads/2015-2016/Harassment-Bullying-on-basis-of-disability-disciplined.xlsx",
+        "format": "XLSX",
+        "mediaType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "title": "On Basis of Disability - Disciplined "
+      },
+      {
+        "@type": "dcat:Distribution",
+        "description": "The 2015-16 tables are based on data collected from all of the nation\u2019s school districts and schools\u2014approximately 17,300 school districts and 96,300 schools. This set of Excel files contains data on students reported as harassed or bullied or disciplined for harassment or bullying on the basis of sex, race, or disability category for all states. Each file contains three spreadsheets: total students, male students, and female students. The Excel file contains data on allegations of harassment or bullying by type of allegations for all states.",
+        "downloadURL": "https://civilrightsdata.ed.gov/assets/downloads/2015-2016/Harassment-Bullying-on-basis-of-disability-reported.xlsx",
+        "format": "XLSX",
+        "mediaType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "title": "On Basis of Disability - Reported"
+      },
+      {
+        "@type": "dcat:Distribution",
+        "description": "The 2015-16 tables are based on data collected from all of the nation\u2019s school districts and schools\u2014approximately 17,300 school districts and 96,300 schools. This set of Excel files contains data on students reported as harassed or bullied or disciplined for harassment or bullying on the basis of sex, race, or disability category for all states. Each file contains three spreadsheets: total students, male students, and female students. The Excel file contains data on allegations of harassment or bullying by type of allegations for all states.",
+        "downloadURL": "https://civilrightsdata.ed.gov/assets/downloads/2015-2016/Harassment-Bullying-on-basis-of-race-disciplined.xlsx",
+        "format": "XLSX",
+        "mediaType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "title": "On Basis of Race - Disciplined"
+      },
+      {
+        "@type": "dcat:Distribution",
+        "description": "The 2015-16 tables are based on data collected from all of the nation\u2019s school districts and schools\u2014approximately 17,300 school districts and 96,300 schools. This set of Excel files contains data on students reported as harassed or bullied or disciplined for harassment or bullying on the basis of sex, race, or disability category for all states. Each file contains three spreadsheets: total students, male students, and female students. The Excel file contains data on allegations of harassment or bullying by type of allegations for all states.",
+        "downloadURL": "https://civilrightsdata.ed.gov/assets/downloads/2015-2016/Harassment-Bullying-on-basis-of-race-reported.xlsx",
+        "format": "XLSX",
+        "mediaType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "title": "On Basis of Race - Reported"
+      },
+      {
+        "@type": "dcat:Distribution",
+        "description": "The 2015-16 tables are based on data collected from all of the nation\u2019s school districts and schools\u2014approximately 17,300 school districts and 96,300 schools. This set of Excel files contains data on students reported as harassed or bullied or disciplined for harassment or bullying on the basis of sex, race, or disability category for all states. Each file contains three spreadsheets: total students, male students, and female students. The Excel file contains data on allegations of harassment or bullying by type of allegations for all states.",
+        "downloadURL": "https://civilrightsdata.ed.gov/assets/downloads/2015-2016/Harassment-Bullying-on-basis-of-sex-disciplined.xlsx",
+        "format": "XLSX",
+        "mediaType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "title": "On Basis of Sex - Disciplined"
+      },
+      {
+        "@type": "dcat:Distribution",
+        "description": "The 2015-16 tables are based on data collected from all of the nation\u2019s school districts and schools\u2014approximately 17,300 school districts and 96,300 schools. This set of Excel files contains data on students reported as harassed or bullied or disciplined for harassment or bullying on the basis of sex, race, or disability category for all states. Each file contains three spreadsheets: total students, male students, and female students. The Excel file contains data on allegations of harassment or bullying by type of allegations for all states.",
+        "downloadURL": "https://civilrightsdata.ed.gov/assets/downloads/2015-2016/Harassment-Bullying-on-basis-of-sex-reported.xlsx",
+        "format": "XLSX",
+        "mediaType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "title": "On Basis of Sex - Reported"
+      }
+    ],
+    "identifier": "a6312d29-ef5b-4df4-97ea-5da38ce36a7f",
+    "keyword": [
+      "Elementary-and-secondary",
+      "Language",
+      "civil-rights",
+      "minority",
+      "national",
+      "ocr",
+      "office-for-civil-rights-ocr",
+      "race",
+      "student-enrollment",
+      "student-retention",
+      "students"
+    ],
+    "landingPage": "https://civilrightsdata.ed.gov/estimations/2015-2016",
+    "license": "http://www.opendefinition.org/licenses/cc-by",
+    "modified": "2024-10-23T14:45:25.469196",
+    "programCode": [
+      "018:000"
+    ],
+    "publisher": {
+      "@type": "org:Organization",
+      "name": "Office for Civil Rights (OCR)"
+    },
+    "title": "2015-16 Harassment or Bullying by Basis Category Civil Rights Data Collection"
+  },
+  "source_transform": null,
+  "status": "success"
+}

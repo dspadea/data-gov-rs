@@ -1,1 +1,283 @@
-{"after":"WzEuMCw1NjkxLCI0ODhlNzhkZS0zYTdmLTRiMmMtODk3NS04MTgxN2RjYzhkZmUiXQ==","results":[{"_score":1.0,"_sort":[1.0,5691,"488e78de-3a7f-4b2c-8975-81817dcc8dfe"],"dcat":{"@type":"dcat:Dataset","accessLevel":"public","contactPoint":{"@type":"vcard:Contact","fn":"LAPD OpenData","hasEmail":"mailto:no-reply@data.lacity.org"},"description":"******Notice: Transition to NIBRS-Compliant Crime Data Reporting\nThe Los Angeles Police Department (LAPD) has completed its transition from the legacy Records Management System, which reported crime and arrest data under Uniform Crime Reporting (UCR) standards, to a modernized system fully aligned with the National Incident-Based Reporting System (NIBRS).\nAs part of this transition, the legacy system is no longer active, and no new information will be entered. Consequently, the Crime Data from 2020 to Present dataset will no longer be updated. It will remain available on the portal for historical reference only.\nTo provide the public with current and comprehensive information, LAPD now publishes datasets sourced directly from the new Records Management System in accordance with NIBRS standards. These datasets were introduced in October 2024 and are refreshed on a bi-weekly schedule:\n\u2022\t[LAPD NIBRS Offenses Dataset | Los Angeles Open Data Portal]\n\u2022\t[LAPD NIBRS Victims Dataset | Los Angeles Open Data Portal]\nThe adoption of NIBRS ensures LAPD crime and arrest data meet national standards, enhancing transparency, accuracy, and accessibility for the public.\n******\n\nOn March 7th, 2024, the Los Angeles Police Department (LAPD)  adopted a new Records Management System for reporting crimes and arrests. This new system is implemented to comply with the FBI's mandate to collect NIBRS-only data (NIBRS \u2014 FBI - https://www.fbi.gov/how-we-can-help-you/more-fbi-services-and-information/ucr/nibrs).\n\nThis dataset reflects incidents of crime in the City of Los Angeles dating back to 2020. This data is transcribed from original crime reports that are typed on paper and therefore there may be some inaccuracies within the data. Some location fields with missing data are noted as (0\u00b0, 0\u00b0). Address fields are only provided to the nearest hundred block in order to maintain privacy. This data is as accurate as the data in the database. Please note questions or concerns in the comments.","distribution":[{"@type":"dcat:Distribution","describedBy":"https://data.lacity.org/api/views/2nrs-mtv8/columns.json","describedByType":"application/json","downloadURL":"https://data.lacity.org/api/views/2nrs-mtv8/rows.json?accessType=DOWNLOAD","mediaType":"application/json"},{"@type":"dcat:Distribution","describedBy":"https://data.lacity.org/api/views/2nrs-mtv8/columns.rdf","describedByType":"application/rdf+xml","downloadURL":"https://data.lacity.org/api/views/2nrs-mtv8/rows.rdf?accessType=DOWNLOAD","mediaType":"application/rdf+xml"},{"@type":"dcat:Distribution","describedBy":"https://data.lacity.org/api/views/2nrs-mtv8/columns.xml","describedByType":"application/xml","downloadURL":"https://data.lacity.org/api/views/2nrs-mtv8/rows.xml?accessType=DOWNLOAD","mediaType":"application/xml"},{"@type":"dcat:Distribution","downloadURL":"https://data.lacity.org/api/views/2nrs-mtv8/rows.csv?accessType=DOWNLOAD","mediaType":"text/csv"}],"identifier":"https://data.lacity.org/api/views/2nrs-mtv8","issued":"2020-02-10","keyword":["crime","crime data","crimes","lapd","police","safe city"],"landingPage":"https://data.lacity.org/d/2nrs-mtv8","license":"http://creativecommons.org/publicdomain/zero/1.0/legalcode","modified":"2026-03-04","publisher":{"@type":"org:Organization","name":"data.lacity.org"},"theme":["Public Safety"],"title":"Crime Data from 2020 to 2024"},"description":"******Notice: Transition to NIBRS-Compliant Crime Data Reporting\nThe Los Angeles Police Department (LAPD) has completed its transition from the legacy Records Management System, which reported crime and arrest data under Uniform Crime Reporting (UCR) standards, to a modernized system fully aligned with the National Incident-Based Reporting System (NIBRS).\nAs part of this transition, the legacy system is no longer active, and no new information will be entered. Consequently, the Crime Data from 2020 to Present dataset will no longer be updated. It will remain available on the portal for historical reference only.\nTo provide the public with current and comprehensive information, LAPD now publishes datasets sourced directly from the new Records Management System in accordance with NIBRS standards. These datasets were introduced in October 2024 and are refreshed on a bi-weekly schedule:\n\u2022\t[LAPD NIBRS Offenses Dataset | Los Angeles Open Data Portal]\n\u2022\t[LAPD NIBRS Victims Dataset | Los Angeles Open Data Portal]\nThe adoption of NIBRS ensures LAPD crime and arrest data meet national standards, enhancing transparency, accuracy, and accessibility for the public.\n******\n\nOn March 7th, 2024, the Los Angeles Police Department (LAPD)  adopted a new Records Management System for reporting crimes and arrests. This new system is implemented to comply with the FBI's mandate to collect NIBRS-only data (NIBRS \u2014 FBI - https://www.fbi.gov/how-we-can-help-you/more-fbi-services-and-information/ucr/nibrs).\n\nThis dataset reflects incidents of crime in the City of Los Angeles dating back to 2020. This data is transcribed from original crime reports that are typed on paper and therefore there may be some inaccuracies within the data. Some location fields with missing data are noted as (0\u00b0, 0\u00b0). Address fields are only provided to the nearest hundred block in order to maintain privacy. This data is as accurate as the data in the database. Please note questions or concerns in the comments.","distribution_titles":[],"harvest_record":"https://catalog-beta.data.gov/harvest_record/c400627a-a3d6-4824-808b-c2d02d57e64b","harvest_record_raw":"https://catalog-beta.data.gov/harvest_record/c400627a-a3d6-4824-808b-c2d02d57e64b/raw","has_spatial":false,"identifier":"https://data.lacity.org/api/views/2nrs-mtv8","keyword":["crime","crime data","crimes","lapd","police","safe city"],"last_harvested_date":"2026-03-07T20:07:14.106867","organization":{"aliases":["la","california"],"description":null,"id":"aa795a1b-5fbb-46d1-b9f2-8b86e1e48bef","logo":"","name":"City of Los Angeles","organization_type":"City Government","slug":"los-angeles-ca"},"popularity":5691,"publisher":"data.lacity.org","slug":"crime-data-from-2020-to-present","spatial_centroid":null,"spatial_shape":null,"theme":["Public Safety"],"title":"Crime Data from 2020 to 2024"}],"sort":"relevance"}
+{
+  "results": [
+    {
+      "_score": 52.61421,
+      "_sort": [
+        52.61421,
+        2078,
+        "488e78de-3a7f-4b2c-8975-81817dcc8dfe"
+      ],
+      "dcat": {
+        "@type": "dcat:Dataset",
+        "accessLevel": "public",
+        "contactPoint": {
+          "@type": "vcard:Contact",
+          "fn": "LAPD OpenData",
+          "hasEmail": "mailto:no-reply@data.lacity.org"
+        },
+        "description": "******Notice: Transition to NIBRS-Compliant Crime Data Reporting\nThe Los Angeles Police Department (LAPD) has completed its transition from the legacy Records Management System, which reported crime and arrest data under Uniform Crime Reporting (UCR) standards, to a modernized system fully aligned with the National Incident-Based Reporting System (NIBRS).\nAs part of this transition, the legacy system is no longer active, and no new information will be entered. Consequently, the Crime Data from 2020 to Present dataset will no longer be updated. It will remain available on the portal for historical reference only.\nTo provide the public with current and comprehensive information, LAPD now publishes datasets sourced directly from the new Records Management System in accordance with NIBRS standards. These datasets were introduced in October 2024 and are refreshed on a bi-weekly schedule:\n\u2022\t[LAPD NIBRS Offenses Dataset | Los Angeles Open Data Portal]\n\u2022\t[LAPD NIBRS Victims Dataset | Los Angeles Open Data Portal]\nThe adoption of NIBRS ensures LAPD crime and arrest data meet national standards, enhancing transparency, accuracy, and accessibility for the public.\n******\n\nOn March 7th, 2024, the Los Angeles Police Department (LAPD)  adopted a new Records Management System for reporting crimes and arrests. This new system is implemented to comply with the FBI's mandate to collect NIBRS-only data (NIBRS \u2014 FBI - https://www.fbi.gov/how-we-can-help-you/more-fbi-services-and-information/ucr/nibrs).\n\nThis dataset reflects incidents of crime in the City of Los Angeles dating back to 2020. This data is transcribed from original crime reports that are typed on paper and therefore there may be some inaccuracies within the data. Some location fields with missing data are noted as (0\u00b0, 0\u00b0). Address fields are only provided to the nearest hundred block in order to maintain privacy. This data is as accurate as the data in the database. Please note questions or concerns in the comments.",
+        "distribution": [
+          {
+            "@type": "dcat:Distribution",
+            "describedBy": "https://data.lacity.org/api/views/2nrs-mtv8/columns.json",
+            "describedByType": "application/json",
+            "downloadURL": "https://data.lacity.org/api/v3/views/2nrs-mtv8/query.json?accessType=DOWNLOAD",
+            "mediaType": "application/json"
+          },
+          {
+            "@type": "dcat:Distribution",
+            "describedBy": "https://data.lacity.org/api/views/2nrs-mtv8/columns.xml",
+            "describedByType": "application/xml",
+            "downloadURL": "https://data.lacity.org/api/v3/views/2nrs-mtv8/export.xml?accessType=DOWNLOAD",
+            "mediaType": "application/xml"
+          },
+          {
+            "@type": "dcat:Distribution",
+            "downloadURL": "https://data.lacity.org/api/v3/views/2nrs-mtv8/export.csv?accessType=DOWNLOAD",
+            "mediaType": "text/csv"
+          }
+        ],
+        "identifier": "https://data.lacity.org/api/views/2nrs-mtv8",
+        "issued": "2020-02-10",
+        "keyword": [
+          "crime",
+          "crime data",
+          "crimes",
+          "lapd",
+          "police",
+          "safe city"
+        ],
+        "landingPage": "https://data.lacity.org/d/2nrs-mtv8",
+        "license": "http://creativecommons.org/publicdomain/zero/1.0/legalcode",
+        "modified": "2026-03-04",
+        "publisher": {
+          "@type": "org:Organization",
+          "name": "data.lacity.org"
+        },
+        "theme": [
+          "Public Safety"
+        ],
+        "title": "Crime Data from 2020 to 2024"
+      },
+      "description": "******Notice: Transition to NIBRS-Compliant Crime Data Reporting\nThe Los Angeles Police Department (LAPD) has completed its transition from the legacy Records Management System, which reported crime and arrest data under Uniform Crime Reporting (UCR) standards, to a modernized system fully aligned with the National Incident-Based Reporting System (NIBRS).\nAs part of this transition, the legacy system is no longer active, and no new information will be entered. Consequently, the Crime Data from 2020 to Present dataset will no longer be updated. It will remain available on the portal for historical reference only.\nTo provide the public with current and comprehensive information, LAPD now publishes datasets sourced directly from the new Records Management System in accordance with NIBRS standards. These datasets were introduced in October 2024 and are refreshed on a bi-weekly schedule:\n\u2022\t[LAPD NIBRS Offenses Dataset | Los Angeles Open Data Portal]\n\u2022\t[LAPD NIBRS Victims Dataset | Los Angeles Open Data Portal]\nThe adoption of NIBRS ensures LAPD crime and arrest data meet national standards, enhancing transparency, accuracy, and accessibility for the public.\n******\n\nOn March 7th, 2024, the Los Angeles Police Department (LAPD)  adopted a new Records Management System for reporting crimes and arrests. This new system is implemented to comply with the FBI's mandate to collect NIBRS-only data (NIBRS \u2014 FBI - https://www.fbi.gov/how-we-can-help-you/more-fbi-services-and-information/ucr/nibrs).\n\nThis dataset reflects incidents of crime in the City of Los Angeles dating back to 2020. This data is transcribed from original crime reports that are typed on paper and therefore there may be some inaccuracies within the data. Some location fields with missing data are noted as (0\u00b0, 0\u00b0). Address fields are only provided to the nearest hundred block in order to maintain privacy. This data is as accurate as the data in the database. Please note questions or concerns in the comments.",
+      "distribution_titles": [],
+      "harvest_record": "https://catalog.data.gov/harvest_record/555eedc3-2d49-4f57-910d-8a247addbe6d",
+      "harvest_record_raw": "https://catalog.data.gov/harvest_record/555eedc3-2d49-4f57-910d-8a247addbe6d/raw",
+      "has_spatial": false,
+      "identifier": "https://data.lacity.org/api/views/2nrs-mtv8",
+      "keyword": [
+        "crime",
+        "crime data",
+        "crimes",
+        "lapd",
+        "police",
+        "safe city"
+      ],
+      "last_harvested_date": "2026-07-07T21:23:18.667116",
+      "organization": {
+        "aliases": [
+          "la",
+          "california"
+        ],
+        "description": null,
+        "id": "aa795a1b-5fbb-46d1-b9f2-8b86e1e48bef",
+        "logo": "",
+        "name": "City of Los Angeles",
+        "organization_type": "City Government",
+        "slug": "los-angeles-ca"
+      },
+      "popularity": 2078,
+      "publisher": "data.lacity.org",
+      "slug": "crime-data-from-2020-to-present",
+      "spatial_centroid": null,
+      "spatial_shape": null,
+      "theme": [
+        "Public Safety"
+      ],
+      "title": "Crime Data from 2020 to 2024"
+    },
+    {
+      "_score": 48.55181,
+      "_sort": [
+        48.55181,
+        12,
+        "db2478d4-6b91-4927-937d-e06a870b0553"
+      ],
+      "dcat": {
+        "@type": "dcat:Dataset",
+        "accessLevel": "public",
+        "contactPoint": {
+          "@type": "vcard:Contact",
+          "fn": "emassa",
+          "hasEmail": "mailto:no-reply@data.kingcounty.gov"
+        },
+        "description": "The King County Sheriff\u2019s Office (KCSO) is providing offense report data captured in it's Records Management System (RMS) from 2020 to present. KCSO replaced its RMS in late 2018 and at the same time transitioned to the FBI\u2019s National Incident-Based Reporting System (NIBRS). The NIBRS standardization of crime classifications allows for comparison over time and between agencies. For official KCSO NIBRS reporting, please visit the WASPC Crime in Washington Report: https://www.waspc.org/cjis-statistics---reports.\n\nDisclaimer: Only finalized (supervisor approved) reports are released. Those in draft, awaiting supervisor approval, or completed after the daily update of data, will not appear until the subsequent day(s). Data updates once every twenty-four hours. Records and classification changes will occur as a report makes its way through the approval and investigative process, thus reports might appear in the data set one day, but be removed the next day if there is a change in the approval status. This mirrors the fluidity of an investigation.  Once a report is re-approved, it will show back up in the data set. Other than approval status, the report case status is factored into what can be released in the daily data set. As soon as a report case status matches the criteria for release, it will be included in the data set. For a list of offenses that are included in the data set, please see the attached pdf.\n\nResources:\n - KCSO's 2019 crime data: https://data.kingcounty.gov/Law-Enforcement-Safety/King-County-Sheriff-s-Office-Incident-Dataset/rzfs-wyvy\n- Police District GIS shapefile: https://gis-kingcounty.opendata.arcgis.com/datasets/king-county-sheriff-patrol-districts-patrol-districts-area/explore\n- Police District key: https://data.kingcounty.gov/Law-Enforcement-Safety/KCSO-Patrol-Districts/ptrt-hdax/data\n- For more information on definitions and classifications, please visit https://www.fbi.gov/services/cjis/ucr/nibrs\n- SPD's Crime Data: https://data.seattle.gov/Public-Safety/SPD-Crime-Data-2008-Present/tazs-3rd5",
+        "distribution": [
+          {
+            "@type": "dcat:Distribution",
+            "describedBy": "https://data.kingcounty.gov/api/views/4kmt-kfqf/columns.json",
+            "describedByType": "application/json",
+            "downloadURL": "https://data.kingcounty.gov/api/v3/views/4kmt-kfqf/query.json?accessType=DOWNLOAD",
+            "mediaType": "application/json"
+          },
+          {
+            "@type": "dcat:Distribution",
+            "describedBy": "https://data.kingcounty.gov/api/views/4kmt-kfqf/columns.xml",
+            "describedByType": "application/xml",
+            "downloadURL": "https://data.kingcounty.gov/api/v3/views/4kmt-kfqf/export.xml?accessType=DOWNLOAD",
+            "mediaType": "application/xml"
+          },
+          {
+            "@type": "dcat:Distribution",
+            "downloadURL": "https://data.kingcounty.gov/api/v3/views/4kmt-kfqf/export.csv?accessType=DOWNLOAD",
+            "mediaType": "text/csv"
+          }
+        ],
+        "identifier": "https://data.kingcounty.gov/api/views/4kmt-kfqf",
+        "issued": "2023-08-10",
+        "keyword": [
+          "crime",
+          "data-driven",
+          "district",
+          "nibrs",
+          "offenses",
+          "public safety"
+        ],
+        "landingPage": "https://data.kingcounty.gov/d/4kmt-kfqf",
+        "modified": "2026-07-21",
+        "publisher": {
+          "@type": "org:Organization",
+          "name": "data.kingcounty.gov"
+        },
+        "theme": [
+          "Law Enforcement & Safety"
+        ],
+        "title": "KCSO Offense Reports: 2020 to Present"
+      },
+      "description": "The King County Sheriff\u2019s Office (KCSO) is providing offense report data captured in it's Records Management System (RMS) from 2020 to present. KCSO replaced its RMS in late 2018 and at the same time transitioned to the FBI\u2019s National Incident-Based Reporting System (NIBRS). The NIBRS standardization of crime classifications allows for comparison over time and between agencies. For official KCSO NIBRS reporting, please visit the WASPC Crime in Washington Report: https://www.waspc.org/cjis-statistics---reports.\n\nDisclaimer: Only finalized (supervisor approved) reports are released. Those in draft, awaiting supervisor approval, or completed after the daily update of data, will not appear until the subsequent day(s). Data updates once every twenty-four hours. Records and classification changes will occur as a report makes its way through the approval and investigative process, thus reports might appear in the data set one day, but be removed the next day if there is a change in the approval status. This mirrors the fluidity of an investigation.  Once a report is re-approved, it will show back up in the data set. Other than approval status, the report case status is factored into what can be released in the daily data set. As soon as a report case status matches the criteria for release, it will be included in the data set. For a list of offenses that are included in the data set, please see the attached pdf.\n\nResources:\n - KCSO's 2019 crime data: https://data.kingcounty.gov/Law-Enforcement-Safety/King-County-Sheriff-s-Office-Incident-Dataset/rzfs-wyvy\n- Police District GIS shapefile: https://gis-kingcounty.opendata.arcgis.com/datasets/king-county-sheriff-patrol-districts-patrol-districts-area/explore\n- Police District key: https://data.kingcounty.gov/Law-Enforcement-Safety/KCSO-Patrol-Districts/ptrt-hdax/data\n- For more information on definitions and classifications, please visit https://www.fbi.gov/services/cjis/ucr/nibrs\n- SPD's Crime Data: https://data.seattle.gov/Public-Safety/SPD-Crime-Data-2008-Present/tazs-3rd5",
+      "distribution_titles": [],
+      "harvest_record": "https://catalog.data.gov/harvest_record/7063a41e-d377-4d3f-afdc-e831c20012b9",
+      "harvest_record_raw": "https://catalog.data.gov/harvest_record/7063a41e-d377-4d3f-afdc-e831c20012b9/raw",
+      "has_spatial": false,
+      "identifier": "https://data.kingcounty.gov/api/views/4kmt-kfqf",
+      "keyword": [
+        "crime",
+        "data-driven",
+        "district",
+        "nibrs",
+        "offenses",
+        "public safety"
+      ],
+      "last_harvested_date": "2026-07-21T22:23:56.876898",
+      "organization": {
+        "aliases": [
+          "washington"
+        ],
+        "description": null,
+        "id": "d737f173-fa1c-4f41-a363-6e2d5a8e7256",
+        "logo": "",
+        "name": "King County, Washington",
+        "organization_type": "County Government",
+        "slug": "king-county-wa"
+      },
+      "popularity": 12,
+      "publisher": "data.kingcounty.gov",
+      "slug": "kcso-offense-reports-2020-to-present",
+      "spatial_centroid": null,
+      "spatial_shape": null,
+      "theme": [
+        "Law Enforcement & Safety"
+      ],
+      "title": "KCSO Offense Reports: 2020 to Present"
+    },
+    {
+      "_score": 35.317814,
+      "_sort": [
+        35.317814,
+        51,
+        "2bd7895d-599e-493e-9c9a-f86db8914f06"
+      ],
+      "dcat": {
+        "@type": "dcat:Dataset",
+        "accessLevel": "public",
+        "contactPoint": {
+          "@type": "vcard:Contact",
+          "fn": "Jonathan Levy",
+          "hasEmail": "mailto:no-reply@data.cityofchicago.org"
+        },
+        "description": "This dataset contains aggregate data on violent index victimizations at the quarter level of each year (i.e., January \u2013 March, April \u2013 June, July \u2013 September, October \u2013 December), from 2001 to the present (1991 to present for Homicides), with a focus on those related to gun violence. Index crimes are 10 crime types selected by the FBI (codes 1-4) for special focus due to their seriousness and frequency. This dataset includes only those index crimes that involve bodily harm or the threat of bodily harm and are reported to the Chicago Police Department (CPD). Each row is aggregated up to victimization type, age group, sex, race, and whether the victimization was domestic-related. Aggregating at the quarter level provides large enough blocks of incidents to protect anonymity while allowing the end user to observe inter-year and intra-year variation. Any row where there were fewer than three incidents during a given quarter has been deleted to help prevent re-identification of victims. For example, if there were three domestic criminal sexual assaults during January to March 2020, all victims associated with those incidents have been removed from this dataset. Human trafficking victimizations have been aggregated separately due to the extremely small number of victimizations.\r\n\r\nThis dataset includes a \" GUNSHOT_INJURY_I \" column to indicate whether the victimization involved a shooting, showing either Yes (\"Y\"), No (\"N\"), or Unknown (\"UKNOWN.\") For homicides, injury descriptions are available dating back to 1991, so the \"shooting\" column will read either \"Y\" or \"N\" to indicate whether the homicide was a fatal shooting or not. For non-fatal shootings, data is only available as of 2010. As a result, for any non-fatal shootings that occurred from 2010 to the present, the shooting column will read as \u201cY.\u201d Non-fatal shooting victims will not be included in this dataset prior to 2010; they will be included in the authorized dataset, but with \"UNKNOWN\" in the shooting column.\r\n\r\nThe dataset is refreshed daily, but excludes the most recent complete day to allow CPD time to gather the best available information. Each time the dataset is refreshed, records can change as CPD learns more about each victimization, especially those victimizations that are most recent. The data on the Mayor's Office Violence Reduction Dashboard is updated daily with an approximately 48-hour lag. As cases are passed from the initial reporting officer to the investigating detectives, some recorded data about incidents and victimizations may change once additional information arises. Regularly updated datasets on the City's public portal may change to reflect new or corrected information.\r\n\r\nHow does this dataset classify victims?\r\n\r\nThe methodology by which this dataset classifies victims of violent crime differs by victimization type:\r\n\r\nHomicide and non-fatal shooting victims: A victimization is considered a homicide victimization or non-fatal shooting victimization depending on its presence in CPD's homicide victims data table or its shooting victims data table. A victimization is considered a homicide only if it is present in CPD's homicide data table, while a victimization is considered a non-fatal shooting only if it is present in CPD's shooting data tables and absent from CPD's homicide data table. \r\n\r\nTo determine the IUCR code of homicide and non-fatal shooting victimizations, we defer to the incident IUCR code available in CPD's Crimes, 2001-present dataset (available on the City's open data portal). If the IUCR code in CPD's Crimes dataset is inconsistent with the homicide/non-fatal shooting categorization, we defer to CPD's Victims dataset. \r\n\r\nFor a criminal homicide, the only sensible IUCR codes are 0110 (first-degree murder) or 0130 (second-degree murder). For a non-fatal shooting, a sensible IUCR code must signify a criminal sexual assault, a robbery, or, most commonly, an aggravated battery. In rare instances, the IUCR code in CPD's Crimes and Vi",
+        "distribution": [
+          {
+            "@type": "dcat:Distribution",
+            "describedBy": "https://data.cityofchicago.org/api/views/gj7a-742p/columns.json",
+            "describedByType": "application/json",
+            "downloadURL": "https://data.cityofchicago.org/api/v3/views/gj7a-742p/query.json?accessType=DOWNLOAD",
+            "mediaType": "application/json"
+          },
+          {
+            "@type": "dcat:Distribution",
+            "describedBy": "https://data.cityofchicago.org/api/views/gj7a-742p/columns.xml",
+            "describedByType": "application/xml",
+            "downloadURL": "https://data.cityofchicago.org/api/v3/views/gj7a-742p/export.xml?accessType=DOWNLOAD",
+            "mediaType": "application/xml"
+          },
+          {
+            "@type": "dcat:Distribution",
+            "downloadURL": "https://data.cityofchicago.org/api/v3/views/gj7a-742p/export.csv?accessType=DOWNLOAD",
+            "mediaType": "text/csv"
+          }
+        ],
+        "identifier": "https://data.cityofchicago.org/api/views/gj7a-742p",
+        "issued": "2021-11-17",
+        "keyword": [
+          "crime",
+          "violence",
+          "violence reduction"
+        ],
+        "landingPage": "https://data.cityofchicago.org/d/gj7a-742p",
+        "modified": "2026-07-21",
+        "publisher": {
+          "@type": "org:Organization",
+          "name": "data.cityofchicago.org"
+        },
+        "theme": [
+          "Public Safety"
+        ],
+        "title": "Violence Reduction - Victim Demographics - Aggregated"
+      },
+      "description": "This dataset contains aggregate data on violent index victimizations at the quarter level of each year (i.e., January \u2013 March, April \u2013 June, July \u2013 September, October \u2013 December), from 2001 to the present (1991 to present for Homicides), with a focus on those related to gun violence. Index crimes are 10 crime types selected by the FBI (codes 1-4) for special focus due to their seriousness and frequency. This dataset includes only those index crimes that involve bodily harm or the threat of bodily harm and are reported to the Chicago Police Department (CPD). Each row is aggregated up to victimization type, age group, sex, race, and whether the victimization was domestic-related. Aggregating at the quarter level provides large enough blocks of incidents to protect anonymity while allowing the end user to observe inter-year and intra-year variation. Any row where there were fewer than three incidents during a given quarter has been deleted to help prevent re-identification of victims. For example, if there were three domestic criminal sexual assaults during January to March 2020, all victims associated with those incidents have been removed from this dataset. Human trafficking victimizations have been aggregated separately due to the extremely small number of victimizations.\r\n\r\nThis dataset includes a \" GUNSHOT_INJURY_I \" column to indicate whether the victimization involved a shooting, showing either Yes (\"Y\"), No (\"N\"), or Unknown (\"UKNOWN.\") For homicides, injury descriptions are available dating back to 1991, so the \"shooting\" column will read either \"Y\" or \"N\" to indicate whether the homicide was a fatal shooting or not. For non-fatal shootings, data is only available as of 2010. As a result, for any non-fatal shootings that occurred from 2010 to the present, the shooting column will read as \u201cY.\u201d Non-fatal shooting victims will not be included in this dataset prior to 2010; they will be included in the authorized dataset, but with \"UNKNOWN\" in the shooting column.\r\n\r\nThe dataset is refreshed daily, but excludes the most recent complete day to allow CPD time to gather the best available information. Each time the dataset is refreshed, records can change as CPD learns more about each victimization, especially those victimizations that are most recent. The data on the Mayor's Office Violence Reduction Dashboard is updated daily with an approximately 48-hour lag. As cases are passed from the initial reporting officer to the investigating detectives, some recorded data about incidents and victimizations may change once additional information arises. Regularly updated datasets on the City's public portal may change to reflect new or corrected information.\r\n\r\nHow does this dataset classify victims?\r\n\r\nThe methodology by which this dataset classifies victims of violent crime differs by victimization type:\r\n\r\nHomicide and non-fatal shooting victims: A victimization is considered a homicide victimization or non-fatal shooting victimization depending on its presence in CPD's homicide victims data table or its shooting victims data table. A victimization is considered a homicide only if it is present in CPD's homicide data table, while a victimization is considered a non-fatal shooting only if it is present in CPD's shooting data tables and absent from CPD's homicide data table. \r\n\r\nTo determine the IUCR code of homicide and non-fatal shooting victimizations, we defer to the incident IUCR code available in CPD's Crimes, 2001-present dataset (available on the City's open data portal). If the IUCR code in CPD's Crimes dataset is inconsistent with the homicide/non-fatal shooting categorization, we defer to CPD's Victims dataset. \r\n\r\nFor a criminal homicide, the only sensible IUCR codes are 0110 (first-degree murder) or 0130 (second-degree murder). For a non-fatal shooting, a sensible IUCR code must signify a criminal sexual assault, a robbery, or, most commonly, an aggravated battery. In rare instances, the IUCR code in CPD's Crimes and Vi",
+      "distribution_titles": [],
+      "harvest_record": "https://catalog.data.gov/harvest_record/91a0cc3c-ee7e-4a99-82b5-8a26dd83b968",
+      "harvest_record_raw": "https://catalog.data.gov/harvest_record/91a0cc3c-ee7e-4a99-82b5-8a26dd83b968/raw",
+      "has_spatial": false,
+      "identifier": "https://data.cityofchicago.org/api/views/gj7a-742p",
+      "keyword": [
+        "crime",
+        "violence",
+        "violence reduction"
+      ],
+      "last_harvested_date": "2026-07-21T22:26:14.542957",
+      "organization": {
+        "aliases": [
+          "illiniois"
+        ],
+        "description": null,
+        "id": "7ba1dcf3-0855-491e-bd62-1625f38972b9",
+        "logo": "https://raw.githubusercontent.com/GSA/logo/refs/heads/master/city_chicago_il.png",
+        "name": "City of Chicago",
+        "organization_type": "City Government",
+        "slug": "chicago-il"
+      },
+      "popularity": 51,
+      "publisher": "data.cityofchicago.org",
+      "slug": "violence-reduction-victim-demographics-aggregated",
+      "spatial_centroid": null,
+      "spatial_shape": null,
+      "theme": [
+        "Public Safety"
+      ],
+      "title": "Violence Reduction - Victim Demographics - Aggregated"
+    }
+  ],
+  "sort": "relevance"
+}

@@ -79,6 +79,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   payloads are preferred to synthetic bodies; edge cases and backfilling are
   expected. Written up from two live examples in this codebase where a test
   asserted the buggy behaviour and so guaranteed it.
+- **Captured a fresh set of Catalog API fixtures** and added
+  `scripts/capture-fixtures.sh` to refresh them. Fixtures are the project's
+  record of what the API actually returns; slug-addressed captures are pinned to
+  a long-lived dataset so tests can assert against their contents, and a failed
+  request never truncates an existing fixture.
+- **Added `fixture_parity_tests.rs`** — deserializes each captured response into
+  the model it should populate and asserts the fields actually arrive. This
+  catches a class the wiremock tests structurally cannot: `client_tests.rs`
+  proves a request was *sent* correctly, not that a response is *understood*.
+  A field that silently becomes `None` because its serde name does not match the
+  wire name passes every wiremock test while losing data.
 - Documented the configuration and file-location policy in `CLAUDE.md`: config,
   cache, and state go in the XDG base directories via the `dirs` crate, never as
   dotfiles in `$HOME`; precedence is flag > environment > config file > default;
