@@ -171,9 +171,9 @@ fn organization_list_with_non_uuid_ids_does_not_fail_the_whole_response() {
 
     let non_uuid = orgs
         .iter()
-        .find(|o| o.id.as_deref() == Some("central-statistics-office"))
-        .expect("fixture no longer has the central-statistics-office org; recapture (see #63)");
-    assert_eq!(non_uuid.name, "central-statistics-office");
+        .find(|o| o.id.as_deref() == Some("an-garda-siochana"))
+        .expect("fixture no longer has the an-garda-siochana org; recapture (see #63)");
+    assert_eq!(non_uuid.name, "an-garda-siochana");
 
     // The mix matters: a fixture with only slug ids would not prove the two
     // id styles can coexist in one response.

@@ -13,8 +13,15 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Default, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Group {
+    /// Unique identifier for the group or organization.
+    ///
+    /// CKAN's `id` column is unconstrained text; see [`crate::models::Package::id`]
+    /// for why this is a `String` rather than a [`uuid::Uuid`]. This is not
+    /// hypothetical here: some deployments create organizations with an
+    /// explicit slug id (e.g. Ireland's national open-data portal has an
+    /// organization with `id: "central-statistics-office"`).
     #[serde(rename = "id", skip_serializing_if = "Option::is_none")]
-    pub id: Option<uuid::Uuid>,
+    pub id: Option<String>,
     /// URL-friendly name
     #[serde(rename = "name")]
     pub name: String,

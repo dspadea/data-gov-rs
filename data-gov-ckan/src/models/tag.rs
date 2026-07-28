@@ -12,8 +12,12 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Default, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Tag {
+    /// Unique identifier for the tag.
+    ///
+    /// CKAN's `id` column is unconstrained text; see [`crate::models::Package::id`]
+    /// for why this is a `String` rather than a [`uuid::Uuid`].
     #[serde(rename = "id", skip_serializing_if = "Option::is_none")]
-    pub id: Option<uuid::Uuid>,
+    pub id: Option<String>,
     /// Tag name
     #[serde(rename = "name")]
     pub name: String,
@@ -24,7 +28,7 @@ pub struct Tag {
     pub state: Option<State>,
     /// ID of vocabulary this tag belongs to
     #[serde(rename = "vocabulary_id", skip_serializing_if = "Option::is_none")]
-    pub vocabulary_id: Option<uuid::Uuid>,
+    pub vocabulary_id: Option<String>,
 }
 
 impl Tag {

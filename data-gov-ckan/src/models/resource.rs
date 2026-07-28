@@ -12,10 +12,15 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Default, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Resource {
+    /// Unique identifier for the resource.
+    ///
+    /// CKAN's `id` column is unconstrained text; see [`crate::models::Package::id`]
+    /// for why this is a `String` rather than a [`uuid::Uuid`].
     #[serde(rename = "id", skip_serializing_if = "Option::is_none")]
-    pub id: Option<uuid::Uuid>,
+    pub id: Option<String>,
+    /// Identifier of the dataset this resource belongs to.
     #[serde(rename = "package_id", skip_serializing_if = "Option::is_none")]
-    pub package_id: Option<uuid::Uuid>,
+    pub package_id: Option<String>,
     /// URL to the resource
     #[serde(rename = "url", skip_serializing_if = "Option::is_none")]
     pub url: Option<String>,

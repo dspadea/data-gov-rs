@@ -131,7 +131,7 @@ async fn test_package_show() {
     {
         // Now get the full dataset details
         let package = client
-            .package_show(&dataset_id.to_string())
+            .package_show(dataset_id)
             .await
             .expect("Package show should succeed");
 

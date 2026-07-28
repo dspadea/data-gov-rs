@@ -13,9 +13,14 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Default, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Package {
-    /// Unique identifier for the dataset
+    /// Unique identifier for the dataset.
+    ///
+    /// CKAN's `id` column is unconstrained text: `make_uuid()` is only the
+    /// default generator, and harvesters, migrations, and an explicit
+    /// `package_create` call can all set a slug-style id instead. Parse to
+    /// [`uuid::Uuid`] yourself if your deployment guarantees UUIDs.
     #[serde(rename = "id", skip_serializing_if = "Option::is_none")]
-    pub id: Option<uuid::Uuid>,
+    pub id: Option<String>,
     /// URL-friendly name (slug)
     #[serde(rename = "name")]
     pub name: String,
