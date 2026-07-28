@@ -2,7 +2,9 @@
 
 use data_gov::{DataGovClient, DataGovConfig, OperatingMode};
 use std::env;
-use tokio::io::{self, AsyncBufReadExt, AsyncWriteExt, BufReader, BufWriter};
+use tokio::io::{
+    self, AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader, BufWriter,
+};
 
 use crate::types::{Request, Response, ServerError};
 
@@ -44,16 +46,30 @@ impl DataGovMcpServer {
 
     /// Main run loop: read JSON-RPC lines from stdin, dispatch, write responses.
     async fn run(self) -> Result<(), ServerError> {
-        let stdin = io::stdin();
-        let stdout = io::stdout();
-
-        let reader = BufReader::new(stdin);
-        let mut writer = BufWriter::new(stdout);
-
         // Nothing is written to stdout until a request arrives. stdout is the
         // protocol stream, and MCP expects the server to stay silent until it
         // answers `initialize`; lifecycle chatter goes to stderr via tracing.
         tracing::info!("data-gov MCP server ready");
+
+        self.serve(io::stdin(), io::stdout()).await
+    }
+
+    /// Serve the JSON-RPC line protocol over an arbitrary reader and writer.
+    ///
+    /// [`run`](Self::run) supplies stdin and stdout; tests supply in-memory
+    /// pipes, so every protocol edge is reachable without a real process.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ServerError::Io`] when the transport itself fails. A malformed
+    /// message is answered on the wire, not returned here.
+    pub(crate) async fn serve<R, W>(&self, reader: R, writer: W) -> Result<(), ServerError>
+    where
+        R: AsyncRead + Unpin,
+        W: AsyncWrite + Unpin,
+    {
+        let reader = BufReader::new(reader);
+        let mut writer = BufWriter::new(writer);
 
         let mut lines = reader.lines();
 
@@ -87,11 +103,14 @@ impl DataGovMcpServer {
     }
 
     /// Serialize and write a single response line.
-    async fn write_response(
+    async fn write_response<W>(
         &self,
-        writer: &mut BufWriter<io::Stdout>,
+        writer: &mut BufWriter<W>,
         response: &Response,
-    ) -> Result<(), ServerError> {
+    ) -> Result<(), ServerError>
+    where
+        W: AsyncWrite + Unpin,
+    {
         let payload = serde_json::to_string(response).map_err(ServerError::Serialization)?;
         writer.write_all(payload.as_bytes()).await?;
         writer.write_all(b"\n").await?;
