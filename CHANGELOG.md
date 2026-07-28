@@ -68,6 +68,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Breaking - data-gov
 
+- **`DataGovConfig::user_agent` is a method, not a field** (#106). The agent
+  lived on both `DataGovConfig` and its nested `catalog_config`, kept in step
+  only by `with_user_agent` - so a config built any other way sent metadata
+  requests and downloads out under two different identities, silently. It is now
+  derived from one field. Read it with `config.user_agent()`; setting it was
+  already only supported through the builder.
+- **`with_config` rejects a zero timeout or concurrency** (#107, #73). Both
+  produced a client that could not work: `download_timeout_secs: 0` became a
+  zero connect and read timeout so every download failed on the first byte, and
+  `max_concurrent_downloads: 0` built a zero-permit semaphore whose `acquire()`
+  never resolved - a hang with no error and no log. Both now return a
+  `ConfigError` naming the field. Failing beats clamping here, because silence
+  was the damage in every one of these.
+- **Three unproven public items are removed** (#77):
+  `DataGovClient::list_organization_records`,
+  `DataGovClient::autocomplete_organizations`, and
+  `DataGovConfig::get_dataset_download_dir`. Each had zero callers, zero tests,
+  and no documented intent anywhere in the workspace, confirmed across four
+  search axes. `get_dataset_download_dir` was independently found to be a fourth
+  unchecked path join, so removing it closes that too. The four remaining items
+  in that set were kept and now have tests.
 - **`DataGovConfig` has a new `allow_private_network_downloads` field** (#51).
   A struct literal must add it, or switch to `..Default::default()`. It defaults
   to `false`; set it with `with_private_network_downloads(true)` if you point the
