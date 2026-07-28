@@ -161,11 +161,13 @@ data-gov download electric-vehicle-population-data csv                          
 data-gov ls                                                                          # at root, lists orgs
 ```
 
-Key defaults:
+Key defaults, used when nothing sets a download directory:
 
 - **Interactive mode:** `data-gov` launches the REPL and stores downloads under `~/Downloads/<dataset>/`
 - **Non-interactive mode:** Commands run directly in your current directory (`./<dataset>/`)
-- Override download location with `--download-dir`, toggle colours with `--color`, and silence progress bars via `NO_PROGRESS=1`
+- Override download location with `--download-dir` (honoured in both modes), toggle colours with `--color`, and silence progress bars via `NO_PROGRESS=1`
+
+Settings can also be persisted in a config file instead of passed every time — see [Configuration](#configuration).
 
 ### Command reference
 
@@ -250,6 +252,8 @@ spatial, or organization-type filters not exposed on the high-level `search`.
 
 ## Configuration
 
+### In code
+
 ```rust
 use data_gov::{DataGovClient, DataGovConfig, OperatingMode};
 
@@ -261,7 +265,84 @@ let config = DataGovConfig::new()
 let client = DataGovClient::with_config(config)?;
 ```
 
-Configuration covers the underlying Catalog API settings, download directory logic, concurrency, progress output, and colour preferences.
+A download directory set this way is honoured in **both** operating modes. The
+mode decides only what happens when no directory was chosen: the system
+Downloads folder in `Interactive`, the process working directory in
+`CommandLine`.
+
+### The config file
+
+`data-gov` reads `<config>/data-gov/config.toml`. The file is optional — an
+absent one means "all defaults" and is not an error.
+
+| Platform | Location |
+| -------- | -------- |
+| Linux | `$XDG_CONFIG_HOME/data-gov/config.toml`, else `~/.config/data-gov/config.toml` |
+| macOS | `~/Library/Application Support/data-gov/config.toml` |
+| Windows | `%APPDATA%\data-gov\config.toml` |
+
+`XDG_CONFIG_HOME` relocates the directory on **every** platform when it is set
+to an absolute path, so one exported variable isolates a container, a CI job,
+or a second profile without a platform check. A relative value is ignored, as
+the XDG base directory specification requires.
+
+```toml
+# <config>/data-gov/config.toml
+download_dir = "/mnt/data/datagov"
+base_url = "https://catalog.data.gov"
+max_concurrent_downloads = 5
+download_timeout_secs = 300
+user_agent = "my-tool/1.0"
+```
+
+A key this build does not recognise prints a warning and is ignored, so a file
+written by a newer release still works with an older binary. Invalid TOML, or a
+value that cannot work (a zero concurrency limit, a `base_url` that is not
+`http` or `https`), is a hard error naming the setting and where the value came
+from.
+
+**No secret belongs in this file.** An API key gets its own `0600` file.
+
+### Precedence
+
+Every setting resolves through one chain, highest first:
+
+**command-line flag > environment variable > config file > built-in default**
+
+| Config key | Environment variable | Default |
+| ---------- | -------------------- | ------- |
+| `download_dir` | `DATA_GOV_DOWNLOAD_DIR` | `~/Downloads` in the REPL, the working directory otherwise |
+| `base_url` | `DATA_GOV_BASE_URL` | `https://catalog.data.gov` |
+| `max_concurrent_downloads` | `DATA_GOV_MAX_CONCURRENT_DOWNLOADS` | `3` |
+| `download_timeout_secs` | `DATA_GOV_DOWNLOAD_TIMEOUT_SECS` | `300` |
+| `user_agent` | `DATA_GOV_USER_AGENT` | `data-gov-rs/<version>` |
+
+An empty environment variable (`DATA_GOV_DOWNLOAD_DIR=`) reads as unset, not as
+an empty value.
+
+Library consumers can drive the same chain, and see which layer supplied each
+value:
+
+```rust
+use data_gov::config::{ConfigOverrides, ConfigResolver, SettingKey};
+use data_gov::OperatingMode;
+
+let resolved = ConfigResolver::from_process()?
+    .with_flags(ConfigOverrides::default().with_download_dir("/mnt/data"))
+    .with_mode(OperatingMode::CommandLine)
+    .resolve()?;
+
+for warning in resolved.warnings() {
+    eprintln!("Warning: {warning}");
+}
+println!("{}", resolved.setting(SettingKey::DownloadDir)); // download_dir = /mnt/data (flag)
+
+let config = resolved.into_config();
+```
+
+`ConfigResolver::new()` reads nothing it was not given — no environment, no
+file, no home directory — which is what makes the chain testable without
+mutating process state.
 
 ## Cargo features
 

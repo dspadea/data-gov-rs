@@ -211,7 +211,10 @@ fn base_url_default_applies_when_nothing_is_set() {
         .resolve()
         .expect("resolution must succeed");
 
-    assert_eq!(resolved.config().catalog_config.base_path, PUBLISHED_BASE_URL);
+    assert_eq!(
+        resolved.config().catalog_config.base_path,
+        PUBLISHED_BASE_URL
+    );
     assert_eq!(
         resolved.source_of(SettingKey::BaseUrl),
         SettingSource::Default
@@ -628,10 +631,7 @@ fn xdg_config_home_locates_the_config_file() {
 /// invalid and must be ignored. `dirs` does the same on Linux.
 #[test]
 fn a_relative_xdg_config_home_is_ignored_and_warns() {
-    let location = locate_config_file(&environment(&[(
-        "XDG_CONFIG_HOME",
-        "not/an/absolute/path",
-    )]));
+    let location = locate_config_file(&environment(&[("XDG_CONFIG_HOME", "not/an/absolute/path")]));
 
     assert!(
         location.warnings.iter().any(|warning| matches!(

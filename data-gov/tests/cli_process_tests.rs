@@ -214,7 +214,10 @@ fn a_config_file_download_dir_is_honoured_by_a_one_shot_command() {
     std::fs::create_dir_all(&app_config_dir).expect("create the app config directory");
     std::fs::write(
         app_config_dir.join("config.toml"),
-        format!("download_dir = {:?}\n", chosen_dir.path().display().to_string()),
+        format!(
+            "download_dir = {:?}\n",
+            chosen_dir.path().display().to_string()
+        ),
     )
     .expect("write config.toml");
 

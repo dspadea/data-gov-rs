@@ -48,7 +48,7 @@ fn config_with_agent_set_via_catalog_config(
     };
     DataGovConfig {
         catalog_config: Arc::new(catalog_config),
-        base_download_dir: download_dir,
+        base_download_dir: Some(download_dir),
         allow_private_network_downloads: true,
         ..DataGovConfig::default()
     }
