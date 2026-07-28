@@ -12,6 +12,7 @@ use tokio::io::{
 };
 use tokio::sync::{Mutex, mpsc, oneshot};
 
+use crate::tools::find_tool_spec_by_method;
 use crate::types::{Request, RequestIdKind, Response, ServerError, classify_request_id};
 
 /// The MCP notification that asks the server to stop working on a request.
@@ -132,21 +133,42 @@ impl DataGovMcpServer {
         loop {
             raw.clear();
             // Bytes, not lines. `Lines::next_line` fails the whole stream on a
-            // single byte that is not UTF-8, so one stray byte would end the
-            // session for every well-formed request behind it. Decoding
-            // lossily turns that byte into a message this server can answer
-            // and move on from. Only EOF and a transport failure end the loop.
+            // single byte that is not UTF-8, so one stray byte ended the
+            // session for every well-formed request behind it. Reading raw
+            // keeps the failure local to the line it arrived on. Only EOF and
+            // a transport failure end the loop.
             if reader.read_until(b'\n', &mut raw).await? == 0 {
                 break;
             }
 
-            let line = String::from_utf8_lossy(&raw);
+            // Strictly, not lossily. Replacing an undecodable byte with U+FFFD
+            // repairs it into a *different* message: a bad byte inside a JSON
+            // string yields a slug the client never sent, and the tool then
+            // runs on it. A line that cannot be decoded cannot be parsed, so
+            // it is a parse error - and the session continues, which is the
+            // part that matters.
+            let line = match std::str::from_utf8(&raw) {
+                Ok(line) => line,
+                Err(err) => {
+                    tracing::warn!("undecodable line: {err}");
+                    let error = ServerError::Parse(format!("line is not valid UTF-8: {err}"));
+                    send_response(&responses, Response::error(None, error)).await;
+                    continue;
+                }
+            };
+
             let trimmed = line.trim();
-            if trimmed.is_empty() {
-                continue;
+            if !trimmed.is_empty() {
+                self.accept(trimmed, &responses, &in_flight).await;
             }
 
-            self.accept(trimmed, &responses, &in_flight).await;
+            // A closed output means the client is gone. Reading on would keep
+            // accepting work - downloads that write to disk among it - that
+            // nobody can be told the outcome of.
+            if responses.is_closed() {
+                tracing::warn!("the response transport is closed; ending the session");
+                break;
+            }
         }
 
         // Every dispatch task holds a clone of the sender, so the writer keeps
@@ -190,7 +212,22 @@ impl DataGovMcpServer {
 
         let id = match classify_request_id(&message) {
             RequestIdKind::Absent => {
-                self.accept_notification(message, in_flight).await;
+                self.accept_notification(message, responses, in_flight)
+                    .await;
+                return;
+            }
+            // An array, a number, a string, a boolean or null. None of these is
+            // a Request object, so none can be a Notification, and JSON-RPC
+            // answers each with -32600 and a null id. Treating them as
+            // notifications leaves a client that still sends batches - which
+            // MCP 2025-06-18 removed - waiting forever on a stderr line it
+            // cannot see.
+            RequestIdKind::NotAnObject => {
+                tracing::warn!("message is not a JSON object");
+                let error = ServerError::InvalidRequest(
+                    "a JSON-RPC message must be an object; batching is not supported".to_string(),
+                );
+                send_response(responses, Response::error(None, error)).await;
                 return;
             }
             RequestIdKind::Invalid => {
@@ -278,15 +315,39 @@ impl DataGovMcpServer {
         });
     }
 
-    /// Act on a notification. The client is never sent a response to one.
-    async fn accept_notification(self: &Arc<Self>, message: Value, in_flight: &InFlight) {
+    /// Act on a JSON object that carries no `id`.
+    ///
+    /// It is a Notification only if it is otherwise a valid Request object.
+    /// When it is not - no `method`, or a `method` that is not a string - it is
+    /// simply an invalid Request, and JSON-RPC answers that with -32600 and a
+    /// null id rather than ignoring it.
+    async fn accept_notification(
+        self: &Arc<Self>,
+        message: Value,
+        responses: &mpsc::Sender<Response>,
+        in_flight: &InFlight,
+    ) {
         let request: Request = match serde_json::from_value(message) {
             Ok(request) => request,
             Err(err) => {
-                tracing::warn!("invalid notification: {err}");
+                tracing::warn!("not a valid Request object: {err}");
+                let error = ServerError::InvalidRequest(err.to_string());
+                send_response(responses, Response::error(None, error)).await;
                 return;
             }
         };
+
+        // The envelope rule is not weaker for a notification. It is owed no
+        // response either way, but a message the server has just declared
+        // invalid must not have side effects - and cancelling somebody's
+        // in-flight request is a side effect.
+        if request.jsonrpc.as_deref() != Some("2.0") {
+            tracing::warn!(
+                method = %request.method,
+                "notification ignored: the jsonrpc member must be \"2.0\""
+            );
+            return;
+        }
 
         let Request { method, params, .. } = request;
 
@@ -295,6 +356,14 @@ impl DataGovMcpServer {
         // must never queue behind anything.
         if method == CANCELLED_NOTIFICATION {
             cancel_request(params, in_flight).await;
+            return;
+        }
+
+        if !notification_may_dispatch(&method) {
+            tracing::warn!(
+                method = %method,
+                "refusing to run a tool from a message that owes no answer"
+            );
             return;
         }
 
@@ -369,6 +438,19 @@ async fn send_response(responses: &mpsc::Sender<Response>, response: Response) {
     if responses.send(response).await.is_err() {
         tracing::warn!("a response was dropped: the transport is closed");
     }
+}
+
+/// Whether a notification naming `method` may be dispatched.
+///
+/// MCP defines no notification that invokes a tool, and this server must not
+/// invent one. A tool run from a notification is uncontrollable in three ways
+/// at once: it has no id, so `notifications/cancelled` cannot reach it; it owes
+/// no response, so nothing reports the files it wrote or the errors it hit; and
+/// it holds no sender, so the read loop reaching end of input tears the runtime
+/// down while it is still writing. That is the "silence reads as success"
+/// failure, on a tool whose job is writing to the filesystem.
+pub(crate) fn notification_may_dispatch(method: &str) -> bool {
+    method != "tools/call" && find_tool_spec_by_method(method).is_none()
 }
 
 /// The registry key for a request id.

@@ -48,6 +48,10 @@ impl DataGovMcpServer {
     async fn run_tool(&self, method: &str, params: Option<Value>) -> Result<Value, ServerError> {
         let response = match self.invoke_method(method, params).await {
             Ok(value) => ToolResponse::from_value(value),
+            Err(ServerError::ToolFailedWith { message, payload }) => {
+                tracing::warn!(method = %method, "tool reported failure: {message}");
+                ToolResponse::execution_error_with(message, *payload)
+            }
             Err(err) if err.is_tool_execution_failure() => {
                 tracing::warn!(method = %method, "tool execution failed: {err}");
                 ToolResponse::execution_error(err.to_string())
@@ -391,6 +395,24 @@ impl DataGovMcpServer {
             if let Some(obj) = summary.as_object_mut() {
                 obj.insert("unavailableFormats".to_string(), Value::Array(values));
             }
+        }
+
+        // A call that downloaded none of the files it was asked for did not
+        // succeed, and the flag has to say so: an agent acts on the result
+        // without reading the counts beside it.
+        //
+        // A partial result deliberately stays a success. `hasErrors`,
+        // `failedCount` and a per-file `status` name exactly which files did
+        // not arrive, so nothing is hidden - and flagging the whole call as an
+        // error would misreport the files that did.
+        if success_count == 0 && error_count > 0 {
+            return Err(ServerError::ToolFailedWith {
+                message: format!(
+                    "{method}: every download failed ({error_count} of {error_count});                      target directory {}",
+                    output_dir.to_string_lossy()
+                ),
+                payload: Box::new(summary),
+            });
         }
 
         Ok(summary)

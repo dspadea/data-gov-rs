@@ -27,13 +27,22 @@ pub(crate) struct Request {
 /// How a message's `id` member reads against the JSON-RPC and MCP rules.
 #[derive(Debug)]
 pub(crate) enum RequestIdKind {
-    /// No `id` member at all. JSON-RPC 2.0: "Notifications MUST NOT include an
-    /// ID", and the receiver "MUST NOT send a response".
+    /// A JSON object with no `id` member. JSON-RPC 2.0: "A Notification is a
+    /// Request object without an "id" member", and the receiver "MUST NOT send
+    /// a response" - but only when the rest of the message really is a Request
+    /// object, which the caller still has to establish.
     Absent,
     /// A string or an integer, the only two shapes MCP allows.
     Valid(Value),
     /// An `id` member that is present but is not a usable request id.
     Invalid,
+    /// Not a JSON object at all: an array, a number, a string, a boolean, or
+    /// null. Such a message cannot be a Request object, so it cannot be a
+    /// Notification either, and it is answered rather than ignored. JSON-RPC's
+    /// own worked examples answer `[]` and `[1]` this way, and MCP 2025-06-18
+    /// removed batching, so an array is exactly what a client still sending
+    /// batches needs to be told about.
+    NotAnObject,
 }
 
 /// Classify the `id` member of a received message.
@@ -42,7 +51,10 @@ pub(crate) enum RequestIdKind {
 /// and "Unlike base JSON-RPC, the ID MUST NOT be `null`." A fractional number
 /// is not an integer, so it is rejected with the rest.
 pub(crate) fn classify_request_id(message: &Value) -> RequestIdKind {
-    match message.get("id") {
+    let Some(object) = message.as_object() else {
+        return RequestIdKind::NotAnObject;
+    };
+    match object.get("id") {
         None => RequestIdKind::Absent,
         Some(id) if id.is_string() || id.is_i64() || id.is_u64() => {
             RequestIdKind::Valid(id.clone())
@@ -131,10 +143,20 @@ impl From<ServerError> for ResponseError {
                 message: err.to_string(),
                 data: None,
             },
+            ServerError::Parse(message) => Self {
+                code: -32700,
+                message,
+                data: None,
+            },
             ServerError::ToolFailed(message) => Self {
                 code: -32040,
                 message,
                 data: None,
+            },
+            ServerError::ToolFailedWith { message, payload } => Self {
+                code: -32040,
+                message,
+                data: Some(*payload),
             },
             ServerError::Timeout(message) => Self {
                 code: -32030,
@@ -169,6 +191,11 @@ pub enum ServerError {
     /// Serialization error (distinct from parse errors).
     #[error("serialization error: {0}")]
     Serialization(serde_json::Error),
+    /// The received bytes could not be parsed. Distinct from [`Self::Json`]
+    /// because the failure can precede JSON parsing entirely - a line that is
+    /// not valid UTF-8 never reaches serde.
+    #[error("{0}")]
+    Parse(String),
     /// The tool ran and could not finish for a reason in the data rather than
     /// in the request: no distribution matched, the dataset carries no DCAT
     /// metadata, and the like.
@@ -177,6 +204,19 @@ pub enum ServerError {
     /// code below only applies if such a fault ever escapes a tool path.
     #[error("{0}")]
     ToolFailed(String),
+    /// The tool ran, produced a machine-readable result, and that result
+    /// reports failure - a download where every file failed, for instance.
+    ///
+    /// Carrying the payload is the point: the caller needs to know which parts
+    /// failed and why, not only that something did. It reaches the client as a
+    /// tool result with `isError: true` whose `structuredContent` is `payload`.
+    #[error("{message}")]
+    ToolFailedWith {
+        /// Human-readable summary, placed in the result's `content`.
+        message: String,
+        /// Machine-readable detail, placed in `structuredContent`.
+        payload: Box<Value>,
+    },
     /// The request outran the server's per-request timeout.
     #[error("{0}")]
     Timeout(String),
@@ -195,11 +235,16 @@ impl ServerError {
     /// rather than defaulting to either side.
     pub(crate) fn is_tool_execution_failure(&self) -> bool {
         match self {
-            Self::DataGov(_) | Self::Io(_) | Self::ToolFailed(_) | Self::Timeout(_) => true,
+            Self::DataGov(_)
+            | Self::Io(_)
+            | Self::ToolFailed(_)
+            | Self::ToolFailedWith { .. }
+            | Self::Timeout(_) => true,
             Self::InvalidRequest(_)
             | Self::InvalidMethod(_)
             | Self::InvalidParams(_)
             | Self::Json(_)
+            | Self::Parse(_)
             | Self::Serialization(_) => false,
         }
     }

@@ -930,3 +930,176 @@ async fn a_blank_format_filter_does_not_shift_the_unavailable_format_report() {
         "XLSX is the format that was actually unavailable: {value}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// A download that downloaded nothing
+// ---------------------------------------------------------------------------
+
+/// A scratch directory under the system temp dir, removed first so a previous
+/// run cannot influence this one. The caller removes it when finished.
+fn scratch_dir(name: &str) -> std::path::PathBuf {
+    let dir = std::env::temp_dir().join(format!(
+        "data-gov-mcp-{name}-{}-{:?}",
+        std::process::id(),
+        std::thread::current().id()
+    ));
+    let _ = std::fs::remove_dir_all(&dir);
+    dir
+}
+
+/// A tool that downloaded none of the files it was asked for did not succeed.
+///
+/// The counts are in `structuredContent`, but this change is the one that made
+/// `isError` always present, and AGENTS.md's premise is that an agent acts on
+/// a result without checking it. `isError: false` on a call where every file
+/// failed is the "silence reads as success" failure with a flag attached.
+///
+/// The machine-readable summary has to survive the flag: the agent needs to
+/// know which files failed and why, not just that something did.
+#[tokio::test]
+async fn a_download_where_every_file_failed_reports_is_error_true() {
+    let mock = MockServer::start().await;
+    Mock::given(wm_method("GET"))
+        .and(wm_path("/api/dataset/all-fail"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "results": [{
+                "slug": "all-fail",
+                "title": "All Fail",
+                "dcat": {
+                    "@type": "dcat:Dataset",
+                    "title": "All Fail",
+                    "distribution": [{
+                        "@type": "dcat:Distribution",
+                        "title": "gone",
+                        "downloadURL": format!("{}/missing.csv", mock.uri()),
+                        "mediaType": "text/csv"
+                    }]
+                }
+            }],
+            "sort": "relevance"
+        })))
+        .mount(&mock)
+        .await;
+    Mock::given(wm_method("GET"))
+        .and(wm_path("/missing.csv"))
+        .respond_with(ResponseTemplate::new(404))
+        .mount(&mock)
+        .await;
+
+    let server = test_server(&mock.uri());
+    let output_dir = scratch_dir("all-fail");
+
+    let value = server
+        .dispatch(
+            "tools/call",
+            Some(json!({
+                "name": "data_gov_download_resources",
+                "arguments": {
+                    "datasetId": "all-fail",
+                    "outputDir": output_dir.to_string_lossy(),
+                    "datasetSubdirectory": false
+                }
+            })),
+        )
+        .await
+        .expect("a failed download is a tool result, not a JSON-RPC error");
+
+    let _ = std::fs::remove_dir_all(&output_dir);
+
+    assert!(
+        tool_error_flag(&value),
+        "every file failed, so the call did not succeed: {value}"
+    );
+
+    let summary = value
+        .get("structuredContent")
+        .unwrap_or_else(|| panic!("the per-file detail must survive the flag: {value}"));
+    assert_eq!(summary["successfulCount"], json!(0), "{summary}");
+    assert_eq!(summary["failedCount"], json!(1), "{summary}");
+    assert_eq!(summary["hasErrors"], json!(true), "{summary}");
+    assert_eq!(
+        summary["downloads"][0]["status"], "error",
+        "the agent needs to see which file failed: {summary}"
+    );
+}
+
+/// The deliberate other half: a call where some files arrived is not reported
+/// as a failure. The summary names exactly which ones did not - `hasErrors`,
+/// `failedCount`, and a per-file `status` - so nothing is hidden, and flagging
+/// the whole call as an error would misreport the files that did arrive.
+#[tokio::test]
+async fn a_download_where_some_files_arrived_reports_is_error_false() {
+    let mock = MockServer::start().await;
+    Mock::given(wm_method("GET"))
+        .and(wm_path("/api/dataset/half-fail"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "results": [{
+                "slug": "half-fail",
+                "title": "Half Fail",
+                "dcat": {
+                    "@type": "dcat:Dataset",
+                    "title": "Half Fail",
+                    "distribution": [
+                        {
+                            "@type": "dcat:Distribution",
+                            "title": "present",
+                            "downloadURL": format!("{}/present.csv", mock.uri()),
+                            "mediaType": "text/csv"
+                        },
+                        {
+                            "@type": "dcat:Distribution",
+                            "title": "gone",
+                            "downloadURL": format!("{}/missing.csv", mock.uri()),
+                            "mediaType": "text/csv"
+                        }
+                    ]
+                }
+            }],
+            "sort": "relevance"
+        })))
+        .mount(&mock)
+        .await;
+    Mock::given(wm_method("GET"))
+        .and(wm_path("/present.csv"))
+        .respond_with(ResponseTemplate::new(200).set_body_string("a,b\n1,2\n"))
+        .mount(&mock)
+        .await;
+    Mock::given(wm_method("GET"))
+        .and(wm_path("/missing.csv"))
+        .respond_with(ResponseTemplate::new(404))
+        .mount(&mock)
+        .await;
+
+    let server = test_server(&mock.uri());
+    let output_dir = scratch_dir("half-fail");
+
+    let value = server
+        .dispatch(
+            "tools/call",
+            Some(json!({
+                "name": "data_gov_download_resources",
+                "arguments": {
+                    "datasetId": "half-fail",
+                    "outputDir": output_dir.to_string_lossy(),
+                    "datasetSubdirectory": false
+                }
+            })),
+        )
+        .await
+        .expect("a partial download is a result");
+
+    let _ = std::fs::remove_dir_all(&output_dir);
+
+    assert!(
+        !tool_error_flag(&value),
+        "one file arrived, so this is a partial success, not a failure: {value}"
+    );
+    let summary = &value["structuredContent"];
+    assert_eq!(summary["successfulCount"], json!(1), "{summary}");
+    assert_eq!(summary["failedCount"], json!(1), "{summary}");
+    assert_eq!(
+        summary["hasErrors"],
+        json!(true),
+        "the partial failure must still be visible in the payload: {summary}"
+    );
+}

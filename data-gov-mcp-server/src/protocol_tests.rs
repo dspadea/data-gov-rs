@@ -10,12 +10,12 @@
 
 use serde_json::{Value, json};
 use std::sync::Arc;
-use wiremock::matchers::{method as wm_method, path as wm_path};
+use wiremock::matchers::{method as wm_method, path as wm_path, path_regex as wm_path_regex};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 use crate::test_support::{
     CURRENT_MCP_REVISION, INVALID_PARAMS, INVALID_REQUEST, METHOD_NOT_FOUND, PARSE_ERROR, Session,
-    drive, error_code, error_message, search_body, test_server,
+    drive, error_code, error_message, search_body, test_server, test_server_with_gate,
 };
 
 /// Start a mock catalog that answers the two endpoints a no-argument tool call
@@ -642,4 +642,218 @@ async fn a_client_can_initialize_then_list_then_call_a_tool() {
         session.finish().await.is_empty(),
         "the session ends with nothing outstanding"
     );
+}
+
+// ---------------------------------------------------------------------------
+// Messages that are not Request objects at all
+// ---------------------------------------------------------------------------
+
+/// JSON-RPC 2.0 section 4: "A Notification is a Request object without an "id"
+/// member." A top-level array or scalar is not a Request object, so it cannot
+/// be a Notification either, and the spec's own worked examples answer `[]`
+/// and `[1]` with -32600 and a null id.
+///
+/// MCP 2025-06-18 removed batching, so a client still sending a batch array is
+/// exactly the client that needs to be told.
+#[tokio::test]
+async fn a_message_that_is_not_a_json_object_is_answered_with_invalid_request() {
+    let (_mock, server) = server_with_catalog().await;
+
+    for message in ["[]", "[1]", "1", "\"hello\"", "true", "null"] {
+        let responses = drive(&server, format!("{message}\n").as_bytes()).await;
+
+        assert_eq!(
+            responses.len(),
+            1,
+            "`{message}` is not a Request object, so it cannot be a notification \
+             and must be answered: {responses:?}"
+        );
+        assert_eq!(
+            error_code(&responses[0]),
+            INVALID_REQUEST,
+            "`{message}` is not a valid Request object: {}",
+            responses[0]
+        );
+        assert_eq!(
+            responses[0].get("id"),
+            Some(&json!(null)),
+            "no id can be read from `{message}`, so it MUST be null: {}",
+            responses[0]
+        );
+    }
+}
+
+/// The same rule for an object: without an `id` it is a Notification only if
+/// it is otherwise a valid Request. `{"jsonrpc":"2.0","method":1}` is the
+/// spec's own example of an invalid Request, and it is answered.
+#[tokio::test]
+async fn an_object_with_no_id_that_is_not_a_request_is_answered_with_invalid_request() {
+    let (_mock, server) = server_with_catalog().await;
+
+    for message in [
+        json!({"jsonrpc": "2.0"}),
+        json!({"jsonrpc": "2.0", "method": 1, "params": "bar"}),
+        json!({"jsonrpc": "2.0", "method": ["tools/list"]}),
+        json!({"method": null}),
+    ] {
+        let responses = drive(&server, format!("{message}\n").as_bytes()).await;
+
+        assert_eq!(
+            responses.len(),
+            1,
+            "{message} has no `method` string, so it is not a Request and not a \
+             notification: {responses:?}"
+        );
+        assert_eq!(error_code(&responses[0]), INVALID_REQUEST, "for {message}");
+        assert_eq!(responses[0].get("id"), Some(&json!(null)));
+    }
+}
+
+/// A byte that is not UTF-8 inside a JSON string must not be repaired into a
+/// different argument. Decoding it lossily would turn the slug `ab<0xff>cd`
+/// into `ab\u{fffd}cd` and run the tool on a value the client never sent -
+/// harvested metadata is untrusted, and so is a corrupted transport.
+#[tokio::test]
+async fn a_bad_byte_inside_a_json_string_is_a_parse_error_not_a_repaired_argument() {
+    let mock = MockServer::start().await;
+    Mock::given(wm_method("GET"))
+        .and(wm_path_regex("^/api/dataset/.*"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(search_body("x", "X")))
+        .expect(0)
+        .mount(&mock)
+        .await;
+    let server = Arc::new(test_server(&mock.uri()));
+
+    let mut input: Vec<u8> =
+        br#"{"jsonrpc":"2.0","id":1,"method":"data_gov.dataset","params":{"slug":"ab"#.to_vec();
+    input.push(0xff);
+    input.extend_from_slice(br#"cd"}}"#);
+    input.push(b'\n');
+
+    let responses = drive(&server, &input).await;
+
+    assert_eq!(responses.len(), 1, "exactly one response: {responses:?}");
+    assert_eq!(
+        error_code(&responses[0]),
+        PARSE_ERROR,
+        "an undecodable byte makes the line unparseable, whatever it sits inside: {}",
+        responses[0]
+    );
+}
+
+// ---------------------------------------------------------------------------
+// The envelope rule applies to notifications too
+// ---------------------------------------------------------------------------
+
+/// A notification gets no response, but that is not the same as getting no
+/// scrutiny. A message the server has just declared invalid must not have
+/// side effects - and cancelling somebody's in-flight request is a side
+/// effect.
+///
+/// Deterministic because the cancellation is acted on by the reading task
+/// before the line after it is read, while request 5 is provably still held.
+#[tokio::test]
+async fn a_cancellation_with_no_jsonrpc_member_does_not_cancel_anything() {
+    let mock = MockServer::start().await;
+    let (server, release) = test_server_with_gate(&mock.uri(), "data_gov.downloadResources");
+    let mut session = Session::start(server);
+
+    session
+        .send(&json!({
+            "jsonrpc": "2.0",
+            "id": 5,
+            "method": "tools/call",
+            "params": {
+                "name": "data_gov_download_resources",
+                "arguments": {"datasetId": "held"}
+            }
+        }))
+        .await;
+    // No `jsonrpc` member: not a JSON-RPC 2.0 message, so not a cancellation.
+    session
+        .send(&json!({"method": "notifications/cancelled", "params": {"requestId": 5}}))
+        .await;
+
+    release.notify_one();
+
+    let answer = session.next_response().await;
+    assert_eq!(
+        answer.get("id"),
+        Some(&json!(5)),
+        "request 5 was never validly cancelled, so it is still owed an answer: {answer}"
+    );
+
+    assert!(session.finish().await.is_empty());
+}
+
+/// MCP defines no notification that invokes a tool, and this server must not
+/// invent one. A tool run from a notification has no id, so a cancellation
+/// cannot reach it; owes no response, so nothing reports the files it wrote;
+/// and holds no sender, so the loop reaching EOF tears its runtime down
+/// mid-write. "Silence reads as success" is the failure AGENTS.md rules out.
+///
+/// Driven off `TOOL_SPECS`, so a tool added later is covered rather than
+/// missed, and asserted on the admission rule so the result does not depend on
+/// when a spawned task happens to run.
+#[test]
+fn no_tool_method_is_dispatchable_as_a_notification() {
+    for spec in crate::tools::TOOL_SPECS.iter() {
+        assert!(
+            !crate::server::notification_may_dispatch(spec.method_name),
+            "{} writes files and reaches the network; it must never run from a \
+             message that owes no answer",
+            spec.method_name
+        );
+    }
+    assert!(
+        !crate::server::notification_may_dispatch("tools/call"),
+        "the tools/call envelope is the same hazard by another name"
+    );
+
+    // The lifecycle notifications a client really does send must still pass.
+    for method in ["initialized", "notifications/initialized", "shutdown"] {
+        assert!(
+            crate::server::notification_may_dispatch(method),
+            "{method} is a lifecycle notification, not a tool"
+        );
+    }
+}
+
+/// The same rule at the wire, so the check cannot be bypassed by a path that
+/// never consults it.
+#[tokio::test]
+async fn a_notification_naming_a_tool_does_not_reach_the_catalog() {
+    let mock = MockServer::start().await;
+    Mock::given(wm_method("GET"))
+        .and(wm_path_regex("^/api/dataset/.*"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(search_body("x", "X")))
+        .expect(0)
+        .mount(&mock)
+        .await;
+    let server = Arc::new(test_server(&mock.uri()));
+
+    let mut input = format!(
+        "{}\n",
+        json!({
+            "jsonrpc": "2.0",
+            "method": "data_gov.dataset",
+            "params": {"slug": "should-never-be-fetched"}
+        })
+    );
+    // A request after it, so the loop has demonstrably run past the
+    // notification by the time the mock is verified.
+    input.push_str(&format!(
+        "{}\n",
+        json!({"jsonrpc": "2.0", "id": 1, "method": "ping"})
+    ));
+
+    let responses = drive(&server, input.as_bytes()).await;
+
+    assert_eq!(
+        responses.len(),
+        1,
+        "only the ping is answered: {responses:?}"
+    );
+    assert_eq!(responses[0].get("id"), Some(&json!(1)));
+    mock.verify().await;
 }

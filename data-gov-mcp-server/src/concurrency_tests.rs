@@ -10,6 +10,7 @@
 use serde_json::{Value, json};
 use std::collections::HashSet;
 use std::time::Duration;
+use tokio::io::AsyncWriteExt;
 use wiremock::MockServer;
 
 use crate::test_support::{
@@ -477,5 +478,46 @@ async fn an_id_freed_by_cancellation_can_be_used_again() {
     assert!(
         session.finish().await.is_empty(),
         "and the cancelled request is still never answered"
+    );
+}
+
+/// A closed output means the session is over. Carrying on reading and
+/// spawning after the client has gone executes work - downloads that write to
+/// disk among it - that nobody will ever be told about.
+#[tokio::test]
+async fn a_closed_output_ends_the_session() {
+    let mock = MockServer::start().await;
+    let server = std::sync::Arc::new(test_server(&mock.uri()));
+
+    let (mut requests, server_reader) = tokio::io::duplex(1 << 16);
+    let (server_writer, responses) = tokio::io::duplex(1 << 16);
+    // The client is gone before the first answer is written.
+    drop(responses);
+
+    let loop_task = tokio::spawn(async move { server.serve(server_reader, server_writer).await });
+
+    // Keep offering work rather than sending a fixed amount and closing: the
+    // loop must stop on its own, not because it ran out of input.
+    let feeder = tokio::spawn(async move {
+        for id in 1i64.. {
+            let line = format!(
+                "{}\n",
+                json!({"jsonrpc": "2.0", "id": id, "method": "ping"})
+            );
+            if requests.write_all(line.as_bytes()).await.is_err() {
+                break;
+            }
+        }
+    });
+
+    let outcome = tokio::time::timeout(Duration::from_secs(10), loop_task)
+        .await
+        .expect("the loop must end once its output is gone, without waiting for EOF")
+        .expect("the loop task must not panic");
+    feeder.abort();
+
+    assert!(
+        outcome.is_err(),
+        "a transport that cannot be written to is a failure, not a clean end: {outcome:?}"
     );
 }

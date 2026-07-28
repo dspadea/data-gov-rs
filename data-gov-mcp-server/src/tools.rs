@@ -84,6 +84,20 @@ impl ToolResponse {
             is_error: true,
         }
     }
+
+    /// Build a failing result that still carries its machine-readable payload.
+    ///
+    /// A download where every file failed knows exactly which ones and why.
+    /// Reporting only "it failed" would throw that away at the moment it is
+    /// most needed, so the summary rides along in `structuredContent` while
+    /// `content` carries the sentence a model reads first.
+    pub fn execution_error_with(message: String, payload: Value) -> Self {
+        Self {
+            content: vec![ToolContent::Text { text: message }],
+            structured_content: payload.is_object().then_some(payload),
+            is_error: true,
+        }
+    }
 }
 
 /// Individual content item within a [`ToolResponse`].
