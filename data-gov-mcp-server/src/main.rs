@@ -5,6 +5,10 @@ mod types;
 
 #[cfg(test)]
 mod dispatch_tests;
+#[cfg(test)]
+mod protocol_tests;
+#[cfg(test)]
+mod test_support;
 
 use server::DataGovMcpServer;
 use tracing_subscriber::{EnvFilter, fmt};

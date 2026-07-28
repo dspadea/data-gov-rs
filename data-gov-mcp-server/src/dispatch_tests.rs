@@ -11,12 +11,11 @@
 //!
 //! Plus error-variant contracts for unknown methods and missing params.
 
-use data_gov::{DataGovClient, DataGovConfig, OperatingMode};
 use serde_json::{Value, json};
 use wiremock::matchers::{method as wm_method, path as wm_path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
-use crate::server::DataGovMcpServer;
+use crate::test_support::{search_body, test_server};
 use crate::types::{SUPPORTED_PROTOCOL_VERSIONS, ServerError};
 
 /// Revisions the MCP specification has actually published, oldest first.
@@ -26,22 +25,6 @@ const PUBLISHED_MCP_REVISIONS: [&str; 4] = ["2024-11-05", "2025-03-26", "2025-06
 
 /// The revision marked *current* at modelcontextprotocol.io/specification/versioning.
 const CURRENT_MCP_REVISION: &str = "2025-11-25";
-
-/// Build a `DataGovMcpServer` whose internal client points at the given mock
-/// URL. Callers mount `Mock`s on the same server before exercising a dispatch
-/// path.
-fn test_server(mock_uri: &str) -> DataGovMcpServer {
-    let config = DataGovConfig::default()
-        .with_base_url(mock_uri)
-        .with_mode(OperatingMode::CommandLine)
-        .with_user_agent("test/1.0");
-    let data_gov = DataGovClient::with_config(config).expect("build data_gov");
-
-    DataGovMcpServer {
-        data_gov,
-        portal_base_url: mock_uri.to_string(),
-    }
-}
 
 /// Extract the inner JSON payload from a `ToolResponse`-shaped value.
 fn tool_response_json(value: &Value) -> &Value {
@@ -67,36 +50,6 @@ fn tool_response_json(value: &Value) -> &Value {
     value
         .get("structuredContent")
         .expect("tool result must carry structuredContent")
-}
-
-/// Minimal search response body matching the Catalog API shape.
-fn search_body(slug: &str, title: &str) -> Value {
-    json!({
-        "results": [{
-            "identifier": format!("id:{slug}"),
-            "slug": slug,
-            "title": title,
-            "description": "mock",
-            "publisher": "mock",
-            "organization": {
-                "id": "00000000-0000-0000-0000-000000000000",
-                "name": "Mock Org",
-                "slug": "mock-org",
-                "organization_type": "Federal Government"
-            },
-            "keyword": [],
-            "theme": [],
-            "has_spatial": false,
-            "dcat": {
-                "@type": "dcat:Dataset",
-                "title": title,
-                "description": "mock",
-                "identifier": format!("id:{slug}"),
-                "distribution": []
-            }
-        }],
-        "sort": "relevance"
-    })
 }
 
 #[tokio::test]
