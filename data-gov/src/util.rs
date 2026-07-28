@@ -324,9 +324,17 @@ pub(crate) async fn ensure_inside(root: &Path, candidate: &Path) -> Result<()> {
     }
 
     let resolved_root = tokio::fs::canonicalize(root).await?;
-    let parent = candidate.parent().unwrap_or(root);
-    let resolved_parent = tokio::fs::canonicalize(parent).await?;
-    if resolved_parent != resolved_root {
+    let resolved_parent = match tokio::fs::canonicalize(candidate).await {
+        // Something is already at the destination. Resolve it, because a write
+        // follows a symbolic link left there and would land at its target.
+        Ok(existing) => existing.parent().map(Path::to_path_buf),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            Some(tokio::fs::canonicalize(candidate.parent().unwrap_or(root)).await?)
+        }
+        Err(err) => return Err(err.into()),
+    };
+
+    if resolved_parent.as_deref() != Some(resolved_root.as_path()) {
         return Err(outside());
     }
     Ok(())
@@ -538,6 +546,92 @@ mod tests {
             addresses.count() > 0,
             "the resolver must hand back the addresses it approved"
         );
+    }
+
+    #[tokio::test]
+    async fn ensure_inside_accepts_a_file_directly_in_the_directory() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        ensure_inside(tmp.path(), &tmp.path().join("report.csv"))
+            .await
+            .expect("a plain child of the directory is inside it");
+    }
+
+    #[tokio::test]
+    async fn ensure_inside_rejects_a_parent_directory_step() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let root = tmp.path().join("chosen");
+        tokio::fs::create_dir_all(&root).await.expect("root");
+        let error = ensure_inside(&root, &root.join("..").join("escaped.csv"))
+            .await
+            .expect_err("a parent-directory step leaves the directory");
+        assert!(matches!(error, DataGovError::ValidationError { .. }));
+    }
+
+    #[tokio::test]
+    async fn ensure_inside_rejects_an_absolute_path_elsewhere() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let root = tmp.path().join("chosen");
+        tokio::fs::create_dir_all(&root).await.expect("root");
+        let error = ensure_inside(&root, Path::new("/etc/cron.d/evil"))
+            .await
+            .expect_err("an absolute path is not inside the directory");
+        assert!(matches!(error, DataGovError::ValidationError { .. }));
+    }
+
+    #[tokio::test]
+    async fn ensure_inside_rejects_a_nested_path() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        ensure_inside(tmp.path(), &tmp.path().join("sub").join("report.csv"))
+            .await
+            .expect_err("only a file directly in the directory is accepted");
+    }
+
+    /// A symbolic link already at the destination is followed by the write, so
+    /// it has to be resolved here. This is the case the lexical pass cannot
+    /// see, and the reason the check resolves the path against the filesystem.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn ensure_inside_rejects_a_destination_symlinked_out_of_the_directory() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let root = tmp.path().join("chosen");
+        let outside = tmp.path().join("elsewhere");
+        tokio::fs::create_dir_all(&root).await.expect("root");
+        tokio::fs::create_dir_all(&outside).await.expect("outside");
+
+        let target = outside.join("victim.txt");
+        tokio::fs::write(&target, b"original")
+            .await
+            .expect("target");
+
+        let destination = root.join("report.csv");
+        std::os::unix::fs::symlink(&target, &destination).expect("symlink");
+
+        let error = ensure_inside(&root, &destination)
+            .await
+            .expect_err("a destination linked out of the directory must be refused");
+        assert!(
+            matches!(error, DataGovError::ValidationError { .. }),
+            "got {error:?}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn ensure_inside_accepts_a_destination_symlinked_within_the_directory() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let root = tmp.path().join("chosen");
+        tokio::fs::create_dir_all(&root).await.expect("root");
+
+        let target = root.join("actual.csv");
+        tokio::fs::write(&target, b"original")
+            .await
+            .expect("target");
+        let destination = root.join("alias.csv");
+        std::os::unix::fs::symlink(&target, &destination).expect("symlink");
+
+        ensure_inside(&root, &destination)
+            .await
+            .expect("a link that stays inside the directory is not an escape");
     }
 
     #[test]
