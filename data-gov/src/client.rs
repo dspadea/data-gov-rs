@@ -768,6 +768,10 @@ impl DataGovClient {
     }
 
     /// Check that the base download directory exists and is writable.
+    ///
+    /// Callers may run this concurrently against the same directory -- the
+    /// MCP server does, on every download where `outputDir` is omitted --
+    /// so the write-test probe must never share a name across calls (#112).
     pub async fn validate_download_dir(&self) -> Result<()> {
         let base_dir = self.config.get_base_download_dir();
 
@@ -781,11 +785,24 @@ impl DataGovClient {
             )));
         }
 
-        let test_file = base_dir.join(".write_test");
+        let test_file = base_dir.join(Self::probe_file_name());
         tokio::fs::write(&test_file, b"test").await?;
         tokio::fs::remove_file(&test_file).await?;
 
         Ok(())
+    }
+
+    /// A file name for `validate_download_dir`'s write-test probe.
+    ///
+    /// Unique per process and per call, on the same principle as
+    /// [`Self::partial_path`]: two concurrent probes in the same directory
+    /// must never share a name. Before this, a fixed name (`.write_test`)
+    /// meant one call's `remove_file` could race another's write and see
+    /// `ENOENT` for a directory that was perfectly writable (#112).
+    fn probe_file_name() -> String {
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        let serial = NEXT.fetch_add(1, Ordering::Relaxed);
+        format!(".data-gov-write-test-{}-{serial}", std::process::id())
     }
 
     /// Get the current base download directory.
