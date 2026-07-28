@@ -467,19 +467,8 @@ pub(crate) struct CallToolParams {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::{CURRENT_MCP_REVISION, PUBLISHED_MCP_REVISIONS};
     use serde_json::json;
-
-    /// Revisions the MCP specification has actually published, oldest first.
-    ///
-    /// Deliberately literal. Deriving this from [`SUPPORTED_PROTOCOL_VERSIONS`]
-    /// would make every assertion below agree with whatever that constant happens
-    /// to say, so a revision quietly dropped — or invented — would stay green.
-    const PUBLISHED_MCP_REVISIONS: [&str; 4] =
-        ["2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25"];
-
-    /// The revision marked *current* at modelcontextprotocol.io/specification/versioning.
-    /// Bumping this is a deliberate act of adopting a new spec, not a side effect.
-    const CURRENT_MCP_REVISION: &str = "2025-11-25";
 
     #[test]
     fn parse_required_params_succeeds_with_valid_json() {

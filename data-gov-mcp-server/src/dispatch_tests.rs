@@ -15,16 +15,10 @@ use serde_json::{Value, json};
 use wiremock::matchers::{method as wm_method, path as wm_path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
-use crate::test_support::{search_body, test_server};
+use crate::test_support::{
+    CURRENT_MCP_REVISION, PUBLISHED_MCP_REVISIONS, search_body, test_server,
+};
 use crate::types::{SUPPORTED_PROTOCOL_VERSIONS, ServerError};
-
-/// Revisions the MCP specification has actually published, oldest first.
-/// Literal on purpose: deriving it from `SUPPORTED_PROTOCOL_VERSIONS` would
-/// make these assertions agree with whatever that constant says.
-const PUBLISHED_MCP_REVISIONS: [&str; 4] = ["2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25"];
-
-/// The revision marked *current* at modelcontextprotocol.io/specification/versioning.
-const CURRENT_MCP_REVISION: &str = "2025-11-25";
 
 /// Arguments that satisfy each tool's advertised `inputSchema`.
 ///

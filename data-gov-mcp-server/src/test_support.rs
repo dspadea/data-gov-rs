@@ -22,6 +22,19 @@ use crate::types::ServerError;
 /// stopped answering fails by name instead of hanging the suite.
 const RESPONSE_WAIT: Duration = Duration::from_secs(10);
 
+/// Revisions the MCP specification has actually published, oldest first.
+///
+/// Deliberately literal, and deliberately in one place. Deriving it from
+/// `SUPPORTED_PROTOCOL_VERSIONS` would make every assertion agree with whatever
+/// that constant happens to say, so a revision quietly dropped - or invented -
+/// would stay green.
+pub(crate) const PUBLISHED_MCP_REVISIONS: [&str; 4] =
+    ["2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25"];
+
+/// The revision marked *current* at modelcontextprotocol.io/specification/versioning.
+/// Bumping this is a deliberate act of adopting a new spec, not a side effect.
+pub(crate) const CURRENT_MCP_REVISION: &str = "2025-11-25";
+
 /// JSON-RPC 2.0 error codes, section 5.1 of the published specification at
 /// <https://www.jsonrpc.org/specification>.
 ///

@@ -14,8 +14,8 @@ use wiremock::matchers::{method as wm_method, path as wm_path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 use crate::test_support::{
-    INVALID_PARAMS, INVALID_REQUEST, METHOD_NOT_FOUND, PARSE_ERROR, drive, error_code,
-    error_message, search_body, test_server,
+    CURRENT_MCP_REVISION, INVALID_PARAMS, INVALID_REQUEST, METHOD_NOT_FOUND, PARSE_ERROR, Session,
+    drive, error_code, error_message, search_body, test_server,
 };
 
 /// Start a mock catalog that answers the two endpoints a no-argument tool call
@@ -475,5 +475,171 @@ async fn tools_call_with_omitted_arguments_still_fails_when_the_schema_requires_
     assert!(
         checked > 0,
         "no tool declares a required property, so this test proved nothing"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// The full handshake (#44)
+// ---------------------------------------------------------------------------
+
+/// One session that walks `initialize` -> `notifications/initialized` ->
+/// `tools/list` -> `tools/call`, the sequence every MCP client performs before
+/// it can do anything, and validates each result against the schema.
+///
+/// The three methods were each covered alone. Alone, they cannot show that the
+/// output of one is usable as the input of the next - which is the only thing
+/// a client cares about. The tool called here is chosen from what `tools/list`
+/// answered, not named in the test, so a `tools/list` that advertised
+/// something uncallable would fail rather than be worked around.
+#[tokio::test]
+async fn a_client_can_initialize_then_list_then_call_a_tool() {
+    let (_mock, server) = server_with_catalog().await;
+    let mut session = Session::start(server);
+
+    // 1. initialize. `InitializeResult` requires protocolVersion, capabilities
+    //    and serverInfo; serverInfo requires name and version. A supported
+    //    revision MUST be echoed verbatim.
+    let requested = CURRENT_MCP_REVISION;
+    session
+        .send(&json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": requested,
+                "capabilities": {},
+                "clientInfo": {"name": "chained-test", "version": "1.0"}
+            }
+        }))
+        .await;
+
+    let initialized = session.next_response().await;
+    assert_eq!(initialized.get("id"), Some(&json!(1)), "got: {initialized}");
+    let result = initialized
+        .get("result")
+        .unwrap_or_else(|| panic!("initialize must succeed: {initialized}"));
+    assert_eq!(
+        result["protocolVersion"].as_str(),
+        Some(requested),
+        "a supported revision must come back verbatim: {result}"
+    );
+    assert!(
+        result["capabilities"]["tools"].is_object(),
+        "a tool server MUST declare capabilities.tools: {result}"
+    );
+    assert!(
+        result["serverInfo"]["name"]
+            .as_str()
+            .is_some_and(|n| !n.is_empty()),
+        "serverInfo.name must be a non-empty string: {result}"
+    );
+    assert!(
+        result["serverInfo"]["version"]
+            .as_str()
+            .is_some_and(|v| !v.is_empty()),
+        "serverInfo.version must be a non-empty string: {result}"
+    );
+
+    // 2. The lifecycle notification a client sends next. It is a notification,
+    //    so nothing may come back for it - and it must not derail the session.
+    session
+        .send(&json!({"jsonrpc": "2.0", "method": "notifications/initialized"}))
+        .await;
+
+    // 3. tools/list. Each entry needs a name and an inputSchema that "MUST be a
+    //    valid JSON Schema object (not null)".
+    session
+        .send(&json!({"jsonrpc": "2.0", "id": 2, "method": "tools/list"}))
+        .await;
+
+    let listed = session.next_response().await;
+    assert_eq!(
+        listed.get("id"),
+        Some(&json!(2)),
+        "the notification must not have been answered, and tools/list must \
+         come next: {listed}"
+    );
+    let tools = listed["result"]["tools"]
+        .as_array()
+        .unwrap_or_else(|| panic!("tools/list must answer with a tools array: {listed}"))
+        .clone();
+    assert!(!tools.is_empty(), "a tool server must advertise a tool");
+
+    for tool in &tools {
+        let name = tool["name"]
+            .as_str()
+            .unwrap_or_else(|| panic!("every tool has a name: {tool}"));
+        assert!(
+            (1..=128).contains(&name.chars().count()),
+            "tool names SHOULD be 1 to 128 characters: {name}"
+        );
+        assert!(
+            name.chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.')),
+            "tool names SHOULD use only letters, digits, underscore, hyphen and dot: {name}"
+        );
+        assert_eq!(
+            tool["inputSchema"]["type"], "object",
+            "inputSchema MUST be a valid JSON Schema object: {tool}"
+        );
+    }
+
+    // 4. tools/call, on a tool taken from the list rather than named here.
+    let callable = tools
+        .iter()
+        .find(|tool| {
+            tool["inputSchema"]
+                .get("required")
+                .and_then(Value::as_array)
+                .is_none_or(|required| required.is_empty())
+        })
+        .unwrap_or_else(|| panic!("no advertised tool is callable with no arguments: {tools:?}"));
+    let name = callable["name"].as_str().expect("a name");
+
+    session
+        .send(&json!({
+            "jsonrpc": "2.0",
+            "id": 3,
+            "method": "tools/call",
+            "params": {"name": name, "arguments": {}}
+        }))
+        .await;
+
+    let called = session.next_response().await;
+    assert_eq!(called.get("id"), Some(&json!(3)), "got: {called}");
+    let result = called
+        .get("result")
+        .unwrap_or_else(|| panic!("calling `{name}` must succeed: {called}"));
+    assert_eq!(
+        result["isError"],
+        json!(false),
+        "`{name}` was called with arguments its own schema accepts: {result}"
+    );
+
+    let content = result["content"]
+        .as_array()
+        .unwrap_or_else(|| panic!("a tool result carries a content array: {result}"));
+    assert!(
+        !content.is_empty(),
+        "an empty array satisfies a loop vacuously"
+    );
+    for block in content {
+        let ty = block["type"].as_str().expect("every block has a type");
+        assert!(
+            matches!(
+                ty,
+                "text" | "image" | "audio" | "resource_link" | "resource"
+            ),
+            "`{ty}` is not a member of MCP's content union: {block}"
+        );
+    }
+    assert!(
+        result["structuredContent"].is_object(),
+        "structured content is returned as a JSON object: {result}"
+    );
+
+    assert!(
+        session.finish().await.is_empty(),
+        "the session ends with nothing outstanding"
     );
 }
