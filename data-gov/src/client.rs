@@ -1,6 +1,7 @@
 use futures::StreamExt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::fs::File;
 use tokio::io::AsyncWriteExt;
 use url::Url;
@@ -605,7 +606,11 @@ impl DataGovClient {
             reporter.on_download_started(&event);
         }
 
-        let mut file = match File::create(output_path).await {
+        // The transfer goes to a temporary file beside the destination, so the
+        // destination only ever holds a complete file. The two share a
+        // directory because `rename` is atomic only within one filesystem.
+        let temp_path = Self::partial_path(output_dir);
+        let mut file = match File::create(&temp_path).await {
             Ok(file) => file,
             Err(err) => {
                 notify_failure(err.to_string(), &status_reporter);
@@ -626,12 +631,14 @@ impl DataGovClient {
             let chunk = match chunk_result {
                 Ok(chunk) => chunk,
                 Err(err) => {
+                    Self::discard_partial(&temp_path).await;
                     notify_failure(err.to_string(), &status_reporter);
                     return Err(err.into());
                 }
             };
 
             if let Err(err) = file.write_all(&chunk).await {
+                Self::discard_partial(&temp_path).await;
                 notify_failure(err.to_string(), &status_reporter);
                 return Err(err.into());
             }
@@ -646,6 +653,26 @@ impl DataGovClient {
         // Dropping a `tokio::fs::File` does not flush it, so without this the
         // last chunk can be lost and the transfer still reported as complete.
         if let Err(err) = file.flush().await {
+            Self::discard_partial(&temp_path).await;
+            notify_failure(err.to_string(), &status_reporter);
+            return Err(err.into());
+        }
+        drop(file);
+
+        if let Some(expected) = total_size
+            && progress.downloaded_bytes != expected
+        {
+            let message = format!(
+                "download of {url} ended after {} of {expected} bytes",
+                progress.downloaded_bytes
+            );
+            Self::discard_partial(&temp_path).await;
+            notify_failure(message.clone(), &status_reporter);
+            return Err(DataGovError::download_error(message));
+        }
+
+        if let Err(err) = tokio::fs::rename(&temp_path, output_path).await {
+            Self::discard_partial(&temp_path).await;
             notify_failure(err.to_string(), &status_reporter);
             return Err(err.into());
         }
@@ -660,6 +687,35 @@ impl DataGovClient {
         }
 
         Ok(())
+    }
+
+    /// A temporary path in `output_dir` for a transfer still in progress.
+    ///
+    /// The name is unique per process and per call, so two transfers heading
+    /// for the same destination cannot write over each other, and it is hidden
+    /// and suffixed `.part` so anything left behind by a killed process reads
+    /// as unfinished rather than as data.
+    fn partial_path(output_dir: &Path) -> PathBuf {
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        let serial = NEXT.fetch_add(1, Ordering::Relaxed);
+        output_dir.join(format!(".data-gov-{}-{serial}.part", std::process::id()))
+    }
+
+    /// Remove a transfer that did not finish, and say so if that fails.
+    ///
+    /// Best effort by design: the transfer has already failed, and being
+    /// unable to tidy up is not a second failure to report to the caller. It
+    /// is still worth saying out loud, because the alternative is a `.part`
+    /// file nobody can account for.
+    async fn discard_partial(temp_path: &Path) {
+        match tokio::fs::remove_file(temp_path).await {
+            Ok(()) => {}
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+            Err(err) => eprintln!(
+                "data-gov: could not remove the unfinished download {}: {err}",
+                temp_path.display()
+            ),
+        }
     }
 
     /// Check that the base download directory exists and is writable.
