@@ -7,7 +7,8 @@ mod repl;
 mod reporter;
 
 use clap::{Arg, ArgMatches, Command};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::str::FromStr;
 use std::sync::{Arc, OnceLock};
 use tokio::runtime::Runtime;
 
@@ -221,7 +222,17 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-/// Run a single command in CLI mode
+/// Run a single command in CLI mode.
+///
+/// Resolution order for `command`, matching a kernel shebang launch
+/// (`#!/usr/bin/env data-gov` passes the script's own path as this
+/// positional):
+///
+/// 1. If it matches a known command name, dispatch it as a command. Known
+///    commands always win, so `search` never becomes a filename.
+/// 2. Otherwise, if it names a readable existing file, run it as a script
+///    (see [`run_script_file`]).
+/// 3. Otherwise, the "Unknown command" error.
 fn run_cli_mode(
     client: DataGovClient,
     command: &str,
@@ -240,27 +251,187 @@ fn run_cli_mode(
     cmd_parts.push(command.to_string());
     cmd_parts.extend(args.iter().map(|s| (*s).clone()));
 
-    // Parse the command
-    let repl_command = match ReplCommand::from_parts(&cmd_parts) {
-        Ok(cmd) => cmd,
-        Err(e) => {
-            eprintln!("{} {}", color_red_bold_err("Error:"), e);
-            eprintln!("Use --help to see available commands and examples");
-            std::process::exit(1);
+    match ReplCommand::from_parts(&cmd_parts) {
+        Ok(repl_command) => {
+            let mut ctx = SessionContext::default();
+            if let Err(e) = execute_command(&client, &rt, repl_command, &mut ctx) {
+                eprintln!("{} {}", color_red_bold_err("Error:"), e);
+                std::process::exit(1);
+            }
         }
-    };
-
-    // Execute the command using the same logic as the REPL
-    let mut ctx = SessionContext::default();
-    let result = execute_command(&client, &rt, repl_command, &mut ctx);
-
-    match result {
-        Ok(()) => {}
-        Err(e) => {
-            eprintln!("{} {}", color_red_bold_err("Error:"), e);
-            std::process::exit(1);
+        Err(parse_err) => {
+            let script_path = Path::new(command);
+            if script_path.is_file() {
+                if let Err(e) = run_script_file(&client, &rt, script_path) {
+                    eprintln!("{} {}", color_red_bold_err("Error:"), e);
+                    std::process::exit(1);
+                }
+            } else {
+                eprintln!("{} {}", color_red_bold_err("Error:"), parse_err);
+                eprintln!("Use --help to see available commands and examples");
+                std::process::exit(1);
+            }
         }
     }
 
     Ok(())
+}
+
+/// Run a script file as a sequence of REPL commands, one per line.
+///
+/// This is what makes a `#!/usr/bin/env data-gov` shebang launch work: the
+/// kernel execs `data-gov <script-path>`, clap binds the path to the
+/// `command` positional, `ReplCommand::from_parts` fails to parse it as a
+/// known command, and [`run_cli_mode`] falls back to here. Blank lines and
+/// comments (lines starting with `#`, which includes the shebang line
+/// itself) are skipped, the same as the interactive REPL's own loop.
+///
+/// A failing line does not stop the rest of the script — each error is
+/// reported immediately, against its line number, the way a shell
+/// continues past a failing command by default — but the function still
+/// returns `Err` if any line failed, so the process exits non-zero. A
+/// script that partially ran must never be reported as if it fully
+/// succeeded.
+///
+/// `lcd` is not supported in script mode (same restriction as one-shot CLI
+/// mode): swapping the download directory mid-script would require
+/// rebuilding the client, which would need `client` here to be owned and
+/// mutable rather than shared with the rest of `execute_command`'s
+/// call sites. None of the shipped example scripts use `lcd`; a script
+/// that needs a specific download directory should pass `--download-dir`
+/// on the invocation instead.
+fn run_script_file(
+    client: &DataGovClient,
+    rt: &Runtime,
+    path: &Path,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let contents = std::fs::read_to_string(path)
+        .map_err(|e| format!("could not read script '{}': {e}", path.display()))?;
+
+    let mut ctx = SessionContext::default();
+    let mut had_error = false;
+
+    for (line_no, line) in contents.lines().enumerate() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+
+        let outcome = match ReplCommand::from_str(trimmed) {
+            Ok(ReplCommand::Quit) => break,
+            Ok(command) => execute_command(client, rt, command, &mut ctx),
+            Err(e) => Err(e.into()),
+        };
+
+        if let Err(e) = outcome {
+            eprintln!(
+                "{} {}:{}: {}",
+                color_red_bold_err("Error:"),
+                path.display(),
+                line_no + 1,
+                e
+            );
+            had_error = true;
+        }
+    }
+
+    if had_error {
+        return Err(format!(
+            "script '{}' had one or more failing commands",
+            path.display()
+        )
+        .into());
+    }
+
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+
+    fn test_client() -> DataGovClient {
+        DataGovClient::with_config(DataGovConfig::default()).expect("test client must build")
+    }
+
+    #[test]
+    fn run_script_file_executes_known_commands_and_skips_comments_and_blanks() {
+        // The exact shape a `#!/usr/bin/env data-gov` shebang script takes:
+        // the shebang line itself is a comment (starts with '#'), so it is
+        // skipped the same way any other comment is.
+        let rt = Runtime::new().expect("runtime");
+        let client = test_client();
+
+        let mut file = tempfile::NamedTempFile::new().expect("temp script file");
+        writeln!(file, "#!/usr/bin/env data-gov").unwrap();
+        writeln!(file, "# a comment").unwrap();
+        writeln!(file).unwrap();
+        writeln!(file, "info").unwrap();
+        writeln!(file, "quit").unwrap();
+        file.flush().unwrap();
+
+        let result = run_script_file(&client, &rt, file.path());
+        assert!(result.is_ok(), "{result:?}");
+    }
+
+    #[test]
+    fn run_script_file_stops_at_quit_without_running_later_lines() {
+        let rt = Runtime::new().expect("runtime");
+        let client = test_client();
+
+        let mut file = tempfile::NamedTempFile::new().expect("temp script file");
+        writeln!(file, "info").unwrap();
+        writeln!(file, "quit").unwrap();
+        // A line that would fail to parse — proves it was never reached.
+        writeln!(file, "this is not a real command").unwrap();
+        file.flush().unwrap();
+
+        let result = run_script_file(&client, &rt, file.path());
+        assert!(
+            result.is_ok(),
+            "quit must stop the script before the bad line below it: {result:?}"
+        );
+    }
+
+    #[test]
+    fn run_script_file_returns_err_when_a_line_fails_to_parse() {
+        let rt = Runtime::new().expect("runtime");
+        let client = test_client();
+
+        let mut file = tempfile::NamedTempFile::new().expect("temp script file");
+        writeln!(file, "this-is-not-a-command").unwrap();
+        file.flush().unwrap();
+
+        let result = run_script_file(&client, &rt, file.path());
+        assert!(
+            result.is_err(),
+            "a failing line must fail the whole script, not be silently skipped"
+        );
+    }
+
+    #[test]
+    fn run_script_file_returns_err_when_a_command_execution_fails() {
+        let rt = Runtime::new().expect("runtime");
+        let client = test_client();
+
+        let mut file = tempfile::NamedTempFile::new().expect("temp script file");
+        // Parses fine as a command, but fails at execution time (unknown
+        // list subject) — a different failure mode from a parse error.
+        writeln!(file, "list bogus-subject").unwrap();
+        file.flush().unwrap();
+
+        let result = run_script_file(&client, &rt, file.path());
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn run_script_file_errors_clearly_when_the_path_is_unreadable() {
+        let rt = Runtime::new().expect("runtime");
+        let client = test_client();
+
+        let missing = std::path::Path::new("/nonexistent/path/does-not-exist.sh");
+        let result = run_script_file(&client, &rt, missing);
+        assert!(result.is_err());
+    }
 }

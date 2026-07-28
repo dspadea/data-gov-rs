@@ -184,7 +184,15 @@ Key defaults:
 
 ### Automation
 
-The REPL accepts stdin, so shebang scripts work out of the box:
+Two ways to run a sequence of commands without typing them interactively.
+
+**Shebang scripts.** Start the script with `#!/usr/bin/env data-gov` and make
+it executable. A kernel shebang launch passes the script's own path as
+`data-gov`'s first argument; `data-gov` checks that argument against its
+known command names first (so `search` never gets mistaken for a filename),
+and when it isn't one, runs the file as a script instead - one command per
+line, blank lines and `#` comments skipped (which is why the shebang line
+itself is safely ignored), `quit` stops the script early.
 
 ```bash
 #!/usr/bin/env data-gov
@@ -197,6 +205,25 @@ show .
 download 0
 quit
 ```
+
+```bash
+chmod +x myscript.sh
+./myscript.sh
+```
+
+**Redirected stdin.** The interactive REPL reads its commands from stdin, so
+piping a script in works too, with no shebang line needed:
+
+```bash
+data-gov < myscript.sh
+```
+
+Either way, a line that fails to parse or execute is reported against its
+line number and the script keeps going - but the process still exits
+non-zero if any line failed, so a `set -e` caller sees the failure.
+
+`lcd` is not available in a script (same restriction as any other one-shot
+`data-gov` invocation): pass `--download-dir` on the invocation instead.
 
 See [`../examples/scripting`](../examples/scripting) for ready-made scripts such as `download-epa-climate.sh` and `list-orgs.sh`.
 
