@@ -8,6 +8,7 @@
 use std::error::Error as StdError;
 use std::fmt;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::path::{Component, Path};
 
 use reqwest::dns::{Addrs, Name, Resolve, Resolving};
 use url::{Host, Url};
@@ -291,6 +292,44 @@ pub(crate) fn refusal_in(error: &(dyn StdError + 'static)) -> Option<String> {
         current = err.source();
     }
     None
+}
+
+/// Confirm `candidate` names a file directly inside `root`, and nowhere else.
+///
+/// This is the backstop behind the filename sanitizing, not a replacement for
+/// it: it holds even if the name a caller supplies stops being reduced.
+///
+/// The check runs twice. The lexical pass rejects an absolute path or a
+/// parent-directory step before any directory is created for it. The second
+/// pass canonicalizes both sides, which is what catches a symbolic link
+/// pointing out of the tree, and needs `root` to exist already.
+///
+/// # Errors
+///
+/// Returns [`DataGovError::ValidationError`] when `candidate` resolves outside
+/// `root`, and [`DataGovError::IoError`] when either path cannot be resolved.
+pub(crate) async fn ensure_inside(root: &Path, candidate: &Path) -> Result<()> {
+    let outside = || {
+        DataGovError::validation_error(format!(
+            "download path `{}` is outside the chosen directory `{}`",
+            candidate.display(),
+            root.display()
+        ))
+    };
+
+    let relative = candidate.strip_prefix(root).map_err(|_| outside())?;
+    let mut parts = relative.components();
+    if !matches!(parts.next(), Some(Component::Normal(_))) || parts.next().is_some() {
+        return Err(outside());
+    }
+
+    let resolved_root = tokio::fs::canonicalize(root).await?;
+    let parent = candidate.parent().unwrap_or(root);
+    let resolved_parent = tokio::fs::canonicalize(parent).await?;
+    if resolved_parent != resolved_root {
+        return Err(outside());
+    }
+    Ok(())
 }
 
 /// Sanitize a string for use as a single filesystem path component.

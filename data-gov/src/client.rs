@@ -30,6 +30,20 @@ pub struct DataGovClient {
     http_client: reqwest::Client,
 }
 
+/// One file to fetch, and the directory it is required to land in.
+///
+/// `output_dir` travels with `output_path` so the transfer can confirm the
+/// destination is still inside the directory the user chose, whatever the
+/// filename was derived from.
+struct DownloadJob<'a> {
+    url: &'a str,
+    output_dir: &'a Path,
+    output_path: &'a Path,
+    resource_name: Option<String>,
+    dataset_name: Option<String>,
+    allow_private_network: bool,
+}
+
 impl DataGovClient {
     /// Create a new DataGov client with default configuration.
     pub fn new() -> Result<Self> {
@@ -215,33 +229,86 @@ impl DataGovClient {
 
     /// Pick a filesystem-friendly filename for a distribution.
     ///
+    /// The result is always a single path component. `title`, `format`, and the
+    /// URL all arrive in a harvested third-party record, so the derived name is
+    /// reduced by [`sanitize_path_component`](crate::util::sanitize_path_component)
+    /// before it is returned. A name that survives none of that reduction falls
+    /// back to `data.<extension>`, carrying `index` when one was given.
+    ///
     /// # Arguments
     /// * `distribution` - The distribution to generate a filename for.
     /// * `fallback_name` - Used when the distribution has no title and no URL
     ///   segment we can derive a name from.
     /// * `index` - Appended before the extension to disambiguate multi-file
     ///   batches with duplicate titles.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # use data_gov::DataGovClient;
+    /// # use data_gov::catalog::models::Distribution;
+    /// # let distribution = Distribution {
+    /// #     type_hint: None,
+    /// #     title: Some("../../etc/passwd".to_string()),
+    /// #     description: None,
+    /// #     download_url: Some("https://example.gov/data".to_string()),
+    /// #     access_url: None,
+    /// #     media_type: None,
+    /// #     format: Some("CSV".to_string()),
+    /// #     license: None,
+    /// #     described_by: None,
+    /// #     described_by_type: None,
+    /// # };
+    /// // The title is "../../etc/passwd" and the format is "CSV".
+    /// let name = DataGovClient::get_distribution_filename(&distribution, None, None);
+    /// assert_eq!(name, "____etc_passwd.csv");
+    /// ```
     pub fn get_distribution_filename(
         distribution: &Distribution,
         fallback_name: Option<&str>,
         index: Option<usize>,
     ) -> String {
-        let (base, has_ext) = Self::base_filename(distribution, fallback_name);
-        match index {
-            Some(i) if has_ext => {
-                if let Some(dot) = base.rfind('.') {
-                    let (stem, ext) = base.split_at(dot);
-                    format!("{stem}-{i}{ext}")
-                } else {
-                    format!("{base}-{i}")
-                }
+        // Reduced here rather than at each call site, so the public helper
+        // cannot hand a caller a name that escapes the directory it is joined
+        // onto. Reduced before the index is applied, so a name that survives
+        // none of the reduction falls back to a usable default rather than to
+        // a bare index.
+        let base = Self::base_filename(distribution, fallback_name);
+        let mut safe = util::sanitize_path_component(&base);
+        if safe.is_empty() || safe == "." {
+            safe = Self::default_filename(distribution);
+        }
+
+        let Some(i) = index else { return safe };
+        match safe.rfind('.') {
+            Some(dot) => {
+                let (stem, extension) = safe.split_at(dot);
+                format!("{stem}-{i}{extension}")
             }
-            Some(i) => format!("{base}-{i}"),
-            None => base,
+            None => format!("{safe}-{i}"),
         }
     }
 
-    fn base_filename(distribution: &Distribution, fallback_name: Option<&str>) -> (String, bool) {
+    /// Name a distribution whose own metadata reduces away to nothing.
+    fn default_filename(distribution: &Distribution) -> String {
+        let extension = Self::format_extension(distribution.format.as_deref())
+            .unwrap_or_else(|| "dat".to_string());
+        format!("data.{extension}")
+    }
+
+    /// Reduce `format` to an extension, or `None` when nothing usable is left.
+    ///
+    /// `format` is metadata from the same untrusted record as the title, and it
+    /// is appended to a path, so it is a second way in.
+    fn format_extension(format: Option<&str>) -> Option<String> {
+        let extension = util::sanitize_path_component(&format?.to_lowercase());
+        if extension.is_empty() || extension == "." {
+            return None;
+        }
+        Some(extension)
+    }
+
+    fn base_filename(distribution: &Distribution, fallback_name: Option<&str>) -> String {
         if let Some(title) = &distribution.title {
             return Self::apply_format_extension(title, distribution.format.as_deref());
         }
@@ -255,27 +322,25 @@ impl DataGovClient {
             && !last.is_empty()
             && last.contains('.')
         {
-            return (last.to_string(), true);
+            return last.to_string();
         }
         let stem = fallback_name.unwrap_or("data");
-        if let Some(fmt) = &distribution.format {
-            (format!("{stem}.{}", fmt.to_lowercase()), true)
-        } else {
-            (format!("{stem}.dat"), true)
+        match Self::format_extension(distribution.format.as_deref()) {
+            Some(extension) => format!("{stem}.{extension}"),
+            None => format!("{stem}.dat"),
         }
     }
 
-    fn apply_format_extension(name: &str, format: Option<&str>) -> (String, bool) {
-        match format {
-            Some(fmt) => {
-                let lower = fmt.to_lowercase();
-                if name.to_lowercase().ends_with(&format!(".{lower}")) {
-                    (name.to_string(), true)
+    fn apply_format_extension(name: &str, format: Option<&str>) -> String {
+        match Self::format_extension(format) {
+            Some(extension) => {
+                if name.to_lowercase().ends_with(&format!(".{extension}")) {
+                    name.to_string()
                 } else {
-                    (format!("{name}.{lower}"), true)
+                    format!("{name}.{extension}")
                 }
             }
-            None => (name.to_string(), name.contains('.')),
+            None => name.to_string(),
         }
     }
 
@@ -320,11 +385,14 @@ impl DataGovClient {
 
         Self::perform_download(
             &self.http_client,
-            url,
-            &output_path,
-            distribution.title.clone(),
-            None,
-            self.config.allow_private_network_downloads,
+            DownloadJob {
+                url,
+                output_dir: &output_dir,
+                output_path: &output_path,
+                resource_name: distribution.title.clone(),
+                dataset_name: None,
+                allow_private_network: self.config.allow_private_network_downloads,
+            },
             self.reporter(),
         )
         .await?;
@@ -426,11 +494,14 @@ impl DataGovClient {
 
                 DataGovClient::perform_download(
                     &http_client,
-                    url,
-                    &output_path,
-                    distribution.title.clone(),
-                    None,
-                    allow_private_network,
+                    DownloadJob {
+                        url,
+                        output_dir: &output_dir,
+                        output_path: &output_path,
+                        resource_name: distribution.title.clone(),
+                        dataset_name: None,
+                        allow_private_network,
+                    },
                     status_reporter,
                 )
                 .await?;
@@ -450,13 +521,18 @@ impl DataGovClient {
 
     async fn perform_download(
         http_client: &reqwest::Client,
-        url: &str,
-        output_path: &Path,
-        resource_name: Option<String>,
-        dataset_name: Option<String>,
-        allow_private_network: bool,
+        job: DownloadJob<'_>,
         status_reporter: Option<Arc<dyn StatusReporter + Send + Sync>>,
     ) -> Result<()> {
+        let DownloadJob {
+            url,
+            output_dir,
+            output_path,
+            resource_name,
+            dataset_name,
+            allow_private_network,
+        } = job;
+
         let notify_failure =
             |message: String, status_reporter: &Option<Arc<dyn StatusReporter + Send + Sync>>| {
                 if let Some(reporter) = status_reporter.as_ref() {
@@ -478,11 +554,16 @@ impl DataGovClient {
             return Err(err);
         }
 
-        if let Some(parent) = output_path.parent()
-            && let Err(err) = tokio::fs::create_dir_all(parent).await
-        {
+        // Only the directory the user chose is created. Nothing a derived
+        // filename asks for is created before that filename has been judged.
+        if let Err(err) = tokio::fs::create_dir_all(output_dir).await {
             notify_failure(err.to_string(), &status_reporter);
             return Err(err.into());
+        }
+
+        if let Err(err) = util::ensure_inside(output_dir, output_path).await {
+            notify_failure(err.to_string(), &status_reporter);
+            return Err(err);
         }
 
         let response = match http_client.get(url).send().await {
@@ -555,6 +636,13 @@ impl DataGovClient {
             if let Some(reporter) = status_reporter.as_ref() {
                 reporter.on_download_progress(&progress);
             }
+        }
+
+        // Dropping a `tokio::fs::File` does not flush it, so without this the
+        // last chunk can be lost and the transfer still reported as complete.
+        if let Err(err) = file.flush().await {
+            notify_failure(err.to_string(), &status_reporter);
+            return Err(err.into());
         }
 
         if let Some(reporter) = status_reporter.as_ref() {
