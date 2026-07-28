@@ -24,8 +24,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   could not be validated anywhere. Replace `.spatial_filter("geospatial")` with
   `.spatial_filter(SpatialFilter::Geospatial)`. The two variants match the wire
   values in the published OpenAPI document exactly.
-- **`CatalogError` has a new `InvalidPathSegment` variant** (#71). Code matching
-  the enum exhaustively must add an arm.
+- **`CatalogError` has new `InvalidPathSegment` and `InvalidPerPage` variants**
+  (#71, #111). Code matching the enum exhaustively must add arms.
+- **`SearchParams::sort` takes a `SortOrder` enum** (#77), not a string. The API
+  silently ignores a value it does not recognise, so a typo returned plausible
+  wrong results with no error: live-probed, `sort=BOGUS_NOT_A_SORT` echoes
+  `"relevance"` and returns the unfiltered baseline with HTTP 200. Replace
+  `.sort("popularity")` with `.sort(SortOrder::Popularity)`. The four variants
+  and their wire values come from the API's own OpenAPI document.
 
 ### Breaking - data-gov-ckan
 
@@ -253,8 +259,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `util::join_inside` in `data-gov`, which joins a component onto a directory and
   refuses a result that leaves it.
 - `DataGovConfig::with_private_network_downloads`.
-- `SpatialFilter`, `Configuration::with_timeouts`, `DEFAULT_CONNECT_TIMEOUT`, and
-  `DEFAULT_TIMEOUT` in `data-gov-catalog`, all re-exported from the crate root.
+- `SpatialFilter`, `SortOrder`, `Configuration::with_timeouts`,
+  `DEFAULT_CONNECT_TIMEOUT`, and `DEFAULT_TIMEOUT` in `data-gov-catalog`, all
+  re-exported from the crate root.
 - `Configuration::with_timeouts` in `data-gov-ckan`, the supported way to build a
   client with specific timeouts.
 
