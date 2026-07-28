@@ -213,6 +213,53 @@ fn package_search_with_non_uuid_organization_id_does_not_fail_the_page() {
     }
 }
 
+// --- autocomplete endpoints (#102) ------------------------------------------
+//
+// unit_tests.rs's own header comment used to justify hand-writing the four
+// `*_autocomplete` wiremock bodies by claiming they "return either a bare
+// array of strings or a 3-4 field struct with no id or numeric field of the
+// kind #63/#62 affected." Half of that was never checked against a live
+// portal: `OrganizationAutocomplete` and `GroupAutocomplete` both declare
+// `id: Option<String>`, and data.gov.ie -- already in this crate's capture
+// set -- returns a real one for both. These fixtures are the correction;
+// see the updated note in unit_tests.rs.
+
+/// Live evidence for #102: `organization_autocomplete` returns a real,
+/// non-UUID slug id, so `OrganizationAutocomplete::id` deserializing was
+/// never actually exercised by any hand-written test body that omitted it.
+#[test]
+fn organization_autocomplete_returns_a_real_slug_id() {
+    let result = result_of("organization_autocomplete.json");
+    let orgs: Vec<models::OrganizationAutocomplete> = serde_json::from_value(result)
+        .expect("organization_autocomplete.json result does not deserialize");
+
+    assert!(!orgs.is_empty(), "capture has no organization suggestions");
+    let central = orgs
+        .iter()
+        .find(|o| o.name.as_deref() == Some("central-statistics-office"))
+        .expect(
+            "fixture no longer suggests the Central Statistics Office for q=central; recapture",
+        );
+    assert_eq!(central.id.as_deref(), Some("central-statistics-office"));
+}
+
+/// The same acceptance case for `group_autocomplete`: data.gov.ie's one
+/// group carries CKAN's default UUID id -- still a real, present `id`, not
+/// the absence the pre-fix policy note claimed for this endpoint.
+#[test]
+fn group_autocomplete_returns_a_real_id() {
+    let result = result_of("group_autocomplete.json");
+    let groups: Vec<models::GroupAutocomplete> = serde_json::from_value(result)
+        .expect("group_autocomplete.json result does not deserialize");
+
+    assert!(!groups.is_empty(), "capture has no group suggestions");
+    let hale = groups
+        .iter()
+        .find(|g| g.name.as_deref() == Some("haleandhearty"))
+        .expect("fixture no longer suggests the haleandhearty group for q=hale; recapture");
+    assert!(hale.id.is_some(), "group id missing");
+}
+
 // --- error responses -------------------------------------------------------
 
 #[test]

@@ -1,5 +1,17 @@
 {
   "fixtures": {
+    "group_autocomplete.json": {
+      "endpoint": "/api/3/action/group_autocomplete?q=hale",
+      "status": 200,
+      "source": "https://data.gov.ie",
+      "captured": "2026-07-28"
+    },
+    "organization_autocomplete.json": {
+      "endpoint": "/api/3/action/organization_autocomplete?q=central",
+      "status": 200,
+      "source": "https://data.gov.ie",
+      "captured": "2026-07-28"
+    },
     "organization_list.json": {
       "endpoint": "/data/en/api/3/action/organization_list?sort=name&limit=5",
       "status": 200,

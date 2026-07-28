@@ -34,13 +34,29 @@
 //!   `package_show_validation_error.json`) came back over a non-2xx status;
 //!   no live capture in this branch's set exercises the success:false path
 //!   at HTTP 200, so those tests stay synthetic.
-//! - **Flat, low-risk response shapes**: `group_list`, and the four
-//!   `*_autocomplete` endpoints, return either a bare array of strings or a
-//!   3-4 field struct with no id or numeric field of the kind #63/#62
-//!   affected. They were not part of #102's required capture set
-//!   (`package_search`, `package_show`, `organization_list`, error
-//!   responses), and a hand-written body for them carries little of the risk
-//!   the fixture work exists to catch.
+//! - **Genuinely flat, low-risk response shapes**: `group_list`,
+//!   `tag_autocomplete`, and `resource_format_autocomplete` return a bare
+//!   array of strings -- no field at all for a deserialization bug to hide
+//!   behind. `dataset_autocomplete`'s hand-written body is also low-risk:
+//!   `DatasetAutocomplete.id` is `Option<String>`, but `package_autocomplete`
+//!   never actually sends one on a live portal (verified against
+//!   data.gov.ie), so the field being absent from the test body matches the
+//!   field being absent on the wire.
+//!
+//!   An earlier version of this note extended that same claim -- "no id ...
+//!   field" -- to `organization_autocomplete` and `group_autocomplete`, and
+//!   that was wrong: `OrganizationAutocomplete` and `GroupAutocomplete` both
+//!   declare `id: Option<String>`, and both endpoints do send a real one on
+//!   data.gov.ie (a non-UUID slug such as `central-statistics-office` for
+//!   organizations, CKAN's default UUID for its one group). The hand-written
+//!   body below for `organization_autocomplete_parses_response` omits `id`
+//!   entirely, and `group_autocomplete` had no wiremock test at all -- so
+//!   neither model's `id` field was exercised anywhere (#102).
+//!   `organization_autocomplete.json` and `group_autocomplete.json`,
+//!   captured from data.gov.ie, now drive
+//!   `organization_autocomplete_returns_a_real_slug_id` and
+//!   `group_autocomplete_returns_a_real_id` in `fixture_parity_tests.rs`.
+//!   The wiremock test below stays focused on request shaping, as before.
 //! - **Client-side behavior with no response body to speak of**: the
 //!   credential, user-agent, Debug-redaction, and timeout tests below
 //!   configure a `Configuration` and assert what the *client* sends or

@@ -1,0 +1,21 @@
+{
+  "help": "https://data.gov.ie/api/3/action/help_show?name=organization_autocomplete",
+  "success": true,
+  "result": [
+    {
+      "id": "central-bank-of-ireland",
+      "name": "central-bank-of-ireland",
+      "title": "Central Bank of Ireland"
+    },
+    {
+      "id": "central-statistics-office",
+      "name": "central-statistics-office",
+      "title": "Central Statistics Office"
+    },
+    {
+      "id": "central-applications-office",
+      "name": "central-applications-office",
+      "title": "Central Applications Office"
+    }
+  ]
+}

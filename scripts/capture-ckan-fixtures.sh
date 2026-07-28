@@ -15,7 +15,10 @@
 #                     organizations were created with an explicit slug id
 #                     instead of CKAN's default make_uuid() -- the live
 #                     acceptance case for #63 (entity ids are not always
-#                     UUIDs).
+#                     UUIDs). Also the source for organization_autocomplete.json
+#                     and group_autocomplete.json (#102): both endpoints
+#                     return a real `id`, contradicting a policy note in
+#                     unit_tests.rs that once claimed they had none.
 #   data.qld.gov.au   Queensland's open-data portal. Emits resource.size as a
 #                     human-formatted string ("523 KiB"), not a number -- the
 #                     live acceptance case for the string-size half of #62.
@@ -82,6 +85,14 @@ CANADA_PKG="432527ab-7aac-45b5-81d6-7597107a7013"
 # Pinned to Ireland's Central Statistics Office, a stable organization with a
 # non-UUID id ("central-statistics-office") -- the live #63 acceptance case.
 IE_ORG="central-statistics-office"
+# Prefix that autocompletes to the Central Statistics Office (#102): proves
+# organization_autocomplete returns a real, non-UUID id, not the "no id
+# field" the pre-fix policy note in unit_tests.rs claimed.
+IE_ORG_AUTOCOMPLETE_Q="central"
+# data.gov.ie has exactly one group; "hale" is the shortest prefix that
+# still autocompletes to it alone, so the pin is precise rather than
+# hoping the result set stays small (#102).
+IE_GROUP_AUTOCOMPLETE_Q="hale"
 QLD_PKG="coastal-data-system-near-real-time-wave-data"
 ABSENT_ID="this-dataset-does-not-exist-abc123xyz"
 
@@ -98,6 +109,10 @@ get "$CANADA" "/data/en/api/3/action/package_show"                            pa
 # --- data.gov.ie: non-UUID entity ids (#63) ---------------------------------
 get "$IE" "/api/3/action/organization_list?all_fields=true&sort=name&limit=10" organization_list_slug_ids.json
 get "$IE" "/api/3/action/package_search?fq=organization:$IE_ORG&rows=3"        package_search_non_uuid_org_id.json
+
+# --- data.gov.ie: autocomplete endpoints actually return an id (#102) ------
+get "$IE" "/api/3/action/organization_autocomplete?q=$IE_ORG_AUTOCOMPLETE_Q"    organization_autocomplete.json
+get "$IE" "/api/3/action/group_autocomplete?q=$IE_GROUP_AUTOCOMPLETE_Q"        group_autocomplete.json
 
 # --- data.qld.gov.au: resource.size as a formatted string (#62) ------------
 get "$QLD" "/api/3/action/package_show?id=$QLD_PKG"                            resource_size_as_string.json
@@ -148,6 +163,20 @@ if qld is not None:
     if not any(isinstance(s, str) for s in sizes):
         print("WARNING: the pinned data.qld.gov.au dataset no longer sends size as a string.")
         print("Find a new resource with a string size and update this script's QLD_PKG pin.")
+
+org_autocomplete = load("organization_autocomplete.json")
+if org_autocomplete is not None:
+    results = org_autocomplete.get("result", [])
+    if not results or not all(r.get("id") for r in results):
+        print("WARNING: organization_autocomplete.json no longer returns an id on every result.")
+        print("This is the live evidence for #102's corrected policy note -- investigate before editing it back.")
+
+group_autocomplete = load("group_autocomplete.json")
+if group_autocomplete is not None:
+    results = group_autocomplete.get("result", [])
+    if not results or not all(r.get("id") for r in results):
+        print("WARNING: group_autocomplete.json no longer returns an id on every result.")
+        print("This is the live evidence for #102's corrected policy note -- investigate before editing it back.")
 PY
 
 # Record provenance for everything captured this run, merging over any entry
