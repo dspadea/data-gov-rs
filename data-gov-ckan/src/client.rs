@@ -85,22 +85,26 @@ impl Configuration {
     }
 }
 
+/// Build a [`reqwest::Client`] with an explicit connect and request timeout.
+///
+/// `ClientBuilder::build()` only fails for structurally invalid client
+/// configuration (a bad TLS backend or proxy setup); a builder that sets only
+/// timeouts cannot fail in practice. Fall back to an untimed client rather
+/// than panicking, per #48's acceptance criteria -- a client with no timeout
+/// is still strictly better than no client at all.
+fn build_client(connect_timeout: Duration, timeout: Duration) -> reqwest::Client {
+    reqwest::Client::builder()
+        .connect_timeout(connect_timeout)
+        .timeout(timeout)
+        .build()
+        .unwrap_or_else(|_| reqwest::Client::new())
+}
+
 impl Default for Configuration {
     fn default() -> Self {
         let connect_timeout = DEFAULT_CONNECT_TIMEOUT;
         let timeout = DEFAULT_TIMEOUT;
-
-        // `ClientBuilder::build()` only fails for structurally invalid
-        // client configuration (a bad TLS backend or proxy setup); a builder
-        // that sets only timeouts cannot fail in practice. Fall back to an
-        // untimed client rather than panicking, per #48's acceptance
-        // criteria -- a client with no timeout is still strictly better than
-        // no client at all.
-        let client = reqwest::Client::builder()
-            .connect_timeout(connect_timeout)
-            .timeout(timeout)
-            .build()
-            .unwrap_or_else(|_| reqwest::Client::new());
+        let client = build_client(connect_timeout, timeout);
 
         Configuration {
             // catalog.data.gov (the old default) is a confirmed 404: data.gov
@@ -952,9 +956,7 @@ mod tests {
     async fn build_client_applies_the_given_request_timeout() {
         let server = MockServer::start().await;
         Mock::given(method("GET"))
-            .respond_with(
-                ResponseTemplate::new(200).set_delay(Duration::from_secs(10)),
-            )
+            .respond_with(ResponseTemplate::new(200).set_delay(Duration::from_secs(10)))
             .mount(&server)
             .await;
 
