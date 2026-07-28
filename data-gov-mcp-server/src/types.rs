@@ -229,9 +229,42 @@ pub(crate) struct AutocompleteParams {
     pub limit: Option<i32>,
 }
 
+/// MCP protocol versions this server can speak, oldest first.
+///
+/// Version identifiers are dates marking the last backwards-incompatible
+/// change, not a sequence — a client asking for one we do not list gets
+/// [`LATEST_PROTOCOL_VERSION`] instead.
+pub(crate) const SUPPORTED_PROTOCOL_VERSIONS: &[&str] =
+    &["2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25"];
+
+/// The newest protocol version this server supports.
+///
+/// Returned when the client requests a version we do not recognise, or omits
+/// the field entirely.
+pub(crate) const LATEST_PROTOCOL_VERSION: &str = "2025-11-25";
+
+/// Resolve the protocol version for a session.
+///
+/// Per the MCP lifecycle spec: if the server supports the requested version it
+/// MUST reply with that same version; otherwise it MUST reply with another
+/// version it supports, which SHOULD be the latest.
+pub(crate) fn negotiate_protocol_version(requested: Option<&str>) -> &'static str {
+    requested
+        .and_then(|want| {
+            SUPPORTED_PROTOCOL_VERSIONS
+                .iter()
+                .find(|supported| **supported == want)
+                .copied()
+        })
+        .unwrap_or(LATEST_PROTOCOL_VERSION)
+}
+
 /// Parameters for `initialize`.
 #[derive(Debug, Default, Deserialize)]
 pub(crate) struct InitializeParams {
+    /// Protocol version the client wants to speak. Absent for older clients.
+    #[serde(default, rename = "protocolVersion")]
+    pub protocol_version: Option<String>,
     #[serde(default, rename = "clientInfo")]
     pub client_info: Option<ClientInfo>,
 }
@@ -247,6 +280,10 @@ pub(crate) struct ClientInfo {
 /// Result of the `initialize` handshake.
 #[derive(Debug, Serialize)]
 pub(crate) struct InitializeResult {
+    /// Negotiated protocol version. Required by the MCP schema — a client that
+    /// validates the result will abort the handshake without it.
+    #[serde(rename = "protocolVersion")]
+    pub protocol_version: &'static str,
     #[serde(rename = "serverInfo")]
     pub server_info: ServerInfo,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -256,21 +293,25 @@ pub(crate) struct InitializeResult {
 }
 
 impl InitializeResult {
-    /// Build an initialize result, echoing back client info if provided.
-    pub fn new(client_info: Option<ClientInfo>) -> Self {
+    /// Build an initialize result, negotiating the protocol version and
+    /// echoing back client info if provided.
+    pub fn new(requested_version: Option<&str>, client_info: Option<ClientInfo>) -> Self {
         let client_info = client_info.map(|info| ClientInfoSummary {
             name: info.name,
             version: info.version,
         });
 
         Self {
+            protocol_version: negotiate_protocol_version(requested_version),
             server_info: ServerInfo {
                 name: "data-gov-mcp-server",
                 version: env!("CARGO_PKG_VERSION"),
             },
+            // `listChanged` is the schema's name for this. Our tool list is
+            // static, so it is false: we never emit notifications/tools/list_changed.
             capabilities: Some(json!({
                 "tools": {
-                    "list": true
+                    "listChanged": false
                 }
             })),
             client_info,
@@ -334,6 +375,18 @@ pub(crate) struct CallToolParams {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    /// Revisions the MCP specification has actually published, oldest first.
+    ///
+    /// Deliberately literal. Deriving this from [`SUPPORTED_PROTOCOL_VERSIONS`]
+    /// would make every assertion below agree with whatever that constant happens
+    /// to say, so a revision quietly dropped — or invented — would stay green.
+    const PUBLISHED_MCP_REVISIONS: [&str; 4] =
+        ["2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25"];
+
+    /// The revision marked *current* at modelcontextprotocol.io/specification/versioning.
+    /// Bumping this is a deliberate act of adopting a new spec, not a side effect.
+    const CURRENT_MCP_REVISION: &str = "2025-11-25";
 
     #[test]
     fn parse_required_params_succeeds_with_valid_json() {
@@ -581,7 +634,7 @@ mod tests {
 
     #[test]
     fn initialize_result_without_client_info() {
-        let result = InitializeResult::new(None);
+        let result = InitializeResult::new(None, None);
         assert_eq!(result.server_info.name, "data-gov-mcp-server");
         assert!(result.client_info.is_none());
         assert!(result.capabilities.is_some());
@@ -593,9 +646,151 @@ mod tests {
             name: "test-client".to_string(),
             version: Some("1.0".to_string()),
         };
-        let result = InitializeResult::new(Some(info));
+        let result = InitializeResult::new(None, Some(info));
         let ci = result.client_info.expect("should have client_info");
         assert_eq!(ci.name, "test-client");
         assert_eq!(ci.version.as_deref(), Some("1.0"));
+    }
+
+    /// MCP 2025-11-25, Version Negotiation: "If the server supports the
+    /// requested protocol version, it MUST respond with the same version."
+    ///
+    /// The revision list is literal on purpose. Iterating
+    /// `SUPPORTED_PROTOCOL_VERSIONS` would only prove `find(x in L) == x`,
+    /// which holds for any contents of `L` — including a list that has never
+    /// heard of the current revision.
+    #[test]
+    fn negotiate_echoes_every_published_revision() {
+        for revision in PUBLISHED_MCP_REVISIONS {
+            assert!(
+                SUPPORTED_PROTOCOL_VERSIONS.contains(&revision),
+                "{revision} is a published MCP revision but is no longer advertised: \
+                 {SUPPORTED_PROTOCOL_VERSIONS:?}"
+            );
+            assert_eq!(negotiate_protocol_version(Some(revision)), revision);
+        }
+        for advertised in SUPPORTED_PROTOCOL_VERSIONS {
+            assert!(
+                PUBLISHED_MCP_REVISIONS.contains(advertised),
+                "{advertised} is not a published MCP revision"
+            );
+        }
+        assert_eq!(LATEST_PROTOCOL_VERSION, CURRENT_MCP_REVISION);
+    }
+
+    /// "Otherwise, the server MUST respond with another protocol version it
+    /// supports. This SHOULD be the latest version supported by the server."
+    /// The MUST is membership in the advertised set; the SHOULD is recency.
+    #[test]
+    fn negotiate_never_answers_with_an_unsupported_version() {
+        for requested in [
+            Some("1999-01-01"),
+            Some("2025-11-24"),  // one day off a real revision
+            Some("2025-11-25 "), // trailing whitespace is a different identifier
+            Some("1.0.0"),       // the spec's own error example
+            Some("latest"),
+            Some(""),
+            None,
+        ] {
+            let answered = negotiate_protocol_version(requested);
+            assert!(
+                SUPPORTED_PROTOCOL_VERSIONS.contains(&answered),
+                "negotiating {requested:?} answered {answered:?}, which this server cannot speak"
+            );
+            assert_eq!(
+                answered, CURRENT_MCP_REVISION,
+                "fallback SHOULD be the current revision"
+            );
+        }
+    }
+
+    /// The fallback clause is about which revision is *newest*, not which array
+    /// slot it occupies. `.last()` is positional: a newest-first list with
+    /// `LATEST` pointing at the oldest revision passes that while downgrading
+    /// every client. `YYYY-MM-DD` makes lexicographic max chronological, and
+    /// the shape check below is what licenses using `max()`.
+    #[test]
+    fn latest_protocol_version_is_the_newest_supported() {
+        let newest = SUPPORTED_PROTOCOL_VERSIONS
+            .iter()
+            .copied()
+            .max()
+            .expect("a server must support at least one revision");
+        assert_eq!(LATEST_PROTOCOL_VERSION, newest);
+        assert_eq!(
+            LATEST_PROTOCOL_VERSION, CURRENT_MCP_REVISION,
+            "server advertises {LATEST_PROTOCOL_VERSION} as its latest, but the current \
+             published MCP revision is {CURRENT_MCP_REVISION}"
+        );
+
+        let mut sorted = SUPPORTED_PROTOCOL_VERSIONS.to_vec();
+        sorted.sort_unstable();
+        sorted.dedup();
+        assert_eq!(
+            sorted.as_slice(),
+            SUPPORTED_PROTOCOL_VERSIONS,
+            "SUPPORTED_PROTOCOL_VERSIONS must be sorted oldest-first with no duplicates"
+        );
+
+        for v in SUPPORTED_PROTOCOL_VERSIONS {
+            let b = v.as_bytes();
+            assert!(
+                b.len() == 10
+                    && b[4] == b'-'
+                    && b[7] == b'-'
+                    && b.iter().filter(|c| c.is_ascii_digit()).count() == 8,
+                "MCP revisions are YYYY-MM-DD date strings, got {v:?}"
+            );
+        }
+    }
+
+    /// `InitializeResult` requires protocolVersion, capabilities and serverInfo;
+    /// serverInfo requires name and version. Probing every advertised revision
+    /// rather than one is what kills a constructor that never reads its
+    /// argument — with a single probe, a hardcoded constant is
+    /// indistinguishable from working negotiation.
+    #[test]
+    fn initialize_result_serializes_protocol_version_and_spec_capabilities() {
+        for requested in SUPPORTED_PROTOCOL_VERSIONS {
+            let v = serde_json::to_value(InitializeResult::new(Some(requested), None))
+                .expect("serializes");
+            assert_eq!(
+                v["protocolVersion"].as_str(),
+                Some(*requested),
+                "a supported version must be echoed verbatim, got: {v}"
+            );
+        }
+
+        for unsupported in ["1999-01-01", "", "latest", "2.0"] {
+            let v = serde_json::to_value(InitializeResult::new(Some(unsupported), None))
+                .expect("serializes");
+            let answered = v["protocolVersion"]
+                .as_str()
+                .expect("a string protocolVersion");
+            assert!(
+                SUPPORTED_PROTOCOL_VERSIONS.contains(&answered),
+                "answered {answered:?} for unsupported {unsupported:?}"
+            );
+            assert_eq!(answered, CURRENT_MCP_REVISION);
+        }
+
+        let v = serde_json::to_value(InitializeResult::new(None, None)).expect("serializes");
+        assert_eq!(v["protocolVersion"].as_str(), Some(CURRENT_MCP_REVISION));
+        assert_eq!(v["capabilities"]["tools"]["listChanged"], json!(false));
+        assert!(
+            v["capabilities"]["tools"].get("list").is_none(),
+            "`list` is not a key of the tools capability"
+        );
+        assert!(
+            v.get("server_info").is_none(),
+            "result keys are camelCase, got: {v}"
+        );
+        assert_eq!(v["serverInfo"]["name"], "data-gov-mcp-server");
+        assert!(
+            v["serverInfo"]["version"]
+                .as_str()
+                .is_some_and(|s| !s.is_empty()),
+            "serverInfo.version must be a non-empty string, got: {v}"
+        );
     }
 }

@@ -53,7 +53,8 @@ impl DataGovMcpServer {
         match method {
             "initialize" => {
                 let params: InitializeParams = parse_optional_params(method, params)?;
-                let result = InitializeResult::new(params.client_info);
+                let result =
+                    InitializeResult::new(params.protocol_version.as_deref(), params.client_info);
                 Ok(serde_json::to_value(result).map_err(ServerError::Serialization)?)
             }
             "initialized" => Ok(Value::Null),

@@ -9,6 +9,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.5.0] - Unreleased
 
+### Breaking
+
+- **MCP `initialize` now returns the required `protocolVersion`** and negotiates
+  it (#44). The server advertises `2024-11-05`, `2025-03-26`, `2025-06-18`, and
+  `2025-11-25`: a version it supports is echoed verbatim, anything else (or an
+  omitted field) gets `2025-11-25`. Previously the field was absent entirely, so
+  any client validating the result against the MCP schema aborted the handshake
+  and no tool was ever reachable.
+- **`capabilities.tools` now uses `listChanged`, not `list`** (#44). `list` is
+  not a key in the MCP schema. If you were reading `capabilities.tools.list`,
+  read `capabilities.tools.listChanged` instead — it is `false`, since the tool
+  list is static.
+- **The unsolicited `ready` line on stdout is gone** (#29). The server previously
+  wrote `{"jsonrpc":"2.0","id":null,"result":{...}}` before any request, which
+  matches no MCP message shape and is not valid JSON-RPC either — a `result`
+  response with a null id corresponds to no request. stdout is now silent until
+  the server answers a request. If you were parsing that line for the method
+  list, call `tools/list` after `initialize` instead. The same information still
+  goes to stderr via `tracing` at startup.
+
 ### Changed
 
 - All dependencies refreshed to their latest semver-compatible releases.

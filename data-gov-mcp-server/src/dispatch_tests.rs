@@ -17,7 +17,15 @@ use wiremock::matchers::{method as wm_method, path as wm_path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 use crate::server::DataGovMcpServer;
-use crate::types::ServerError;
+use crate::types::{SUPPORTED_PROTOCOL_VERSIONS, ServerError};
+
+/// Revisions the MCP specification has actually published, oldest first.
+/// Literal on purpose: deriving it from `SUPPORTED_PROTOCOL_VERSIONS` would
+/// make these assertions agree with whatever that constant says.
+const PUBLISHED_MCP_REVISIONS: [&str; 4] = ["2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25"];
+
+/// The revision marked *current* at modelcontextprotocol.io/specification/versioning.
+const CURRENT_MCP_REVISION: &str = "2025-11-25";
 
 /// Build a `DataGovMcpServer` whose internal client points at the given mock
 /// URL. Callers mount `Mock`s on the same server before exercising a dispatch
@@ -256,9 +264,184 @@ async fn dispatch_initialize_returns_raw_response() {
         "initialize is not a tool — must not be wrapped"
     );
     assert!(
-        result.get("serverInfo").is_some() || result.get("protocolVersion").is_some(),
-        "initialize result should carry server metadata, got: {result}"
+        result.get("serverInfo").is_some(),
+        "initialize result should carry serverInfo, got: {result}"
     );
+    assert!(
+        result.get("protocolVersion").is_some(),
+        "initialize result must carry protocolVersion (MCP requires it), got: {result}"
+    );
+}
+
+/// MCP 2025-11-25, Lifecycle / Version Negotiation: "If the server supports the
+/// requested protocol version, it MUST respond with the same version."
+#[tokio::test]
+async fn initialize_echoes_every_published_revision_verbatim() {
+    let server = test_server("http://127.0.0.1:1");
+
+    assert!(
+        SUPPORTED_PROTOCOL_VERSIONS.contains(&CURRENT_MCP_REVISION),
+        "server must speak the current MCP revision; advertises {SUPPORTED_PROTOCOL_VERSIONS:?}"
+    );
+
+    for requested in PUBLISHED_MCP_REVISIONS {
+        let result = server
+            .dispatch(
+                "initialize",
+                Some(json!({
+                    "protocolVersion": requested,
+                    "capabilities": {},
+                    "clientInfo": { "name": "test-client", "version": "0.0.0" }
+                })),
+            )
+            .await
+            .unwrap_or_else(|err| panic!("initialize({requested}) must succeed: {err}"));
+
+        assert_eq!(
+            result.get("protocolVersion").and_then(Value::as_str),
+            Some(requested),
+            "{requested} is a published revision this server advertises, so the spec \
+             requires echoing it verbatim; got: {result}"
+        );
+    }
+
+    for advertised in SUPPORTED_PROTOCOL_VERSIONS {
+        assert!(
+            PUBLISHED_MCP_REVISIONS.contains(advertised),
+            "{advertised} is not a published MCP revision"
+        );
+    }
+}
+
+/// "Otherwise, the server MUST respond with another protocol version it
+/// supports. This SHOULD be the latest version supported by the server."
+/// The MUST is membership; the SHOULD is recency. Neither is asserted against
+/// `LATEST_PROTOCOL_VERSION`, which would compare the code with itself.
+#[tokio::test]
+async fn initialize_negotiates_unknown_or_absent_versions_to_the_current_revision() {
+    let server = test_server("http://127.0.0.1:1");
+
+    for requested in [
+        "1999-01-01",
+        "2025-06-19",
+        "2026-11-25",
+        "1.0.0",
+        "2025-11-25 ",
+        "",
+    ] {
+        let result = server
+            .dispatch("initialize", Some(json!({ "protocolVersion": requested })))
+            .await
+            .unwrap_or_else(|err| panic!("initialize({requested:?}) must not error: {err}"));
+
+        let answered = result
+            .get("protocolVersion")
+            .and_then(Value::as_str)
+            .unwrap_or_else(|| panic!("protocolVersion must be a string, got: {result}"));
+
+        assert_ne!(
+            answered, requested,
+            "an unsupported version must never be echoed back"
+        );
+        assert!(
+            SUPPORTED_PROTOCOL_VERSIONS.contains(&answered),
+            "answered {answered:?}, which this server does not support"
+        );
+        assert_eq!(
+            answered, CURRENT_MCP_REVISION,
+            "fallback SHOULD be the latest we speak"
+        );
+    }
+
+    for params in [
+        None,
+        Some(json!({})),
+        Some(json!({ "protocolVersion": null })),
+    ] {
+        let shown = format!("{params:?}");
+        let result = server
+            .dispatch("initialize", params)
+            .await
+            .unwrap_or_else(|err| panic!("initialize({shown}) must not error: {err}"));
+        assert_eq!(
+            result.get("protocolVersion").and_then(Value::as_str),
+            Some(CURRENT_MCP_REVISION),
+            "omitted version must default to the current revision; params {shown} got: {result}"
+        );
+    }
+}
+
+/// MCP 2025-11-25, server/tools: "Servers that support tools MUST declare the
+/// `tools` capability". `listChanged` is optional in the schema but typed
+/// boolean, and it is a behavioural promise: this server never emits
+/// `notifications/tools/list_changed`, so the honest value is false. Declaring
+/// a capability the dispatcher cannot serve breaks the lifecycle rule that both
+/// parties "only use capabilities that were successfully negotiated".
+#[tokio::test]
+async fn initialize_declares_only_capabilities_the_server_can_serve() {
+    let server = test_server("http://127.0.0.1:1");
+    let result = server
+        .dispatch("initialize", Some(json!({})))
+        .await
+        .expect("initialize should succeed");
+
+    let caps = result
+        .get("capabilities")
+        .and_then(Value::as_object)
+        .unwrap_or_else(|| panic!("capabilities is required and must be an object: {result}"));
+
+    let tools = caps
+        .get("tools")
+        .and_then(Value::as_object)
+        .unwrap_or_else(|| panic!("a tool server MUST declare capabilities.tools: {result}"));
+
+    assert_eq!(
+        tools.get("listChanged"),
+        Some(&json!(false)),
+        "listChanged is typed boolean, and this server never emits \
+         notifications/tools/list_changed, so it must be false; got: {tools:?}"
+    );
+
+    // Whitelist, not a blacklist of the one historical bug: the next invented
+    // key ("listChange", "list_changed") must fail too.
+    let unknown: Vec<&str> = tools
+        .keys()
+        .map(String::as_str)
+        .filter(|key| *key != "listChanged")
+        .collect();
+    assert!(
+        unknown.is_empty(),
+        "not MCP tools-capability keys: {unknown:?}"
+    );
+
+    for declared in caps.keys() {
+        assert!(
+            matches!(
+                declared.as_str(),
+                "tools" | "prompts" | "resources" | "logging" | "completions" | "experimental"
+            ),
+            "`{declared}` is not a server capability in the 2025-11-25 schema"
+        );
+    }
+
+    // Anything advertised must actually dispatch. A capability answered with
+    // -32601 is worse than an undeclared one: the client finds out mid-session.
+    for (capability, probe) in [
+        ("prompts", "prompts/list"),
+        ("resources", "resources/list"),
+        ("completions", "completion/complete"),
+        ("logging", "logging/setLevel"),
+    ] {
+        if caps.contains_key(capability) {
+            assert!(
+                !matches!(
+                    server.dispatch(probe, Some(json!({}))).await,
+                    Err(ServerError::InvalidMethod(_))
+                ),
+                "initialize declares `{capability}` but `{probe}` answers -32601"
+            );
+        }
+    }
 }
 
 #[tokio::test]
