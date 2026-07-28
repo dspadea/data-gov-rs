@@ -611,6 +611,50 @@ A useful check: **ask what happens when this field holds a value nobody
 anticipated.** If the answer is "the whole request fails", the type is too
 strict for a boundary.
 
+### Make the wrong call fail to compile
+
+A library consumer is a first-class user of this workspace, equal to the person
+at the terminal and the agent over MCP (see AGENTS.md). So public surface is
+judged on ergonomics, not only on correctness: **ask what the wrong call looks
+like, and whether the compiler catches it.** Prefer making an invalid state
+unrepresentable over documenting that it is invalid.
+
+**The recurring failure here is a public field with builder-only validation.**
+One design decision produced four separately-filed defects, and each was
+triaged as its own bug before anyone saw the pattern:
+
+| Issue | What a consumer wrote | What happened |
+|---|---|---|
+| #73 | `max_concurrent_downloads: 0` in a struct literal | Bypassed the builder's `max(1)`, built a zero-permit semaphore, hung forever with no error |
+| #106 | `user_agent` in a struct literal | Left `catalog_config.user_agent` stale, so metadata and downloads went out under two identities |
+| #107 | `download_timeout_secs: 0` | Clamped nowhere; every download failed instantly |
+| #72 | `Configuration { timeout, ..default() }` in `data-gov-ckan` | Silent no-op - `client` was already built from the old value |
+
+Each was documented behaviour. Documentation did not stop any of them, because
+the field sits in plain sight next to the thing a consumer is looking for.
+
+So, for anything `pub`:
+
+- **`#[non_exhaustive]` on every config struct and every error enum.** It stops
+  a struct literal from bypassing a constructor, and it makes adding an error
+  variant a non-breaking change. Adding the attribute later is itself breaking,
+  so it belongs in the release that is already breaking.
+- **Validate at the point of use, not only in the builder.** A builder is a
+  convenience, never the enforcement. Clamp where the value is consumed.
+- **Where a value cannot take effect after construction, take it in the
+  constructor rather than exposing a field.** A `reqwest::Client` bakes its
+  timeouts in when it is built, so a settable `timeout` field silently stops
+  applying. `Configuration::with_timeouts` is the shape that cannot lie.
+- **A fixed set of valid values is an enum, not a string** - and where the
+  server ignores an invalid value rather than rejecting it, the enum is the only
+  thing standing between a caller and silently wrong results.
+
+**Anything the CLI or the MCP server can do that the library cannot is a
+layering defect, not a missing convenience.** Both are meant to be thin faces
+over identical behaviour. When a capability exists only in a binary - the
+download selector is the standing example - domain logic has leaked into a
+transport, and a library consumer has to reimplement it.
+
 ### Prefer borrowing over cloning
 
 Accept `&str` instead of `String`, `&[T]` instead of `Vec<T>`, and `&Path`
@@ -1034,8 +1078,14 @@ the ones you cannot see. A fresh context does not share the anchor. So:
   moment a reviewer knows what you decided, they are checking your reasoning
   rather than the code.
 - Where more than one reviewer runs, give each a **distinct lens** - correctness,
-  security, does-the-failure-actually-reproduce - rather than repeating one pass.
-  Separate lenses catch what redundancy cannot.
+  security, ergonomics, does-the-failure-actually-reproduce - rather than
+  repeating one pass. Separate lenses catch what redundancy cannot.
+- **Ergonomics is one of those lenses, not a finishing touch.** A correctness
+  pass finds defects one at a time; an ergonomics pass finds the decision that
+  keeps producing them. The four config defects above were found separately over
+  months and share one cause, which no amount of per-issue review surfaced.
+  Where a change touches public surface, review it as consumer code: write the
+  call, compile it, and see what the type system permits.
 - This applies to every deliverable, not only code. A design, a fixture set, or
   a document gets the same two passes against its own bar.
 
