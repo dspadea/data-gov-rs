@@ -644,13 +644,7 @@ impl DataGovClient {
         }
         drop(file);
 
-        if let Some(expected) = total_size
-            && progress.downloaded_bytes != expected
-        {
-            let message = format!(
-                "download of {url} ended after {} of {expected} bytes",
-                progress.downloaded_bytes
-            );
+        if let Some(message) = Self::short_transfer(url, total_size, progress.downloaded_bytes) {
             Self::discard_partial(&temp_path).await;
             notify_failure(message.clone(), &status_reporter);
             return Err(DataGovError::download_error(message));
@@ -672,6 +666,31 @@ impl DataGovClient {
         }
 
         Ok(())
+    }
+
+    /// Say why `received` bytes do not satisfy a declared `expected` length.
+    ///
+    /// Returns `None` when the counts agree, or when the response declared no
+    /// length at all - a chunked body has nothing to be measured against.
+    ///
+    /// # A backstop, not the primary check
+    ///
+    /// HTTP/1.1 and HTTP/2 both frame a body by its declared length, so hyper
+    /// rejects a truncated body as an incomplete message before the transfer
+    /// reaches this comparison. That is why it holds for every transport this
+    /// client currently speaks and is still worth keeping: it is what catches a
+    /// body that arrives in full but does not match what was promised, on any
+    /// transport that does not frame by length. It is covered by unit tests
+    /// rather than by an end-to-end one, because no HTTP version this client
+    /// speaks can be made to reach it.
+    fn short_transfer(url: &str, expected: Option<u64>, received: u64) -> Option<String> {
+        let expected = expected?;
+        if received == expected {
+            return None;
+        }
+        Some(format!(
+            "download of {url} ended after {received} of {expected} bytes"
+        ))
     }
 
     /// A temporary path in `output_dir` for a transfer still in progress.
@@ -883,6 +902,50 @@ mod tests {
         let out = DataGovClient::get_downloadable_distributions(&ds);
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].title.as_deref(), Some("csv"));
+    }
+
+    #[test]
+    fn a_transfer_matching_its_declared_length_is_accepted() {
+        assert_eq!(
+            DataGovClient::short_transfer("https://example.gov/data.csv", Some(4096), 4096),
+            None,
+            "a body that arrived in full is not short"
+        );
+    }
+
+    #[test]
+    fn a_transfer_short_of_its_declared_length_is_reported_with_both_counts() {
+        let message = DataGovClient::short_transfer("https://example.gov/data.csv", Some(4096), 37)
+            .expect("37 of 4096 bytes is not a completed download");
+        assert!(message.contains("37"), "got: {message}");
+        assert!(message.contains("4096"), "got: {message}");
+        assert!(
+            message.contains("https://example.gov/data.csv"),
+            "the failure must name what was being fetched, got: {message}"
+        );
+    }
+
+    /// More than was promised is as much a mismatch as less. A body that
+    /// overruns its declared length is not the file the server described.
+    #[test]
+    fn a_transfer_longer_than_its_declared_length_is_reported() {
+        assert!(
+            DataGovClient::short_transfer("https://example.gov/data.csv", Some(10), 11).is_some(),
+            "11 bytes under a declared 10 is a mismatch"
+        );
+    }
+
+    #[test]
+    fn a_transfer_with_no_declared_length_has_nothing_to_fall_short_of() {
+        assert_eq!(
+            DataGovClient::short_transfer("https://example.gov/data.csv", None, 0),
+            None,
+            "a chunked body declares no length, so no count can contradict it"
+        );
+        assert_eq!(
+            DataGovClient::short_transfer("https://example.gov/data.csv", None, 9_000),
+            None
+        );
     }
 
     fn client_with_download_dir(dir: std::path::PathBuf) -> DataGovClient {

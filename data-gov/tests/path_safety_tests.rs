@@ -332,6 +332,61 @@ async fn an_absolute_title_does_not_replace_the_output_directory() {
     );
 }
 
+/// The containment backstop, driven through a real download.
+///
+/// The sanitizer yields a safe single component for every title in the hostile
+/// matrix, so the backstop is never what refuses those. The case it exists for
+/// is a symbolic link already sitting at the destination and pointing out of
+/// the chosen directory - which no title can produce and no reduction can see.
+#[cfg(unix)]
+#[tokio::test]
+async fn a_destination_linked_out_of_the_directory_refuses_the_download() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path_regex(r"^/payload$"))
+        .respond_with(ResponseTemplate::new(200).set_body_bytes(b"payload bytes".to_vec()))
+        .mount(&server)
+        .await;
+
+    let tmp = TempDir::new().expect("tempdir");
+    let output_dir = tmp.path().join("chosen");
+    let outside = tmp.path().join("elsewhere");
+    std::fs::create_dir_all(&output_dir).expect("output dir");
+    std::fs::create_dir_all(&outside).expect("outside dir");
+
+    let victim = outside.join("victim.txt");
+    std::fs::write(&victim, b"the file that was already there").expect("seed the victim");
+
+    // The derived filename for this distribution, standing where the download
+    // is about to write.
+    let destination = output_dir.join("report.csv");
+    std::os::unix::fs::symlink(&victim, &destination).expect("symlink");
+
+    let client = test_client(&output_dir);
+    let dist = distribution(&format!("{}/payload", server.uri()), "report", "csv");
+
+    let error = client
+        .download_distribution(&dist, Some(&output_dir))
+        .await
+        .expect_err("a destination linked out of the chosen directory must be refused");
+
+    assert!(
+        matches!(error, data_gov::DataGovError::ValidationError { .. }),
+        "expected a containment refusal, got {error:?}"
+    );
+    assert_eq!(
+        std::fs::read(&victim).expect("read the victim back"),
+        b"the file that was already there",
+        "nothing may be written through the link"
+    );
+    assert!(
+        std::fs::symlink_metadata(&destination)
+            .expect("the destination must still be there")
+            .is_symlink(),
+        "the link must be left as it was, not replaced by a downloaded file"
+    );
+}
+
 #[tokio::test]
 async fn downloading_the_same_distribution_twice_leaves_one_correct_file() {
     let server = MockServer::start().await;

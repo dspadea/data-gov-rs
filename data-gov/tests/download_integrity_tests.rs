@@ -9,7 +9,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use data_gov::catalog::models::Distribution;
-use data_gov::{DataGovClient, DataGovConfig, OperatingMode};
+use data_gov::{DataGovClient, DataGovConfig, DataGovError, OperatingMode};
 use tempfile::TempDir;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
@@ -180,8 +180,15 @@ async fn a_failed_transfer_does_not_disturb_the_complete_file_already_there() {
     );
 }
 
+/// A body that stops short of its `Content-Length` is a failed download.
+///
+/// The refusal comes from HTTP/1.1 framing: hyper rejects the truncated body as
+/// an incomplete message, so the client's own declared-length comparison is
+/// never reached over this transport. That comparison is a backstop and is
+/// covered by unit tests on `short_transfer`; asserting the variant here keeps
+/// this test honest about which layer actually decides.
 #[tokio::test]
-async fn a_body_shorter_than_its_declared_length_is_not_a_success() {
+async fn a_body_shorter_than_its_declared_length_is_reported_as_a_transport_failure() {
     let tmp = TempDir::new().expect("tempdir");
     // Declares 4096 bytes and sends 5.
     let origin = scripted_origin(4096, vec![b"short".to_vec()], Duration::ZERO).await;
@@ -190,13 +197,23 @@ async fn a_body_shorter_than_its_declared_length_is_not_a_success() {
 
     let outcome = client.download_distribution(&dist, Some(tmp.path())).await;
 
-    assert!(
-        outcome.is_err(),
-        "a body shorter than its Content-Length was reported as a completed download: {outcome:?}"
-    );
-    assert!(
-        !tmp.path().join("report.csv").exists(),
-        "nothing may be left at the destination"
+    match outcome {
+        Err(DataGovError::HttpError(err)) => {
+            assert!(
+                err.is_decode() || err.is_body(),
+                "the failure must come from reading the body, got: {err:?}"
+            );
+        }
+        Err(other) => panic!("expected a transport failure reading the body, got {other:?}"),
+        Ok(path) => panic!(
+            "a body shorter than its Content-Length was reported as a completed download at {path:?}"
+        ),
+    }
+
+    assert_eq!(
+        entries(tmp.path()),
+        Vec::<String>::new(),
+        "neither the destination nor a temporary file may be left behind"
     );
 }
 
@@ -231,12 +248,16 @@ async fn a_whole_body_still_lands_and_the_temporary_file_is_gone() {
 #[tokio::test]
 async fn a_slow_but_steady_transfer_outlasts_the_configured_timeout() {
     let tmp = TempDir::new().expect("tempdir");
-    let pieces: Vec<Vec<u8>> = (0..6).map(|i| format!("chunk-{i};").into_bytes()).collect();
+    let pieces: Vec<Vec<u8>> = (0..15)
+        .map(|i| format!("chunk-{i};").into_bytes())
+        .collect();
     let declared: usize = pieces.iter().map(Vec::len).sum();
-    // Six pieces 400ms apart is 2.4s of transfer, with no gap longer than
-    // 400ms. The timeout is 1s.
-    let origin = scripted_origin(declared, pieces, Duration::from_millis(400)).await;
-    let client = client_for(tmp.path(), 1);
+    // Fifteen pieces 200ms apart is 3s of transfer against a 2s timeout, and no
+    // gap is longer than a tenth of it. The earlier shape left 600ms of slack
+    // between the gap and the timeout, which a loaded runner can eat.
+    let timeout = Duration::from_secs(2);
+    let origin = scripted_origin(declared, pieces, Duration::from_millis(200)).await;
+    let client = client_for(tmp.path(), timeout.as_secs());
     let dist = distribution(&format!("{origin}/report"), "report", "csv");
 
     let started = Instant::now();
@@ -247,7 +268,7 @@ async fn a_slow_but_steady_transfer_outlasts_the_configured_timeout() {
     let elapsed = started.elapsed();
 
     assert!(
-        elapsed > Duration::from_secs(1),
+        elapsed > timeout,
         "the transfer has to outlast the timeout for this to prove anything, took {elapsed:?}"
     );
     assert_eq!(
