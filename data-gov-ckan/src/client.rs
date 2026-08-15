@@ -535,6 +535,20 @@ impl CkanClient {
     /// - Text search with wildcard: `q=climat*`
     /// - Phrase search: `q="air quality"`
     /// - Complex filter: `fq=organization:epa-gov AND res_format:CSV`
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CkanError::RequestError`] if the request cannot be sent or
+    /// its body cannot be read: connection failure, timeout, DNS or TLS
+    /// error, or a dropped connection while reading the response.
+    ///
+    /// Returns [`CkanError::ApiError`] for any non-2xx response. A
+    /// malformed `fq` lands here as a 400 from CKAN's Solr backend rather
+    /// than being rejected locally, because the syntax is passed through
+    /// unparsed.
+    ///
+    /// Returns [`CkanError::ParseError`] if the body arrives whole but is
+    /// not the search envelope CKAN documents.
     pub async fn package_search(
         &self,
         q: Option<&str>,
@@ -656,11 +670,35 @@ impl CkanClient {
     /// - **Temporal**: Creation date, modification date, temporal coverage
     /// - **Spatial**: Geographic coverage and bounding boxes
     /// - **Custom Fields**: Agency-specific metadata extensions
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CkanError::RequestError`] if the request cannot be sent or
+    /// its body cannot be read: connection failure, timeout, DNS or TLS
+    /// error, or a dropped connection while reading the response.
+    ///
+    /// Returns [`CkanError::ApiError`] for any non-2xx response, carrying
+    /// CKAN's status and, where CKAN sent an error envelope, its message.
+    ///
+    /// Returns [`CkanError::ParseError`] if the body arrives whole but is
+    /// not the JSON shape this action returns.
     pub async fn package_show(&self, id: &str) -> Result<models::Package, CkanError> {
         self.call_action("package_show", &[("id", id)]).await
     }
 
     /// List all organizations in the CKAN instance
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CkanError::RequestError`] if the request cannot be sent or
+    /// its body cannot be read: connection failure, timeout, DNS or TLS
+    /// error, or a dropped connection while reading the response.
+    ///
+    /// Returns [`CkanError::ApiError`] for any non-2xx response, carrying
+    /// CKAN's status and, where CKAN sent an error envelope, its message.
+    ///
+    /// Returns [`CkanError::ParseError`] if the body arrives whole but is
+    /// not the JSON shape this action returns.
     pub async fn organization_list(
         &self,
         sort: Option<&str>,
@@ -685,6 +723,18 @@ impl CkanClient {
     }
 
     /// List all groups in the CKAN instance
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CkanError::RequestError`] if the request cannot be sent or
+    /// its body cannot be read: connection failure, timeout, DNS or TLS
+    /// error, or a dropped connection while reading the response.
+    ///
+    /// Returns [`CkanError::ApiError`] for any non-2xx response, carrying
+    /// CKAN's status and, where CKAN sent an error envelope, its message.
+    ///
+    /// Returns [`CkanError::ParseError`] if the body arrives whole but is
+    /// not the JSON shape this action returns.
     pub async fn group_list(
         &self,
         sort: Option<&str>,
@@ -763,6 +813,18 @@ impl CkanClient {
     ///     Ok(())
     /// }
     /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CkanError::RequestError`] if the request cannot be sent or
+    /// its body cannot be read: connection failure, timeout, DNS or TLS
+    /// error, or a dropped connection while reading the response.
+    ///
+    /// Returns [`CkanError::ApiError`] for any non-2xx response, carrying
+    /// CKAN's status and, where CKAN sent an error envelope, its message.
+    ///
+    /// Returns [`CkanError::ParseError`] if the body arrives whole but is
+    /// not the JSON shape this action returns.
     pub async fn dataset_autocomplete(
         &self,
         incomplete: Option<&str>,
@@ -782,6 +844,18 @@ impl CkanClient {
     }
 
     /// Get tag autocomplete suggestions
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CkanError::RequestError`] if the request cannot be sent or
+    /// its body cannot be read: connection failure, timeout, DNS or TLS
+    /// error, or a dropped connection while reading the response.
+    ///
+    /// Returns [`CkanError::ApiError`] for any non-2xx response, carrying
+    /// CKAN's status and, where CKAN sent an error envelope, its message.
+    ///
+    /// Returns [`CkanError::ParseError`] if the body arrives whole but is
+    /// not the JSON shape this action returns.
     pub async fn tag_autocomplete(
         &self,
         incomplete: Option<&str>,
@@ -805,6 +879,18 @@ impl CkanClient {
     }
 
     /// Get user autocomplete suggestions
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CkanError::RequestError`] if the request cannot be sent or
+    /// its body cannot be read: connection failure, timeout, DNS or TLS
+    /// error, or a dropped connection while reading the response.
+    ///
+    /// Returns [`CkanError::ApiError`] for any non-2xx response, carrying
+    /// CKAN's status and, where CKAN sent an error envelope, its message.
+    ///
+    /// Returns [`CkanError::ParseError`] if the body arrives whole but is
+    /// not the JSON shape this action returns.
     pub async fn user_autocomplete(
         &self,
         q: Option<&str>,
@@ -876,6 +962,18 @@ impl CkanClient {
     /// // Finding groups for dataset categorization
     /// let energy_groups = client.group_autocomplete(Some("energy"), Some(5)).await?;
     /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CkanError::RequestError`] if the request cannot be sent or
+    /// its body cannot be read: connection failure, timeout, DNS or TLS
+    /// error, or a dropped connection while reading the response.
+    ///
+    /// Returns [`CkanError::ApiError`] for any non-2xx response, carrying
+    /// CKAN's status and, where CKAN sent an error envelope, its message.
+    ///
+    /// Returns [`CkanError::ParseError`] if the body arrives whole but is
+    /// not the JSON shape this action returns.
     pub async fn group_autocomplete(
         &self,
         q: Option<&str>,
@@ -895,6 +993,18 @@ impl CkanClient {
     }
 
     /// Get organization autocomplete suggestions
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CkanError::RequestError`] if the request cannot be sent or
+    /// its body cannot be read: connection failure, timeout, DNS or TLS
+    /// error, or a dropped connection while reading the response.
+    ///
+    /// Returns [`CkanError::ApiError`] for any non-2xx response, carrying
+    /// CKAN's status and, where CKAN sent an error envelope, its message.
+    ///
+    /// Returns [`CkanError::ParseError`] if the body arrives whole but is
+    /// not the JSON shape this action returns.
     pub async fn organization_autocomplete(
         &self,
         q: Option<&str>,
@@ -914,6 +1024,18 @@ impl CkanClient {
     }
 
     /// Get resource format autocomplete suggestions
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CkanError::RequestError`] if the request cannot be sent or
+    /// its body cannot be read: connection failure, timeout, DNS or TLS
+    /// error, or a dropped connection while reading the response.
+    ///
+    /// Returns [`CkanError::ApiError`] for any non-2xx response, carrying
+    /// CKAN's status and, where CKAN sent an error envelope, its message.
+    ///
+    /// Returns [`CkanError::ParseError`] if the body arrives whole but is
+    /// not the JSON shape this action returns.
     pub async fn resource_format_autocomplete(
         &self,
         incomplete: Option<&str>,

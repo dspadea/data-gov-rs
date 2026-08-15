@@ -14,3 +14,5 @@ warnings = "deny"
 
 [workspace.lints.clippy]
 all = "deny"
+missing_errors_doc = "deny"
+missing_panics_doc = "deny"

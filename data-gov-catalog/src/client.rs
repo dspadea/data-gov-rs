@@ -610,6 +610,13 @@ impl CatalogClient {
     ///
     /// The endpoint returns the full list in one response; there is no
     /// pagination today.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CatalogError::RequestError`] if the request cannot be sent
+    /// or its body cannot be read, [`CatalogError::ApiError`] for any
+    /// non-2xx status, and [`CatalogError::ParseError`] if the body is not
+    /// the shape this endpoint returns.
     pub async fn organizations(&self) -> Result<models::OrganizationsResponse, CatalogError> {
         self.get_json("/api/organizations", &[(); 0]).await
     }
@@ -618,6 +625,13 @@ impl CatalogClient {
     ///
     /// `size` caps the number of rows (server default 100, max 1000).
     /// `min_count` drops keywords with fewer than that many datasets.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CatalogError::RequestError`] if the request cannot be sent
+    /// or its body cannot be read, [`CatalogError::ApiError`] for any
+    /// non-2xx status, and [`CatalogError::ParseError`] if the body is not
+    /// the shape this endpoint returns.
     pub async fn keywords(
         &self,
         size: Option<i32>,
@@ -634,6 +648,13 @@ impl CatalogClient {
     }
 
     /// Autocomplete against known locations.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CatalogError::RequestError`] if the request cannot be sent
+    /// or its body cannot be read, [`CatalogError::ApiError`] for any
+    /// non-2xx status, and [`CatalogError::ParseError`] if the body is not
+    /// the shape this endpoint returns.
     pub async fn locations_search(
         &self,
         q: &str,
@@ -651,12 +672,34 @@ impl CatalogClient {
     /// The response is returned as a raw [`serde_json::Value`] because the
     /// shape is unconstrained GeoJSON and callers typically hand it straight
     /// to a mapping library.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CatalogError::InvalidPathSegment`] before any request is
+    /// made if `id` cannot be carried safely in a URL path segment - a
+    /// value that normalizes away would silently retarget the request.
+    ///
+    /// Returns [`CatalogError::RequestError`] if the request cannot be sent
+    /// or its body cannot be read, [`CatalogError::ApiError`] for any
+    /// non-2xx status, and [`CatalogError::ParseError`] if the body is not
+    /// the shape this endpoint returns.
     pub async fn location_geometry(&self, id: &str) -> Result<Value, CatalogError> {
         let path = format!("/api/location/{}", encode_path_segment(id)?);
         self.get_json(&path, &[(); 0]).await
     }
 
     /// Retrieve a harvest record's metadata envelope.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CatalogError::InvalidPathSegment`] before any request is
+    /// made if `id` cannot be carried safely in a URL path segment - a
+    /// value that normalizes away would silently retarget the request.
+    ///
+    /// Returns [`CatalogError::RequestError`] if the request cannot be sent
+    /// or its body cannot be read, [`CatalogError::ApiError`] for any
+    /// non-2xx status, and [`CatalogError::ParseError`] if the body is not
+    /// the shape this endpoint returns.
     pub async fn harvest_record(&self, id: &str) -> Result<models::HarvestRecord, CatalogError> {
         let path = format!("/harvest_record/{}", encode_path_segment(id)?);
         self.get_json(&path, &[(); 0]).await
@@ -667,6 +710,17 @@ impl CatalogClient {
     /// The payload is not constrained to a single shape — agencies post JSON,
     /// XML fragments, and DCAT records through the same surface — so the
     /// result is returned as [`serde_json::Value`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CatalogError::InvalidPathSegment`] before any request is
+    /// made if `id` cannot be carried safely in a URL path segment - a
+    /// value that normalizes away would silently retarget the request.
+    ///
+    /// Returns [`CatalogError::RequestError`] if the request cannot be sent
+    /// or its body cannot be read, [`CatalogError::ApiError`] for any
+    /// non-2xx status, and [`CatalogError::ParseError`] if the body is not
+    /// the shape this endpoint returns.
     pub async fn harvest_record_raw(&self, id: &str) -> Result<Value, CatalogError> {
         let path = format!("/harvest_record/{}/raw", encode_path_segment(id)?);
         self.get_json(&path, &[(); 0]).await

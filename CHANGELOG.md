@@ -303,6 +303,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   client with specific timeouts.
 
 ### Fixed
+- **`DataGovError::sanitized_message` no longer leaks the paths it promises to
+  remove** (#59). It documented itself as stripping filesystem paths, had no
+  test and no caller, and stripped only tokens that began with `/` or `./`.
+  Everything else went through untouched: a path containing a space kept the
+  half that names the file, `../secrets/key.txt` and `~/secrets/key.txt` were
+  passed through whole, and a quoted path - the shape error messages use most
+  often - defeated the check entirely, because the token began with a quote.
+  It now redacts a path wherever it appears and however it is punctuated,
+  keeping the surrounding punctuation. URLs still survive, since a public
+  catalog URL is usually what makes a failure actionable and discloses nothing
+  about the machine; `file://` does not, being a path wearing a scheme. Prose
+  such as `read/write` and `and/or` survives too.
 - **One non-UTF-8 byte no longer ends the MCP session** (#55). `next_line`
   returns an error on invalid UTF-8 and it propagated to `main`, so a single
   malformed byte killed the server for every subsequent well-formed request.
@@ -401,6 +413,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `data_gov::catalog` re-export. The lockfile drops from 308 to 279 crates.
 
 ### Infrastructure
+- **`clippy::missing_errors_doc` and `clippy::missing_panics_doc` are denied
+  workspace-wide** (#59), and the 24 public `Result`-returning functions that
+  had no `# Errors` section now have one naming the variants that call path can
+  actually produce. CLAUDE.md required the section; nothing enforced it, so it
+  was missing across three crates.
 
 - **Working docs are plain ASCII, and CI enforces it.** `CLAUDE.md` and the
   `justfile` used em-dashes and arrow glyphs throughout - characters nobody
