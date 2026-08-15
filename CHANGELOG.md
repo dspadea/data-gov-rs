@@ -311,6 +311,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `Error::downcast_mut()`.
 
 ### Added
+- **`data_gov::ui` is documented** (#59). The download progress-reporting port
+  - [`StatusReporter`] and its five event structs - carried no documentation at
+  all, so a consumer implementing it had to read the client's source to learn
+  the event order, that every method has a do-nothing default, that
+  `total_bytes: None` means unknown rather than empty, and that a blocking
+  implementation stalls the transfer that called it. All of that is now stated,
+  with an example.
 - MCP `ping` and `notifications/cancelled`. Cancelling drops the in-flight
   handler and sends no response, as the spec requires.
 - `util::join_inside` in `data-gov`, which joins a component onto a directory and
@@ -336,6 +343,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   was. The usual `SIGPIPE` fix needs `unsafe`, which this project forbids.
   `just check-print-macros` now fails the build if a bare `println!` returns
   to the CLI.
+- **`DataGovError::sanitized_message` no longer leaks the paths it promises to
+  remove** (#59). It documented itself as stripping filesystem paths, had no
+  test and no caller, and stripped only tokens that began with `/` or `./`.
+  Everything else went through untouched: a path containing a space kept the
+  half that names the file, `../secrets/key.txt` and `~/secrets/key.txt` were
+  passed through whole, and a quoted path - the shape error messages use most
+  often - defeated the check entirely, because the token began with a quote.
+  It now redacts a path wherever it appears and however it is punctuated,
+  keeping the surrounding punctuation. URLs still survive, since a public
+  catalog URL is usually what makes a failure actionable and discloses nothing
+  about the machine; `file://` does not, being a path wearing a scheme. Prose
+  such as `read/write` and `and/or` survives too.
 - **One non-UTF-8 byte no longer ends the MCP session** (#55). `next_line`
   returns an error on invalid UTF-8 and it propagated to `main`, so a single
   malformed byte killed the server for every subsequent well-formed request.
@@ -434,6 +453,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `data_gov::catalog` re-export. The lockfile drops from 308 to 279 crates.
 
 ### Infrastructure
+- **`clippy::missing_errors_doc` and `clippy::missing_panics_doc` are denied
+  workspace-wide** (#59), and the 24 public `Result`-returning functions that
+  had no `# Errors` section now have one naming the variants that call path can
+  actually produce. CLAUDE.md required the section; nothing enforced it, so it
+  was missing across three crates.
+- **`missing_docs` is denied in `data-gov-catalog`, `data-gov`, and
+  `data-gov-mcp-server`** (#59), clearing 100 undocumented public items: the 60
+  DCAT-US 3 model fields in the catalog crate, and in `data-gov` the whole
+  `ui` module, the error variants' fields, and the `client` and `error` module
+  docs. `data-gov-ckan` is deliberately not covered yet - its 170 model fields
+  are tracked in #118, and it is the crate data.gov no longer uses.
 
 - **Working docs are plain ASCII, and CI enforces it.** `CLAUDE.md` and the
   `justfile` used em-dashes and arrow glyphs throughout - characters nobody

@@ -1,3 +1,15 @@
+//! The high-level data.gov client.
+//!
+//! [`DataGovClient`] is the entry point for the crate: it searches the
+//! catalog, resolves datasets by slug or harvest record, and downloads
+//! distributions to disk. It wraps [`CatalogClient`] and adds what a consumer
+//! of the catalog needs but the transport should not carry - concurrency
+//! limits, filename derivation, path containment, and progress reporting
+//! through [`crate::ui::StatusReporter`].
+//!
+//! Construct one with [`DataGovClient::new`] for defaults, or
+//! [`DataGovClient::with_config`] to supply a [`DataGovConfig`].
+
 use futures::StreamExt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -47,6 +59,13 @@ struct DownloadJob<'a> {
 
 impl DataGovClient {
     /// Create a new DataGov client with default configuration.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DataGovError::ConfigError`] if the default configuration is
+    /// rejected, and [`DataGovError::HttpError`] if the underlying HTTP
+    /// client cannot be built - a missing or unusable TLS backend is the
+    /// realistic cause.
     pub fn new() -> Result<Self> {
         Self::with_config(DataGovConfig::new())
     }
@@ -133,6 +152,13 @@ impl DataGovClient {
     /// let next = client.search("climate", Some(20), page.after.as_deref(), None).await?;
     /// # Ok(()) }
     /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DataGovError::CatalogError`] if the Catalog API request
+    /// fails, returns a non-2xx status, or answers with a body that is not a
+    /// search envelope. `per_page` outside `1..=1000` is rejected before any
+    /// request is made.
     pub async fn search(
         &self,
         query: &str,
@@ -159,6 +185,14 @@ impl DataGovClient {
     /// Fetch a single dataset by its data.gov slug.
     ///
     /// Returns `Err(ResourceNotFound)` if no dataset matches.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DataGovError::ResourceNotFound`] if no dataset carries that
+    /// slug, which is an answer rather than a fault. Returns
+    /// [`DataGovError::CatalogError`] if the lookup itself fails - network,
+    /// non-2xx status other than 404, or an unparseable body - or if `slug`
+    /// cannot be carried in a URL path segment.
     pub async fn get_dataset(&self, slug: &str) -> Result<SearchHit> {
         self.catalog
             .dataset_by_slug(slug)
@@ -175,6 +209,13 @@ impl DataGovClient {
     /// keeps a `Result<Dataset>` signature, the same shape [`Self::get_dataset`]
     /// uses for its own not-found case, rather than pushing an `Option` onto
     /// every caller.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DataGovError::ResourceNotFound`] if the harvest record has
+    /// no populated transform, which is the common answer rather than a
+    /// fault. Returns [`DataGovError::CatalogError`] if the lookup itself
+    /// fails, or if `id` cannot be carried in a URL path segment.
     pub async fn get_dataset_by_harvest_record(&self, id: &str) -> Result<Dataset> {
         self.catalog
             .harvest_record_transformed(id)
@@ -190,6 +231,12 @@ impl DataGovClient {
     ///
     /// Implemented as a capped full-text search; the new API does not offer a
     /// dedicated dataset-autocomplete endpoint.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DataGovError::CatalogError`] if the underlying search
+    /// fails; this shares [`Self::search`]'s failure modes exactly, since it
+    /// is implemented on top of it.
     pub async fn autocomplete_datasets(
         &self,
         partial: &str,
@@ -204,6 +251,12 @@ impl DataGovClient {
     }
 
     /// List the publisher slugs for government organizations, capped to `limit`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DataGovError::CatalogError`] if the organizations request
+    /// fails, returns a non-2xx status, or answers with an unparseable body.
+    /// A negative `limit` is treated as no limit rather than an error.
     pub async fn list_organizations(&self, limit: Option<i32>) -> Result<Vec<String>> {
         let orgs = self.catalog.organizations().await?;
         let iter = orgs.organizations.into_iter().filter_map(|o| o.slug);
@@ -361,6 +414,16 @@ impl DataGovClient {
     ///   uses the configured base download directory.
     ///
     /// Returns the path where the file was written.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DataGovError::ValidationError`] if the distribution has no
+    /// download URL, if that URL is not a permitted target, or if the
+    /// derived filename would escape `output_dir`.
+    /// Returns [`DataGovError::HttpError`] if the transfer fails or the body
+    /// is shorter than its declared `Content-Length`, and
+    /// [`DataGovError::IoError`] if the file cannot be written or renamed
+    /// into place.
     pub async fn download_distribution(
         &self,
         distribution: &Distribution,
@@ -753,6 +816,13 @@ impl DataGovClient {
     /// Callers may run this concurrently against the same directory -- the
     /// MCP server does, on every download where `outputDir` is omitted --
     /// so the write-test probe must never share a name across calls (#112).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DataGovError::ConfigError`] if the path exists but is not a
+    /// directory, and [`DataGovError::IoError`] if the directory cannot be
+    /// created, or if the write probe cannot be written or removed - which
+    /// is what proves the directory is writable rather than merely present.
     pub async fn validate_download_dir(&self) -> Result<()> {
         let base_dir = self.config.get_base_download_dir();
 

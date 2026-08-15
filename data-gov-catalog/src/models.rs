@@ -109,8 +109,10 @@ pub struct Dataset {
     /// DCAT type hint, typically `"dcat:Dataset"`.
     #[serde(default, rename = "@type", skip_serializing_if = "Option::is_none")]
     pub type_hint: Option<String>,
+    /// Human-readable name of the dataset.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
+    /// Human-readable description of the dataset, as plain text.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
     /// Publisher-assigned identifier.
@@ -129,16 +131,21 @@ pub struct Dataset {
     /// ISO 8601 date the record was first issued.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub issued: Option<String>,
+    /// Organization that published the dataset.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub publisher: Option<Publisher>,
+    /// Person or role to contact about the dataset.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
         rename = "contactPoint"
     )]
     pub contact_point: Option<ContactPoint>,
+    /// Publisher-assigned tags. Free-form, and not drawn from any
+    /// controlled vocabulary.
     #[serde(default, deserialize_with = "deserialize_null_as_default")]
     pub keyword: Vec<String>,
+    /// Broad subject categories the publisher assigned.
     #[serde(default, deserialize_with = "deserialize_null_as_default")]
     pub theme: Vec<String>,
     /// Downloadable / accessible representations of the dataset.
@@ -151,28 +158,45 @@ pub struct Dataset {
         rename = "landingPage"
     )]
     pub landing_page: Option<String>,
+    /// URL of the licence the dataset is released under.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub license: Option<String>,
+    /// Explanation of who may access the dataset, where
+    /// [`Self::access_level`] is not `public`. Publishers send both
+    /// prose and single tokens such as `otherRestrictions` here.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rights: Option<String>,
+    /// Geographic coverage, as a place name or as a comma-separated
+    /// bounding box (`west,south,east,north`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub spatial: Option<String>,
+    /// Period the data covers, as an ISO 8601 interval.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub temporal: Option<String>,
+    /// How often the dataset is updated, as an ISO 8601 duration.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
         rename = "accrualPeriodicity"
     )]
     pub accrual_periodicity: Option<String>,
+    /// Languages the dataset is available in, as IETF language tags.
     #[serde(default, deserialize_with = "deserialize_null_as_default")]
     pub language: Vec<String>,
+    /// OMB bureau codes for the publishing agency, in `NNN:NN` form.
+    ///
+    /// Untyped because publishers are not consistent about whether
+    /// this arrives as a single string or an array of them, and a
+    /// strict type here would fail the whole record over one
+    /// publisher's choice.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
         rename = "bureauCode"
     )]
     pub bureau_code: Option<Value>,
+    /// OMB program codes, in `NNN:NNN` form. Untyped for the same
+    /// reason as [`Self::bureau_code`].
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
@@ -186,20 +210,26 @@ pub struct Dataset {
         rename = "describedBy"
     )]
     pub described_by: Option<String>,
+    /// Media type of the resource at [`Self::described_by`].
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
         rename = "describedByType"
     )]
     pub described_by_type: Option<String>,
+    /// URLs of related documents.
     #[serde(default, deserialize_with = "deserialize_null_as_default")]
     pub references: Vec<String>,
+    /// Whether the publisher asserts the dataset meets its agency's
+    /// information-quality guidelines.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
         rename = "dataQuality"
     )]
     pub data_quality: Option<bool>,
+    /// URL of the Privacy Act system-of-records notice covering the
+    /// dataset, where one applies.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
@@ -211,10 +241,13 @@ pub struct Dataset {
 /// One downloadable or API-accessible representation of a dataset.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Distribution {
+    /// DCAT type hint, typically `"dcat:Distribution"`.
     #[serde(default, rename = "@type", skip_serializing_if = "Option::is_none")]
     pub type_hint: Option<String>,
+    /// Human-readable name of this distribution.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
+    /// Human-readable description of this distribution.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
     /// Direct download URL for the distribution file.
@@ -233,14 +266,18 @@ pub struct Distribution {
     /// Short format label (e.g. `CSV`, `JSON`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub format: Option<String>,
+    /// URL of the licence this distribution is released under, where
+    /// it differs from the dataset's.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub license: Option<String>,
+    /// URL of a schema or data dictionary for this distribution.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
         rename = "describedBy"
     )]
     pub described_by: Option<String>,
+    /// Media type of the resource at [`Self::described_by`].
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
@@ -252,8 +289,10 @@ pub struct Distribution {
 /// DCAT publisher object (`org:Organization`).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Publisher {
+    /// DCAT type hint, typically `"org:Organization"`.
     #[serde(default, rename = "@type", skip_serializing_if = "Option::is_none")]
     pub type_hint: Option<String>,
+    /// Name of the organization.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
     /// Nested publisher (parent organization).
@@ -268,6 +307,7 @@ pub struct Publisher {
 /// DCAT contact point (`vcard:Contact`).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ContactPoint {
+    /// DCAT type hint, typically `"vcard:Contact"`.
     #[serde(default, rename = "@type", skip_serializing_if = "Option::is_none")]
     pub type_hint: Option<String>,
     /// Full name of the contact.
@@ -294,8 +334,11 @@ impl ContactPoint {
 /// Envelope returned by `/api/organizations`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OrganizationsResponse {
+    /// Every organization the catalog knows about. This endpoint
+    /// returns the full list in one response.
     #[serde(default, deserialize_with = "deserialize_null_as_default")]
     pub organizations: Vec<Organization>,
+    /// Number of organizations in [`Self::organizations`].
     #[serde(default)]
     pub total: i64,
 }
@@ -303,22 +346,38 @@ pub struct OrganizationsResponse {
 /// A publishing organization as the catalog knows it.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Organization {
+    /// Catalog-internal identifier.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub id: Option<String>,
+    /// Display name of the organization.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
+    /// URL-friendly identifier, and the value
+    /// [`SearchParams::org_slug`](crate::SearchParams::org_slug)
+    /// filters on.
+    ///
+    /// Read it from here rather than guessing it from the name: the
+    /// slug for NOAA is `noaa`, not `noaa-gov`, and the API answers a
+    /// wrong slug with an empty result rather than an error.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub slug: Option<String>,
+    /// Human-readable description of the organization.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    /// URL of the organization's logo.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub logo: Option<String>,
+    /// Category the catalog assigns to the organization, such as the
+    /// level of government it belongs to.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub organization_type: Option<String>,
+    /// Number of datasets the organization publishes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dataset_count: Option<i64>,
+    /// Number of harvest sources the organization operates.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_count: Option<i64>,
+    /// Other names the organization is known by.
     #[serde(default, deserialize_with = "deserialize_null_as_default")]
     pub aliases: Vec<String>,
 }
@@ -326,12 +385,18 @@ pub struct Organization {
 /// Envelope returned by `/api/keywords`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct KeywordsResponse {
+    /// Keywords ranked by the number of datasets carrying them,
+    /// most frequent first.
     #[serde(default, deserialize_with = "deserialize_null_as_default")]
     pub keywords: Vec<KeywordCount>,
+    /// Number of keywords in [`Self::keywords`].
     #[serde(default)]
     pub total: i64,
+    /// Row cap the server applied, echoing the requested `size`.
     #[serde(default)]
     pub size: i64,
+    /// Minimum dataset count a keyword needed to be included,
+    /// echoing the requested `min_count`.
     #[serde(default)]
     pub min_count: i64,
 }
@@ -339,17 +404,22 @@ pub struct KeywordsResponse {
 /// One keyword entry with its document-frequency count.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct KeywordCount {
+    /// The keyword itself.
     pub keyword: String,
+    /// Number of datasets carrying this keyword.
     pub count: i64,
 }
 
 /// Envelope returned by `/api/locations/search`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LocationsResponse {
+    /// Matching locations, best match first.
     #[serde(default, deserialize_with = "deserialize_null_as_default")]
     pub locations: Vec<Location>,
+    /// Number of locations in [`Self::locations`].
     #[serde(default)]
     pub total: i64,
+    /// Row cap the server applied, echoing the requested `size`.
     #[serde(default)]
     pub size: i64,
 }
@@ -357,7 +427,11 @@ pub struct LocationsResponse {
 /// A location suggestion.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Location {
+    /// Identifier to pass to
+    /// [`CatalogClient::location_geometry`](crate::CatalogClient::location_geometry)
+    /// to fetch this location's GeoJSON.
     pub id: String,
+    /// Human-readable place name.
     pub display_name: String,
 }
 
@@ -365,26 +439,44 @@ pub struct Location {
 /// distinct from the transformed DCAT payload).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HarvestRecord {
+    /// Identifier of this harvest record.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub id: Option<String>,
+    /// Identifier this dataset carried in the retired CKAN catalog,
+    /// where it had one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ckan_id: Option<String>,
+    /// Publisher-assigned identifier of the harvested dataset, which
+    /// is the same value as the DCAT record's `identifier`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub identifier: Option<String>,
+    /// Identifier of the parent record, for a dataset harvested as
+    /// part of a collection.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent_identifier: Option<String>,
+    /// Identifier of the harvest job that produced this record.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub harvest_job_id: Option<String>,
+    /// Identifier of the harvest source this record came from.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub harvest_source_id: Option<String>,
+    /// What the harvest did with this record, such as `update`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub action: Option<String>,
+    /// Outcome the harvester recorded for this record, such as
+    /// `success`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub status: Option<String>,
+    /// Timestamp the harvest of this record began, ISO 8601 without
+    /// a zone offset.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub date_created: Option<String>,
+    /// Timestamp the harvest of this record finished, ISO 8601
+    /// without a zone offset.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub date_finished: Option<String>,
+    /// Hex digest of the upstream payload, used to detect whether it
+    /// changed since the last harvest.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_hash: Option<String>,
     /// Raw upstream payload (often a large JSON object or XML string).

@@ -1,3 +1,9 @@
+//! MCP server exposing the data.gov catalog to AI agents.
+
+// Every public item in this crate carries a doc comment, and that is
+// enforced rather than remembered (#59).
+#![deny(missing_docs)]
+
 // A TLS backend is not optional: every endpoint this crate talks to is HTTPS.
 // Without one, reqwest builds an HTTP-only connector, the crate compiles clean,
 // and the first request fails at connect with "invalid URL, scheme is not http".
