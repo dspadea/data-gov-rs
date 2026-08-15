@@ -10,6 +10,7 @@ use data_gov::ui::{
 };
 
 use super::colors::ColorHelper;
+use super::output::{errln, outln};
 use super::{color_cyan, color_red_bold};
 
 pub struct CliStatusReporter {
@@ -108,10 +109,10 @@ impl StatusReporter for CliStatusReporter {
 
         if self.fancy_progress {
             if let Err(e) = self.multi.println(&msg) {
-                eprintln!("{msg} (progress display error: {e})");
+                errln!("{msg} (progress display error: {e})");
             }
         } else {
-            println!("{msg}");
+            outln!("{msg}");
         }
     }
 
@@ -127,9 +128,9 @@ impl StatusReporter for CliStatusReporter {
             let key = Self::bar_key(&event.output_path);
             self.lock_bars().insert(key, pb);
         } else if let Some(total) = event.total_bytes {
-            println!("Downloading {} ({} bytes)...", name, total);
+            outln!("Downloading {} ({} bytes)...", name, total);
         } else {
-            println!("Downloading {} ...", name);
+            outln!("Downloading {} ...", name);
         }
     }
 
@@ -159,7 +160,7 @@ impl StatusReporter for CliStatusReporter {
         }
 
         if self.show_progress {
-            println!("{} {}", self.color_helper.green("✓ Downloaded"), name);
+            outln!("{} {}", self.color_helper.green("✓ Downloaded"), name);
         }
     }
 
@@ -192,10 +193,10 @@ impl StatusReporter for CliStatusReporter {
             // No bar found — fall through to plain print
             let msg = format!("{} {} ({})", color_red_bold("✗"), display, event.error);
             if let Err(e) = self.multi.println(&msg) {
-                eprintln!("{msg} (progress display error: {e})");
+                errln!("{msg} (progress display error: {e})");
             }
         } else {
-            println!(
+            outln!(
                 "{} {} ({})",
                 color_red_bold("Failed:"),
                 display,

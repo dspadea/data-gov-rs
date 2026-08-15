@@ -8,6 +8,7 @@ use tokio::runtime::Runtime;
 
 use super::commands::{ListingCursor, ReplCommand, SessionContext};
 use super::display::{print_cli_help, print_package_details};
+use super::output::{errln, outln};
 use super::{
     color_blue, color_blue_bold, color_bold, color_cyan, color_dimmed, color_green,
     color_green_bold, color_red, color_red_err, color_yellow, color_yellow_bold,
@@ -218,9 +219,9 @@ fn validate_candidate_exists(
 fn print_select_result(ctx: &SessionContext) {
     let label = ctx.prompt_label();
     if label.is_empty() {
-        println!("{} Selection cleared", color_green_bold("OK"));
+        outln!("{} Selection cleared", color_green_bold("OK"));
     } else {
-        println!(
+        outln!(
             "{} Active context: {}",
             color_green_bold("OK"),
             color_yellow_bold(&label)
@@ -256,7 +257,7 @@ fn handle_search(
     // cases included, so a query that looks like it ends in a number
     // doesn't vanish without explanation.
     if let Some(applied_limit) = limit {
-        println!(
+        outln!(
             "{} {}",
             color_dimmed("Note:"),
             color_dimmed(&trailing_limit_notice(query, applied_limit))
@@ -264,14 +265,14 @@ fn handle_search(
     }
 
     if let Some(org_name) = org.as_deref() {
-        println!(
+        outln!(
             "{} '{}' in org {}...",
             color_cyan("Searching for"),
             query,
             color_yellow(org_name)
         );
     } else {
-        println!("{} '{}'...", color_cyan("Searching for"), query);
+        outln!("{} '{}'...", color_cyan("Searching for"), query);
     }
 
     let page = rt.block_on(client.search(query, Some(effective_limit), None, org.as_deref()))?;
@@ -312,7 +313,7 @@ fn trailing_limit_notice(query: &str, limit: i32) -> String {
 fn print_search_hits(hits: &[data_gov::catalog::models::SearchHit]) {
     for hit in hits {
         let slug = hit.slug.as_deref().unwrap_or("(no-slug)");
-        println!(
+        outln!(
             "{} {}",
             color_yellow_bold(slug),
             color_dimmed(hit.title.as_deref().unwrap_or(""))
@@ -325,7 +326,7 @@ fn print_search_hits(hits: &[data_gov::catalog::models::SearchHit]) {
             } else {
                 description.clone()
             };
-            println!("   {}", color_dimmed(&truncated));
+            outln!("   {}", color_dimmed(&truncated));
         }
     }
 }
@@ -351,7 +352,7 @@ fn listing_summary_line(
 /// Print the standard `Found N <unit>` line, with a `next` hint when more
 /// pages are available (REPL only — see [`listing_summary_line`]).
 fn summarize_listing(count: usize, after: Option<&str>, unit: &str, mode: &OperatingMode) {
-    println!("\n{}", listing_summary_line(count, after, unit, mode));
+    outln!("\n{}", listing_summary_line(count, after, unit, mode));
 }
 
 /// Advance the most recent paginated listing by one page. Errors clearly
@@ -432,7 +433,7 @@ fn handle_show(
     rt: &Runtime,
     dataset_slug: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    println!("{} dataset '{}'...", color_cyan("Fetching"), dataset_slug);
+    outln!("{} dataset '{}'...", color_cyan("Fetching"), dataset_slug);
 
     let hit = rt.block_on(client.get_dataset(dataset_slug))?;
     print_package_details(&hit);
@@ -488,13 +489,13 @@ fn handle_download(
         return Err("no dataset specified and none selected (use: select /org/dataset)".into());
     };
 
-    println!("{} dataset '{}'...", color_cyan("Fetching"), dataset_slug);
+    outln!("{} dataset '{}'...", color_cyan("Fetching"), dataset_slug);
 
     let hit = rt.block_on(client.get_dataset(dataset_slug))?;
     let distributions = downloadable_for(&hit)?;
 
     if distributions.is_empty() {
-        println!(
+        outln!(
             "{} No downloadable distributions found in this dataset.",
             color_yellow_bold("Warning:")
         );
@@ -561,7 +562,7 @@ fn download_selected(
     for selector in selectors {
         if let Ok(index) = selector.parse::<usize>() {
             if index >= distributions.len() {
-                eprintln!(
+                errln!(
                     "  {} '{}': index out of range (0-{})",
                     color_red_err("✗"),
                     selector,
@@ -584,7 +585,7 @@ fn download_selected(
                 .collect();
 
             if hits.is_empty() {
-                eprintln!(
+                errln!(
                     "  {} '{}': no matching distribution",
                     color_red_err("✗"),
                     selector
@@ -618,7 +619,7 @@ fn download_selected(
             match result {
                 Ok(path) => {
                     success_paths.insert(path.clone());
-                    println!(
+                    outln!(
                         "  {} {}: {}",
                         color_green("✓"),
                         color_yellow(label),
@@ -627,7 +628,7 @@ fn download_selected(
                 }
                 Err(e) => {
                     download_errors += 1;
-                    eprintln!(
+                    errln!(
                         "  {} {}: {}",
                         color_red_err("✗"),
                         label,
@@ -642,7 +643,7 @@ fn download_selected(
     let error_count = unmatched_selectors + download_errors;
 
     if success_count + error_count > 1 {
-        println!(
+        outln!(
             "\n{} {} downloaded, {} errors",
             color_bold("Summary:"),
             color_green(&success_count.to_string()),
@@ -665,7 +666,7 @@ fn download_selected(
 /// Written to stderr: it only ever prints alongside an error line, as
 /// context for diagnosing that error.
 fn print_available_distributions(distributions: &[Distribution]) {
-    eprintln!("    Available distributions:");
+    errln!("    Available distributions:");
     for (i, d) in distributions.iter().enumerate() {
         let title = d.title.as_deref().unwrap_or("(untitled)");
         let format = d
@@ -673,7 +674,7 @@ fn print_available_distributions(distributions: &[Distribution]) {
             .as_deref()
             .or(d.media_type.as_deref())
             .unwrap_or("?");
-        eprintln!("      {i} {title} [{format}]");
+        errln!("      {i} {title} [{format}]");
     }
 }
 
@@ -692,7 +693,7 @@ fn print_download_summary(
         match result {
             Ok(path) => {
                 success_count += 1;
-                println!(
+                outln!(
                     "  {} Distribution {}: {}",
                     color_green("✓"),
                     i,
@@ -701,7 +702,7 @@ fn print_download_summary(
             }
             Err(e) => {
                 error_count += 1;
-                eprintln!(
+                errln!(
                     "  {} Distribution {}: {}",
                     color_red_err("✗"),
                     i,
@@ -711,7 +712,7 @@ fn print_download_summary(
         }
     }
 
-    println!(
+    outln!(
         "\n{} {} downloaded, {} errors",
         color_bold("Summary:"),
         color_green(&success_count.to_string()),
@@ -776,13 +777,13 @@ fn list_organizations(
     client: &DataGovClient,
     rt: &Runtime,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    println!("{} organizations...", color_cyan("Fetching"));
+    outln!("{} organizations...", color_cyan("Fetching"));
     // The org list comes back as a single bulk response (~60-70 orgs);
     // there's no API-level pagination, so show them all.
     let orgs = rt.block_on(client.list_organizations(None))?;
-    println!("\n{} organizations:", color_green_bold("Government"));
+    outln!("\n{} organizations:", color_green_bold("Government"));
     for (i, org) in orgs.iter().enumerate() {
-        println!(
+        outln!(
             "{}. {}",
             color_blue_bold(&format!("{:2}", i + 1)),
             color_yellow(org)
@@ -797,11 +798,11 @@ fn list_org_datasets(
     ctx: &mut SessionContext,
     org: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    println!("{} datasets in '{}'...", color_cyan("Fetching"), org);
+    outln!("{} datasets in '{}'...", color_cyan("Fetching"), org);
     let page = rt.block_on(client.search("", Some(DEFAULT_PAGE_SIZE), None, Some(org)))?;
     if page.results.is_empty() {
         ctx.last_listing = None;
-        println!(
+        outln!(
             "{} No datasets found in '{}'.",
             color_yellow_bold("Note:"),
             org
@@ -850,7 +851,7 @@ fn print_dataset_hits(hits: &[data_gov::catalog::models::SearchHit]) {
             format!("  [{}]", tail_parts.join(", "))
         };
 
-        println!(
+        outln!(
             "{} {}{}",
             color_yellow_bold(slug),
             color_dimmed(title),
@@ -864,18 +865,18 @@ fn list_dataset_distributions(
     rt: &Runtime,
     slug: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    println!("{} distributions of '{}'...", color_cyan("Fetching"), slug);
+    outln!("{} distributions of '{}'...", color_cyan("Fetching"), slug);
     let hit = rt.block_on(client.get_dataset(slug))?;
     let distributions = downloadable_for(&hit)?;
     if distributions.is_empty() {
-        println!(
+        outln!(
             "{} No downloadable distributions in '{}'.",
             color_yellow_bold("Note:"),
             slug
         );
         return Ok(());
     }
-    println!(
+    outln!(
         "\n{} {} distributions:",
         color_green_bold("Found"),
         distributions.len()
@@ -891,7 +892,7 @@ fn list_dataset_distributions(
             .as_deref()
             .or(dist.media_type.as_deref())
             .unwrap_or("?");
-        println!(
+        outln!(
             "{}. {} [{}]",
             color_blue_bold(&format!("{:2}", i)),
             color_yellow(title),
@@ -903,22 +904,22 @@ fn list_dataset_distributions(
 
 /// Handle info command.
 fn handle_info(client: &DataGovClient, ctx: &SessionContext) {
-    println!("\n{}", color_blue_bold("📊 Client Information"));
+    outln!("\n{}", color_blue_bold("📊 Client Information"));
     let label = ctx.prompt_label();
     if !label.is_empty() {
-        println!("Active context:    {}", color_yellow_bold(&label));
+        outln!("Active context:    {}", color_yellow_bold(&label));
     }
     if let Some(org) = &ctx.org {
-        println!("Active org:        {}", color_yellow(org));
+        outln!("Active org:        {}", color_yellow(org));
     }
     if let Some(ds) = &ctx.dataset {
-        println!("Active dataset:    {}", color_yellow(ds));
+        outln!("Active dataset:    {}", color_yellow(ds));
     }
-    println!(
+    outln!(
         "Download directory: {}",
         color_blue(&client.download_dir().display().to_string())
     );
-    println!(
+    outln!(
         "Catalog endpoint:  {}",
         color_blue(&client.config().catalog_config.base_path)
     );

@@ -8,6 +8,7 @@ use tokio::runtime::Runtime;
 use super::commands::{ReplCommand, SessionContext};
 use super::display::print_repl_help;
 use super::handlers::execute_command;
+use super::output::outln;
 use super::{color_blue, color_blue_bold, color_dimmed, color_green_bold, color_red_bold};
 use data_gov::DataGovClient;
 
@@ -69,12 +70,12 @@ impl DataGovRepl {
     }
 
     pub fn run(&mut self) -> RustyResult<()> {
-        println!("{}", color_blue_bold("🇺🇸 Data.gov Interactive Explorer"));
-        println!(
+        outln!("{}", color_blue_bold("🇺🇸 Data.gov Interactive Explorer"));
+        outln!(
             "{}",
             color_dimmed("Type 'help' for available commands, 'quit' to exit")
         );
-        println!();
+        outln!();
 
         let mut rl = DefaultEditor::new()?;
 
@@ -123,29 +124,29 @@ impl DataGovRepl {
                 match ReplCommand::from_str(&line) {
                     Ok(command) => {
                         if let ReplCommand::Quit = command {
-                            println!("Goodbye! 👋");
+                            outln!("Goodbye! 👋");
                             return Ok(LoopControl::Stop);
                         }
 
                         if let Err(e) = self.handle_command(command) {
-                            println!("{} {}", color_red_bold("Error:"), e);
+                            outln!("{} {}", color_red_bold("Error:"), e);
                         }
                     }
                     Err(e) => {
-                        println!("{} {}", color_red_bold("Invalid command:"), e);
+                        outln!("{} {}", color_red_bold("Invalid command:"), e);
                     }
                 }
 
                 Ok(LoopControl::Continue)
             }
             LoopAction::Reprompt => {
-                println!("CTRL-C");
+                outln!("CTRL-C");
                 // Must keep looping — this is the exact wiring decision
                 // that regressed to `break` under #69.4.
                 Ok(LoopControl::Continue)
             }
             LoopAction::Exit(msg) => {
-                println!("{msg}");
+                outln!("{msg}");
                 Ok(LoopControl::Stop)
             }
         }
@@ -200,7 +201,7 @@ impl DataGovRepl {
             Ok::<(), data_gov::DataGovError>(())
         })?;
 
-        println!(
+        outln!(
             "{} Download directory set to: {}",
             color_green_bold("Success!"),
             color_blue(&path.display().to_string())
