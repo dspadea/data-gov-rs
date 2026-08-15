@@ -164,6 +164,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   goes to stderr via `tracing` at startup.
 
 ### Changed
+- **The MCP server now resolves configuration through the same chain as the
+  CLI** (#116). It previously read `DATA_GOV_BASE_URL` and
+  `DATA_GOV_USER_AGENT` by hand and built its configuration programmatically,
+  so `config.toml` (added in this release) had no effect on the agent-facing
+  front door, and `DATA_GOV_DOWNLOAD_DIR`,
+  `DATA_GOV_MAX_CONCURRENT_DOWNLOADS` and `DATA_GOV_DOWNLOAD_TIMEOUT_SECS`
+  were ignored outright. All five settings now resolve as
+  `environment variable > config file > built-in default` - the CLI's chain
+  without the flag layer the server does not have.
+
+  **What changes for you:** if you set any of those three environment
+  variables when launching the server, they now take effect where before they
+  did nothing. If you keep a `config.toml`, the server now honours it. The
+  environment still beats the file, so a host that sets variables is
+  unaffected. `DATA_GOV_BASE_URL` and `DATA_GOV_USER_AGENT` behave exactly as
+  before.
+
+  A `config.toml` that cannot be parsed, or a value that cannot work, now
+  stops the server at startup naming the setting, rather than being ignored.
+  Warnings go to stderr, never stdout, which carries the JSON-RPC stream.
 - **MCP responses may arrive out of order; correlate by `id`** (#65). The run
   loop awaited each handler before reading the next line, so a
   `downloadResources` call holding that await for minutes queued every later

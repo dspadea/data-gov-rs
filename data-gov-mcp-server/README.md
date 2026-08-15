@@ -157,14 +157,32 @@ This will configure VSCode to launch the MCP server and connect to it for tool-b
 
 ## Configuration
 
-Environment variables:
+**The server and the CLI resolve configuration by the same rules.** Both read
+`<config>/data-gov/config.toml` and the same environment variables, through one
+chain. The settings table, the file's location on each platform, and the
+per-setting details live in one place: the
+[configuration section of the `data-gov` README](../data-gov/README.md#the-config-file).
 
-- `DATA_GOV_BASE_URL` – Override the default Catalog API base URL
-  (defaults to `https://catalog.data.gov`).
-- `DATA_GOV_USER_AGENT` – Custom user agent applied to the client.
+The server takes no command-line flags, so the chain it sees is:
 
-These settings are optional; when omitted the defaults from the underlying
-library are used. The Catalog API does not require an API key.
+**environment variable > config file > built-in default**
+
+The environment wins over the file on purpose. An MCP server is launched by a
+host application with an environment of the host's choosing, and an operator
+who configures the host stays in charge of it - the file supplies what the host
+did not.
+
+All five settings apply: `download_dir`, `base_url`, `max_concurrent_downloads`,
+`download_timeout_secs`, and `user_agent`. `download_dir` is the default target
+for `data_gov_download_resources` when a call omits `outputDir`.
+
+Everything is optional; with nothing set anywhere the server runs on the
+built-in defaults. The Catalog API does not require an API key.
+
+A `config.toml` that cannot be read or parsed, or a value that cannot work,
+stops the server at startup with a message naming the setting - it does not
+run on settings the operator did not choose. Warnings go to **stderr**, never
+stdout, because stdout carries the JSON-RPC stream.
 
 ## Cargo features
 
