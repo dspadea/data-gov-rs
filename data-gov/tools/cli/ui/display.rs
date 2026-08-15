@@ -1,6 +1,7 @@
 use data_gov::DataGovClient;
 use data_gov::catalog::models::SearchHit;
 
+use super::output::outln;
 use super::{
     color_blue, color_blue_bold, color_bold, color_dimmed, color_green, color_green_bold,
     color_yellow, color_yellow_bold,
@@ -32,37 +33,37 @@ fn padded_green_bold(text: &str, width: usize) -> String {
 
 /// Print dataset details (shared between REPL and CLI modes).
 pub fn print_package_details(hit: &SearchHit) {
-    println!("\n{}", color_blue_bold("📦 Dataset Details"));
+    outln!("\n{}", color_blue_bold("📦 Dataset Details"));
     if let Some(slug) = &hit.slug {
-        println!("{}: {}", color_bold("Slug"), color_yellow(slug));
+        outln!("{}: {}", color_bold("Slug"), color_yellow(slug));
     }
 
     if let Some(title) = &hit.title {
-        println!("{}: {}", color_bold("Title"), title);
+        outln!("{}: {}", color_bold("Title"), title);
     }
 
     if let Some(description) = &hit.description {
-        println!("\n{}: ", color_bold("Description"));
-        println!("{}", color_dimmed(description));
+        outln!("\n{}: ", color_bold("Description"));
+        outln!("{}", color_dimmed(description));
     }
 
     if let Some(dcat) = &hit.dcat
         && let Some(license) = &dcat.license
     {
-        println!("\n{}: {}", color_bold("License"), color_green(license));
+        outln!("\n{}: {}", color_bold("License"), color_green(license));
     }
 
     if let Some(dcat) = &hit.dcat
         && let Some(contact) = &dcat.contact_point
         && let Some(name) = &contact.fn_
     {
-        println!("{}: {}", color_bold("Contact"), name);
+        outln!("{}: {}", color_bold("Contact"), name);
     }
 
     if let Some(org) = &hit.organization
         && let Some(name) = &org.name
     {
-        println!("{}: {}", color_bold("Organization"), name);
+        outln!("{}: {}", color_bold("Organization"), name);
     }
 
     let distributions = hit
@@ -72,7 +73,7 @@ pub fn print_package_details(hit: &SearchHit) {
         .unwrap_or_default();
 
     if !distributions.is_empty() {
-        println!(
+        outln!(
             "\n{} {} downloadable distributions:",
             color_bold("📁"),
             distributions.len()
@@ -86,7 +87,7 @@ pub fn print_package_details(hit: &SearchHit) {
                 .or(dist.media_type.as_deref())
                 .unwrap_or("Unknown");
 
-            println!(
+            outln!(
                 "  {}. {} {}",
                 color_blue_bold(&i.to_string()),
                 color_yellow(title),
@@ -102,36 +103,36 @@ pub fn print_package_details(hit: &SearchHit) {
                 } else {
                     desc.clone()
                 };
-                println!("     {}", color_dimmed(&truncated));
+                outln!("     {}", color_dimmed(&truncated));
             }
         }
 
         if let Some(slug) = &hit.slug {
-            println!(
+            outln!(
                 "\n{} Use 'data-gov download {}' to download all distributions",
                 color_bold("💡"),
                 color_yellow(slug)
             );
-            println!(
+            outln!(
                 "{} Use 'data-gov download {} <index|name>' to download by index or name",
                 color_bold("💡"),
                 color_yellow(slug)
             );
         }
     } else {
-        println!(
+        outln!(
             "\n{} No downloadable distributions found",
             color_yellow("⚠️")
         );
     }
 
-    println!();
+    outln!();
 }
 
 /// Print help for CLI mode.
 pub fn print_cli_help() {
-    println!("\n{}", color_blue_bold("📚 CLI Mode Commands"));
-    println!();
+    outln!("\n{}", color_blue_bold("📚 CLI Mode Commands"));
+    outln!();
 
     let commands = vec![
         (
@@ -163,28 +164,28 @@ pub fn print_cli_help() {
     ];
 
     for (cmd, desc, example) in commands {
-        println!("{} {}", padded_green_bold(cmd, 30), desc);
-        println!(
+        outln!("{} {}", padded_green_bold(cmd, 30), desc);
+        outln!(
             "{:30} {}: data-gov {}",
             "",
             color_dimmed("Example"),
             color_blue(example)
         );
-        println!();
+        outln!();
     }
 
-    println!("{}", color_yellow_bold("💡 Interactive Mode:"));
-    println!(
+    outln!("{}", color_yellow_bold("💡 Interactive Mode:"));
+    outln!(
         "  Run without arguments to start interactive REPL: {}",
         color_blue("data-gov")
     );
-    println!();
+    outln!();
 }
 
 /// Print help for REPL mode.
 pub fn print_repl_help() {
-    println!("\n{}", color_blue_bold("📚 Available Commands"));
-    println!();
+    outln!("\n{}", color_blue_bold("📚 Available Commands"));
+    outln!();
 
     let commands = vec![
         (
@@ -228,58 +229,58 @@ pub fn print_repl_help() {
     ];
 
     for (cmd, desc, example) in commands {
-        println!("{} {}", padded_green_bold(cmd, 25), desc);
-        println!(
+        outln!("{} {}", padded_green_bold(cmd, 25), desc);
+        outln!(
             "{:25} {}: {}",
             "",
             color_dimmed("Example"),
             color_blue(example)
         );
-        println!();
+        outln!();
     }
 
-    println!("{}", color_yellow_bold("💡 Pro Tips:"));
-    println!(
+    outln!("{}", color_yellow_bold("💡 Pro Tips:"));
+    outln!(
         "  • Use short commands: {} for search, {} for show, {} for download",
         color_green("s"),
         color_green("d"),
         color_green("dl")
     );
-    println!(
+    outln!(
         "  • Navigate like a filesystem: {}, {}, {}",
         color_blue("cd epa-gov"),
         color_blue("cd air-quality"),
         color_blue("cd ..")
     );
-    println!(
+    outln!(
         "  • Or jump directly: {}, {}, {}",
         color_blue("cd /epa-gov/air-quality"),
         color_blue("cd /nasa-gov"),
         color_blue("cd /")
     );
-    println!(
+    outln!(
         "  • Then just: {}, {}, {}",
         color_blue("show"),
         color_blue("download 0"),
         color_blue("search pollution")
     );
-    println!(
+    outln!(
         "  • Download multiple distributions: {}",
         color_blue("download \"RDF File\" \"XML File\"")
     );
-    println!(
+    outln!(
         "  • Aliases: {} = {}, {} = {}",
         color_green("select"),
         color_green("cd"),
         color_green("setdir"),
         color_green("lcd")
     );
-    println!("  • Downloads are organized by dataset slug in subdirectories");
-    println!(
+    outln!("  • Downloads are organized by dataset slug in subdirectories");
+    outln!(
         "  • Create scripts with {} for automation",
         color_blue("#!/usr/bin/env data-gov")
     );
-    println!();
+    outln!();
 }
 
 #[cfg(test)]

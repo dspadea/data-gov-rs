@@ -198,7 +198,7 @@ impl ColorHelper {
 
     /// Apply red color, gated on stderr's terminal state, and return the
     /// finished (possibly ANSI-escaped) string. For text that is about to
-    /// be written with `eprintln!` — user-facing error output must never
+    /// be written with `errln!` — user-facing error output must never
     /// be gated on stdout's TTY state (see the struct-level note), or
     /// redirecting only stderr leaves raw escape sequences in the file.
     ///

@@ -164,6 +164,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   goes to stderr via `tracing` at startup.
 
 ### Changed
+- **The MCP server now resolves configuration through the same chain as the
+  CLI** (#116). It previously read `DATA_GOV_BASE_URL` and
+  `DATA_GOV_USER_AGENT` by hand and built its configuration programmatically,
+  so `config.toml` (added in this release) had no effect on the agent-facing
+  front door, and `DATA_GOV_DOWNLOAD_DIR`,
+  `DATA_GOV_MAX_CONCURRENT_DOWNLOADS` and `DATA_GOV_DOWNLOAD_TIMEOUT_SECS`
+  were ignored outright. All five settings now resolve as
+  `environment variable > config file > built-in default` - the CLI's chain
+  without the flag layer the server does not have.
+
+  **What changes for you:** if you set any of those three environment
+  variables when launching the server, they now take effect where before they
+  did nothing. If you keep a `config.toml`, the server now honours it. The
+  environment still beats the file, so a host that sets variables is
+  unaffected. `DATA_GOV_BASE_URL` and `DATA_GOV_USER_AGENT` behave exactly as
+  before.
+
+  A `config.toml` that cannot be parsed, or a value that cannot work, now
+  stops the server at startup naming the setting, rather than being ignored.
+  Warnings go to stderr, never stdout, which carries the JSON-RPC stream.
 - **MCP responses may arrive out of order; correlate by `id`** (#65). The run
   loop awaited each handler before reading the next line, so a
   `downloadResources` call holding that await for minutes queued every later
@@ -310,6 +330,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   client with specific timeouts.
 
 ### Fixed
+- **The CLI no longer panics when a reader closes the pipe early** (#115).
+  `data-gov list organizations | head -5` died with exit 101 and a Rust
+  backtrace note the moment `head` stopped reading, because `println!` panics
+  on a write error. That is one of the most ordinary ways a Unix CLI is used,
+  and every command with enough output was affected, not just this one. The
+  CLI now writes user-facing lines through `outln!` and `errln!`, which
+  recognise `BrokenPipe`: stdout stops the process quietly with exit 0,
+  because a reader that has seen enough is not an error; stderr drops the
+  line and lets the command finish, so a lost stderr cannot overwrite a
+  failing exit code with success. Any other write error stays as loud as it
+  was. The usual `SIGPIPE` fix needs `unsafe`, which this project forbids.
+  `just check-print-macros` now fails the build if a bare `println!` returns
+  to the CLI.
 - **`DataGovError::sanitized_message` no longer leaks the paths it promises to
   remove** (#59). It documented itself as stripping filesystem paths, had no
   test and no caller, and stripped only tokens that began with `/` or `./`.

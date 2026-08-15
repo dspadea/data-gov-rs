@@ -58,6 +58,10 @@ jobs:
       run: just check-home-paths
       if: matrix.rust == 'stable'
 
+    - name: Check the CLI prints through the broken-pipe-safe macros
+      run: just check-print-macros
+      if: matrix.rust == 'stable'
+
     - name: Check for unused dependencies
       run: just check-deps
       if: matrix.rust == 'stable'

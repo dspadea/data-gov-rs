@@ -20,7 +20,7 @@ default:
     @just --list
 
 # The full gate. Run this before you push.
-check: fmt-check check-ascii check-home-paths check-deps lint build test check-rustls examples docs
+check: fmt-check check-ascii check-home-paths check-print-macros check-deps lint build test check-rustls examples docs
 
 # Format every file in place.
 fmt:
@@ -50,6 +50,13 @@ check-ascii:
 check-home-paths:
     python3 scripts/check-home-paths.py --self-test
     python3 scripts/check-home-paths.py
+
+# Fail if the CLI prints with `println!`/`eprintln!`, which panic when the
+# reader closes the pipe (#115). `outln!`/`errln!` handle that; see
+# data-gov/tools/cli/ui/output.rs.
+check-print-macros:
+    python3 scripts/check-print-macros.py --self-test
+    python3 scripts/check-print-macros.py
 
 # Fail if a crate declares a dependency nothing imports.
 #
