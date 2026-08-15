@@ -320,6 +320,13 @@ Every setting resolves through one chain, highest first:
 An empty environment variable (`DATA_GOV_DOWNLOAD_DIR=`) reads as unset, not as
 an empty value.
 
+**The MCP server resolves the same way** (#116). It reads the same file and the
+same variables through the same chain, minus the flag layer it does not have,
+so `environment variable > config file > built-in default`. A setting persisted
+here therefore reaches an agent's tool call as well as the terminal. The
+environment still wins over the file, which keeps an operator who configures
+the MCP host in charge of it.
+
 A few details worth knowing:
 
 - `base_url` and `user_agent` are trimmed of surrounding whitespace — a trailing

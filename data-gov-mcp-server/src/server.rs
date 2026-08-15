@@ -1,10 +1,10 @@
 //! MCP server entry point — struct definition, construction, and run loop.
 
-use data_gov::{DataGovClient, DataGovConfig, OperatingMode};
+use data_gov::config::ConfigResolver;
+use data_gov::{DataGovClient, OperatingMode};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::collections::hash_map::Entry;
-use std::env;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::{
@@ -156,18 +156,48 @@ impl DataGovMcpServer {
         server.run().await
     }
 
-    /// Build a new server from environment variables.
+    /// Build a new server from the process environment and `config.toml`.
+    ///
+    /// # Errors
+    ///
+    /// [`ServerError::DataGov`] if `config.toml` exists but cannot be read or
+    /// parsed, or if any layer supplied a value that cannot work. Both fail
+    /// startup rather than producing a client that misbehaves later.
     fn new() -> Result<Self, ServerError> {
-        let base_url = env::var("DATA_GOV_BASE_URL").ok();
-        let user_agent = env::var("DATA_GOV_USER_AGENT").ok();
+        Self::from_resolver(ConfigResolver::from_process()?.with_mode(OperatingMode::CommandLine))
+    }
 
-        let mut config = DataGovConfig::new().with_mode(OperatingMode::CommandLine);
-        if let Some(url) = base_url {
-            config = config.with_base_url(url);
+    /// Build a server from an already-assembled configuration resolver.
+    ///
+    /// The server has no command-line flags, so the chain it sees is
+    /// environment, then `config.toml`, then the built-in default - the same
+    /// chain the CLI resolves, minus the layer that does not exist here
+    /// (#116). The host's environment therefore still wins over anything the
+    /// user persisted in a file, which is what keeps an operator who
+    /// configures the host in charge of it.
+    ///
+    /// Taking the resolver rather than reading the process is what makes
+    /// configuration testable: a test supplies explicit environment pairs and
+    /// an explicit parsed file, and touches neither the real environment nor
+    /// the filesystem.
+    ///
+    /// # Errors
+    ///
+    /// [`ServerError::DataGov`] if resolution fails - a non-numeric count, a
+    /// zero concurrency limit or timeout, an empty user agent or download
+    /// directory, or a base URL that is not `http` or `https`. The message
+    /// names the setting and the layer the value came from.
+    pub(crate) fn from_resolver(resolver: ConfigResolver) -> Result<Self, ServerError> {
+        let resolved = resolver.resolve()?;
+
+        // stdout is the JSON-RPC channel and nothing but framed responses may
+        // appear on it, so a warning goes to stderr. The host shows stderr in
+        // its logs; a line on stdout would corrupt the protocol stream.
+        for warning in resolved.warnings() {
+            eprintln!("data-gov-mcp-server: warning: {warning}");
         }
-        if let Some(ua) = user_agent {
-            config = config.with_user_agent(ua);
-        }
+
+        let config = resolved.into_config();
         let portal_base_url = config.catalog_config.base_path.clone();
         let data_gov = DataGovClient::with_config(config)?;
 
@@ -178,6 +208,36 @@ impl DataGovMcpServer {
             #[cfg(test)]
             test_gate: None,
         })
+    }
+
+    /// The resolved download directory. Test-only accessor for #116.
+    #[cfg(test)]
+    pub(crate) fn download_dir_for_test(&self) -> std::path::PathBuf {
+        self.data_gov.config().get_base_download_dir()
+    }
+
+    /// The resolved catalog base URL. Test-only accessor for #116.
+    #[cfg(test)]
+    pub(crate) fn portal_base_url_for_test(&self) -> &str {
+        &self.portal_base_url
+    }
+
+    /// The resolved user agent. Test-only accessor for #116.
+    #[cfg(test)]
+    pub(crate) fn user_agent_for_test(&self) -> Option<String> {
+        self.data_gov.config().catalog_config.user_agent.clone()
+    }
+
+    /// The resolved download concurrency limit. Test-only accessor for #116.
+    #[cfg(test)]
+    pub(crate) fn max_concurrent_downloads_for_test(&self) -> usize {
+        self.data_gov.config().max_concurrent_downloads
+    }
+
+    /// The resolved per-download timeout. Test-only accessor for #116.
+    #[cfg(test)]
+    pub(crate) fn download_timeout_secs_for_test(&self) -> u64 {
+        self.data_gov.config().download_timeout_secs
     }
 
     /// Main run loop: read JSON-RPC lines from stdin, dispatch, write responses.
