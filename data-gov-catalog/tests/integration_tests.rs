@@ -8,6 +8,7 @@
 //! cargo test -p data-gov-catalog --test integration_tests -- --ignored
 //! ```
 
+use data_gov_catalog::models::SearchResponse;
 use data_gov_catalog::{CatalogClient, Configuration, SearchParams, SortOrder, SpatialFilter};
 use std::sync::Arc;
 
@@ -54,34 +55,99 @@ async fn live_keywords_returns_counts() {
     assert!(kw.keywords.iter().all(|k| k.count > 0));
 }
 
+/// Live contract test: the `after` cursor walks forward through the result
+/// set rather than returning the same page again.
+///
+/// `after` is a declared parameter of `/search` in the API's own OpenAPI
+/// document (`https://catalog.data.gov/openapi.json`), which is the
+/// authoritative source for this API - the prose guide does not mention it.
+/// The cursor's value is the base64 of the last hit's `_sort` array, the
+/// standard `search_after` mechanism.
+///
+/// Asserts the invariant, not the data (#114). A cursor walk over a live,
+/// changing catalog cannot assert which datasets come back: the corpus is
+/// re-indexed continuously, and popularity feeds the sort. What must hold
+/// regardless is that the second page is a different page from the first and
+/// that the cursor moved.
+///
+/// Every failure below names what actually moved, because this test is
+/// `#[ignore]`d and runs only in the opt-in Live API Tests job - so when it
+/// does fail, nobody is watching, and the message is all a later reader gets.
 #[tokio::test]
-#[ignore]
+#[ignore = "hits the live data.gov Catalog API"]
 async fn live_pagination_advances_with_after_cursor() {
+    const QUERY: &str = "census";
+
     let client = live_client();
     let first = client
-        .search(SearchParams::new().q("census").per_page(2))
+        .search(SearchParams::new().q(QUERY).per_page(2))
         .await
-        .expect("page 1");
-    let after = first.after.clone().expect("first page has a cursor");
+        .expect("the first page of a live search");
+
+    assert!(
+        !first.results.is_empty(),
+        "{QUERY:?} returned nothing at all, so there is no cursor to follow. \
+         Either the catalog is empty or the query stopped matching - check \
+         the API before changing this test."
+    );
+
+    let cursor = first.after.clone().unwrap_or_else(|| {
+        panic!(
+            "the first page carried no `after` cursor, so pagination cannot \
+             start. {} result(s) came back for {QUERY:?}; the API omits the \
+             cursor on the last page, so this is only correct if the whole \
+             result set fits in one page of 2.",
+            first.results.len()
+        )
+    });
+
     let second = client
-        .search(SearchParams::new().q("census").per_page(2).after(after))
+        .search(
+            SearchParams::new()
+                .q(QUERY)
+                .per_page(2)
+                .after(cursor.clone()),
+        )
         .await
-        .expect("page 2");
-    assert!(!second.results.is_empty());
-    let first_ids: Vec<_> = first
-        .results
+        .expect("the second page of a live search");
+
+    assert!(
+        !second.results.is_empty(),
+        "following the cursor {cursor:?} returned an empty page, but the \
+         first page carried a cursor, which the API sends only when more \
+         results follow."
+    );
+
+    let slugs_of = |page: &SearchResponse| -> Vec<String> {
+        page.results
+            .iter()
+            .filter_map(|hit| hit.slug.clone())
+            .collect()
+    };
+    let first_slugs = slugs_of(&first);
+    let second_slugs = slugs_of(&second);
+
+    let repeated: Vec<&String> = first_slugs
         .iter()
-        .filter_map(|h| h.slug.as_ref())
-        .collect();
-    let second_ids: Vec<_> = second
-        .results
-        .iter()
-        .filter_map(|h| h.slug.as_ref())
+        .filter(|slug| second_slugs.contains(slug))
         .collect();
     assert!(
-        first_ids.iter().all(|id| !second_ids.contains(id)),
-        "pages should not overlap"
+        repeated.is_empty(),
+        "the cursor did not advance: {repeated:?} appeared on both pages. \
+         Page 1 was {first_slugs:?}, page 2 was {second_slugs:?}."
     );
+
+    // The cursor is the sort position of the last hit consumed, so a second
+    // page that reports the same one has not moved - which would loop a
+    // caller paging to the end forever, the failure this test exists to
+    // catch.
+    if let Some(next) = second.after.as_ref() {
+        assert_ne!(
+            next, &cursor,
+            "the second page returned the same cursor it was given, so a \
+             caller paging through the whole result set would never finish."
+        );
+    }
 }
 
 /// Live contract test: a slug that exists resolves, including slugs that
