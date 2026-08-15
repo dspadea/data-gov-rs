@@ -1,3 +1,14 @@
+//! The crate's error type.
+//!
+//! Every fallible operation in this crate returns [`Result`], whose error is
+//! [`DataGovError`]. Errors from the layers underneath - the Catalog API,
+//! reqwest, the filesystem, URL parsing - arrive through `#[from]`
+//! conversions and keep their own detail rather than being flattened to a
+//! string.
+//!
+//! Use [`DataGovError::sanitized_message`] when an error crosses a trust
+//! boundary, since the message may name paths on the machine it came from.
+
 use data_gov_catalog::CatalogError;
 use thiserror::Error;
 
@@ -22,27 +33,47 @@ pub enum DataGovError {
 
     /// Resource not found.
     #[error("Resource not found: {message}")]
-    ResourceNotFound { message: String },
+    ResourceNotFound {
+        /// What was looked for and could not be found.
+        message: String,
+    },
 
     /// Download failed.
     #[error("Download failed: {message}")]
-    DownloadError { message: String },
+    DownloadError {
+        /// What went wrong during the transfer.
+        message: String,
+    },
 
     /// Invalid resource format.
     #[error("Invalid resource format: expected {expected}, got {actual}")]
-    InvalidFormat { expected: String, actual: String },
+    InvalidFormat {
+        /// Format the caller asked for.
+        expected: String,
+        /// Format the distribution actually advertises.
+        actual: String,
+    },
 
     /// Configuration error.
     #[error("Configuration error: {message}")]
-    ConfigError { message: String },
+    ConfigError {
+        /// Which setting is wrong, and what would be acceptable.
+        message: String,
+    },
 
     /// Validation error.
     #[error("Validation error: {message}")]
-    ValidationError { message: String },
+    ValidationError {
+        /// Which value failed the check, and why.
+        message: String,
+    },
 
     /// Generic error with custom message.
     #[error("{message}")]
-    Other { message: String },
+    Other {
+        /// The message, rendered verbatim by [`Display`](std::fmt::Display).
+        message: String,
+    },
 }
 
 impl DataGovError {

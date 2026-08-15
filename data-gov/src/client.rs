@@ -1,3 +1,15 @@
+//! The high-level data.gov client.
+//!
+//! [`DataGovClient`] is the entry point for the crate: it searches the
+//! catalog, resolves datasets by slug or harvest record, and downloads
+//! distributions to disk. It wraps [`CatalogClient`] and adds what a consumer
+//! of the catalog needs but the transport should not carry - concurrency
+//! limits, filename derivation, path containment, and progress reporting
+//! through [`crate::ui::StatusReporter`].
+//!
+//! Construct one with [`DataGovClient::new`] for defaults, or
+//! [`DataGovClient::with_config`] to supply a [`DataGovConfig`].
+
 use futures::StreamExt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
