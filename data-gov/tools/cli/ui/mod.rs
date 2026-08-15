@@ -3,6 +3,7 @@ pub mod colors;
 mod commands;
 mod display;
 mod handlers;
+mod output;
 mod repl;
 mod reporter;
 
@@ -15,6 +16,7 @@ use tokio::runtime::Runtime;
 use self::colors::{ColorHelper, ColorMode};
 use self::commands::{ReplCommand, SessionContext};
 use self::handlers::execute_command;
+use self::output::errln;
 use self::repl::DataGovRepl;
 use self::reporter::CliStatusReporter;
 
@@ -103,7 +105,7 @@ pub fn color_bold(text: &str) -> String {
 }
 
 /// Red, gated on stderr's terminal state. Use for any text about to be
-/// written with `eprintln!` — see [`colors::ColorHelper::red_err`].
+/// written with `errln!` — see [`colors::ColorHelper::red_err`].
 pub fn color_red_err(text: &str) -> String {
     COLOR_HELPER
         .get()
@@ -112,7 +114,7 @@ pub fn color_red_err(text: &str) -> String {
 }
 
 /// Red and bold, gated on stderr's terminal state. Use for any text about
-/// to be written with `eprintln!`.
+/// to be written with `errln!`.
 pub fn color_red_bold_err(text: &str) -> String {
     COLOR_HELPER
         .get()
@@ -199,7 +201,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
         .resolve()?;
 
     for warning in resolved.warnings() {
-        eprintln!("Warning: {warning}");
+        errln!("Warning: {warning}");
     }
 
     let mut config = resolved.into_config();
@@ -209,7 +211,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     if let Some(color_str) = matches.get_one::<String>("color") {
         match color_str.parse::<ColorMode>() {
             Ok(mode) => color_mode = mode,
-            Err(_) => eprintln!("Warning: Invalid color mode '{}', using 'auto'", color_str),
+            Err(_) => errln!("Warning: Invalid color mode '{}', using 'auto'", color_str),
         }
     }
 
@@ -281,7 +283,7 @@ fn run_cli_mode(
         Ok(repl_command) => {
             let mut ctx = SessionContext::default();
             if let Err(e) = execute_command(&client, &rt, repl_command, &mut ctx) {
-                eprintln!("{} {}", color_red_bold_err("Error:"), e);
+                errln!("{} {}", color_red_bold_err("Error:"), e);
                 std::process::exit(1);
             }
         }
@@ -298,12 +300,12 @@ fn run_cli_mode(
 
             if run_as_script {
                 if let Err(e) = run_script_file(&client, &rt, script_path) {
-                    eprintln!("{} {}", color_red_bold_err("Error:"), e);
+                    errln!("{} {}", color_red_bold_err("Error:"), e);
                     std::process::exit(1);
                 }
             } else {
-                eprintln!("{} {}", color_red_bold_err("Error:"), parse_err);
-                eprintln!("Use --help to see available commands and examples");
+                errln!("{} {}", color_red_bold_err("Error:"), parse_err);
+                errln!("Use --help to see available commands and examples");
                 std::process::exit(1);
             }
         }
@@ -359,7 +361,7 @@ fn run_script_file(
         };
 
         if let Err(e) = outcome {
-            eprintln!(
+            errln!(
                 "{} {}:{}: {}",
                 color_red_bold_err("Error:"),
                 path.display(),

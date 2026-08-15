@@ -303,6 +303,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   client with specific timeouts.
 
 ### Fixed
+- **The CLI no longer panics when a reader closes the pipe early** (#115).
+  `data-gov list organizations | head -5` died with exit 101 and a Rust
+  backtrace note the moment `head` stopped reading, because `println!` panics
+  on a write error. That is one of the most ordinary ways a Unix CLI is used,
+  and every command with enough output was affected, not just this one. The
+  CLI now writes user-facing lines through `outln!` and `errln!`, which
+  recognise `BrokenPipe`: stdout stops the process quietly with exit 0,
+  because a reader that has seen enough is not an error; stderr drops the
+  line and lets the command finish, so a lost stderr cannot overwrite a
+  failing exit code with success. Any other write error stays as loud as it
+  was. The usual `SIGPIPE` fix needs `unsafe`, which this project forbids.
+  `just check-print-macros` now fails the build if a bare `println!` returns
+  to the CLI.
 - **One non-UTF-8 byte no longer ends the MCP session** (#55). `next_line`
   returns an error on invalid UTF-8 and it propagated to `main`, so a single
   malformed byte killed the server for every subsequent well-formed request.
