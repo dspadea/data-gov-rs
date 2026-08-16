@@ -62,10 +62,11 @@ struct DownloadJob<'a> {
 /// `perform_download` discards its temporary file on every path it returns an
 /// error from, but a cancelled download returns from none of them: the future
 /// is dropped where it stands, and no code in the function body runs. The MCP
-/// server does exactly that on two deliberate paths - the per-request timeout,
-/// and `notifications/cancelled` - so without this a user who cancels a few
-/// large downloads accumulates hidden `.part` files in the download directory
-/// that nothing ever sweeps (#125).
+/// server does exactly that when a host sends `notifications/cancelled`, which
+/// is the one deliberate path that drops a transfer - the per-request timeout
+/// no longer bounds a download (#131) - so without this a user who cancels a
+/// few large downloads accumulates hidden `.part` files in the download
+/// directory that nothing ever sweeps (#125).
 ///
 /// Call [`PartialFileGuard::keep`] once the file has been renamed onto the
 /// destination, so a finished download does not have its own result removed.

@@ -16,7 +16,7 @@ use wiremock::matchers::{method as wm_method, path as wm_path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 use crate::test_support::{
-    CURRENT_MCP_REVISION, PUBLISHED_MCP_REVISIONS, search_body, test_server,
+    CURRENT_MCP_REVISION, PUBLISHED_MCP_REVISIONS, scratch_dir, search_body, test_server,
 };
 use crate::types::{SUPPORTED_PROTOCOL_VERSIONS, ServerError};
 
@@ -934,18 +934,6 @@ async fn a_blank_format_filter_does_not_shift_the_unavailable_format_report() {
 // ---------------------------------------------------------------------------
 // A download that downloaded nothing
 // ---------------------------------------------------------------------------
-
-/// A scratch directory under the system temp dir, removed first so a previous
-/// run cannot influence this one. The caller removes it when finished.
-fn scratch_dir(name: &str) -> std::path::PathBuf {
-    let dir = std::env::temp_dir().join(format!(
-        "data-gov-mcp-{name}-{}-{:?}",
-        std::process::id(),
-        std::thread::current().id()
-    ));
-    let _ = std::fs::remove_dir_all(&dir);
-    dir
-}
 
 /// A tool that downloaded none of the files it was asked for did not succeed.
 ///

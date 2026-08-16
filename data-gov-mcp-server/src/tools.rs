@@ -4,6 +4,29 @@ use serde::Serialize;
 use serde_json::{Value, json};
 use std::sync::LazyLock;
 
+/// Whether the server's per-request wall-clock budget bounds a tool.
+///
+/// The budget answers a question about elapsed time, and elapsed time only
+/// means something for work whose honest duration is short. For a transfer it
+/// means nothing: the same file is a second on one link and an hour on
+/// another, so any figure picked here kills a healthy download somewhere.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub(crate) enum WallClockBound {
+    /// The request budget applies. The tool is expected to finish promptly,
+    /// and abandoning it is what frees its dispatch slot and its entry in the
+    /// cancellation registry.
+    Applies,
+    /// The request budget never applies, whatever it is set to.
+    ///
+    /// Only for a tool that streams bulk bytes, where progress rather than
+    /// elapsed time says whether it is healthy. Such a tool must carry its own
+    /// stall bound - for downloads, reqwest's `read_timeout`, which restarts
+    /// on every frame that arrives and therefore kills a dead connection
+    /// without touching a live slow one - and must remain stoppable by
+    /// `notifications/cancelled`.
+    Exempt,
+}
+
 /// Definition of a single MCP tool linking its public name to a server method.
 #[derive(Debug, Serialize)]
 pub(crate) struct ToolSpec {
@@ -11,6 +34,15 @@ pub(crate) struct ToolSpec {
     pub method_name: &'static str,
     pub description: &'static str,
     pub input_schema: Value,
+    /// Whether [`crate::server::DEFAULT_REQUEST_TIMEOUT`] bounds this tool.
+    ///
+    /// The property lives on the spec rather than beside the dispatch because
+    /// this registry is the one place a tool must be declared, and Rust makes
+    /// a struct literal name every field: a tool added later has to state its
+    /// answer and cannot inherit one by omission. A `match` on the method name
+    /// at the dispatch would give a new tool the default silently, which is
+    /// the accident this is here to prevent (#131).
+    pub wall_clock: WallClockBound,
 }
 
 /// Result payload for `tools/list`.
@@ -135,6 +167,15 @@ pub(crate) fn find_tool_spec_by_method(method: &str) -> Option<&'static ToolSpec
     TOOL_SPECS.iter().find(|spec| spec.method_name == method)
 }
 
+/// Whether the per-request wall-clock budget bounds `method`.
+///
+/// A method that is not a tool - `initialize`, `ping`, `tools/list` - is always
+/// bounded. Each answers from memory in microseconds, so a budget can only ever
+/// catch one that has gone wrong.
+pub(crate) fn wall_clock_bound(method: &str) -> WallClockBound {
+    find_tool_spec_by_method(method).map_or(WallClockBound::Applies, |spec| spec.wall_clock)
+}
+
 /// All registered tool specifications, lazily initialized.
 pub(crate) static TOOL_SPECS: LazyLock<Vec<ToolSpec>> = LazyLock::new(|| {
     vec![
@@ -174,6 +215,7 @@ pub(crate) static TOOL_SPECS: LazyLock<Vec<ToolSpec>> = LazyLock::new(|| {
                 },
                 "additionalProperties": false
             }),
+            wall_clock: WallClockBound::Applies,
         },
         ToolSpec {
             tool_name: "data_gov_dataset",
@@ -191,6 +233,7 @@ pub(crate) static TOOL_SPECS: LazyLock<Vec<ToolSpec>> = LazyLock::new(|| {
                 "required": ["slug"],
                 "additionalProperties": false
             }),
+            wall_clock: WallClockBound::Applies,
         },
         ToolSpec {
             tool_name: "data_gov_autocomplete_datasets",
@@ -206,6 +249,7 @@ pub(crate) static TOOL_SPECS: LazyLock<Vec<ToolSpec>> = LazyLock::new(|| {
                 "required": ["partial"],
                 "additionalProperties": false
             }),
+            wall_clock: WallClockBound::Applies,
         },
         ToolSpec {
             tool_name: "data_gov_list_organizations",
@@ -218,6 +262,7 @@ pub(crate) static TOOL_SPECS: LazyLock<Vec<ToolSpec>> = LazyLock::new(|| {
                 },
                 "additionalProperties": false
             }),
+            wall_clock: WallClockBound::Applies,
         },
         ToolSpec {
             tool_name: "data_gov_download_resources",
@@ -258,6 +303,12 @@ pub(crate) static TOOL_SPECS: LazyLock<Vec<ToolSpec>> = LazyLock::new(|| {
                 "required": ["datasetId"],
                 "additionalProperties": false
             }),
+            // The one exempt tool. Its runtime is the size of a file over
+            // the width of a link, so no wall-clock figure can tell a healthy
+            // transfer from a stuck one. reqwest's `read_timeout` on the
+            // download client can, and `notifications/cancelled` is how a
+            // host asks for one to stop.
+            wall_clock: WallClockBound::Exempt,
         },
     ]
 });
@@ -336,6 +387,47 @@ mod tests {
     #[test]
     fn find_tool_spec_by_method_unknown_returns_none() {
         assert!(find_tool_spec_by_method("nonexistent.method").is_none());
+    }
+
+    /// Exemption is the answer that is dangerous to get wrong: an exempt tool
+    /// holds its dispatch slot and its cancellation-registry entry for as long
+    /// as it runs, with nothing but its own stall bound to end it. The set is
+    /// written out literally rather than derived from the registry, so a tool
+    /// that joins it has to change this line and say why.
+    #[test]
+    fn only_the_download_tool_is_exempt_from_the_wall_clock_budget() {
+        let exempt: Vec<&str> = TOOL_SPECS
+            .iter()
+            .filter(|spec| spec.wall_clock == WallClockBound::Exempt)
+            .map(|spec| spec.method_name)
+            .collect();
+        assert_eq!(
+            exempt,
+            vec!["data_gov.downloadResources"],
+            "only a tool that streams bulk bytes may be exempt; give a new one \
+             its own stall bound before adding it here"
+        );
+    }
+
+    /// Everything outside the registry is bounded, including a method that
+    /// does not exist. A default of `Exempt` would let an unknown method run
+    /// unbounded, which is the opposite of what a budget is for.
+    #[test]
+    fn a_method_outside_the_tool_registry_is_wall_clock_bounded() {
+        for method in [
+            "initialize",
+            "notifications/initialized",
+            "ping",
+            "tools/list",
+            "tools/call",
+            "nonexistent.method",
+        ] {
+            assert_eq!(
+                wall_clock_bound(method),
+                WallClockBound::Applies,
+                "`{method}` is not a tool and must stay bounded"
+            );
+        }
     }
 
     /// MCP 2025-11-25, server/tools: structured content "is returned as a JSON
