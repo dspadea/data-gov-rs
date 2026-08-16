@@ -10,13 +10,16 @@
 
 use serde::{Deserialize, Serialize};
 
+/// One tag suggestion inside the utility tag-autocomplete envelope.
 #[derive(Clone, Default, Debug, PartialEq, Serialize, Deserialize)]
 pub struct UtilTagAutocompleteGet200ResponseResultSetResultInner {
+    /// The suggested tag.
     #[serde(rename = "Name", skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
 }
 
 impl UtilTagAutocompleteGet200ResponseResultSetResultInner {
+    /// Create an empty [`UtilTagAutocompleteGet200ResponseResultSetResultInner`]; every field starts as `None`.
     pub fn new() -> UtilTagAutocompleteGet200ResponseResultSetResultInner {
         UtilTagAutocompleteGet200ResponseResultSetResultInner { name: None }
     }

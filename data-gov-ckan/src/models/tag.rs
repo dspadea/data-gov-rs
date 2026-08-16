@@ -10,6 +10,10 @@
 
 use serde::{Deserialize, Serialize};
 
+/// One tag attached to a dataset.
+///
+/// A tag with no [`Self::vocabulary_id`] is free-form. One that names a
+/// vocabulary is drawn from that controlled list instead.
 #[derive(Clone, Default, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Tag {
     /// Unique identifier for the tag.
@@ -24,6 +28,7 @@ pub struct Tag {
     /// Display name for the tag
     #[serde(rename = "display_name", skip_serializing_if = "Option::is_none")]
     pub display_name: Option<String>,
+    /// Whether the tag is active or has been deleted.
     #[serde(rename = "state", skip_serializing_if = "Option::is_none")]
     pub state: Option<State>,
     /// ID of vocabulary this tag belongs to
@@ -32,6 +37,8 @@ pub struct Tag {
 }
 
 impl Tag {
+    /// Create a [`Tag`] with the required `name`; every other field starts as
+    /// `None`.
     pub fn new(name: String) -> Tag {
         Tag {
             id: None,
@@ -42,13 +49,17 @@ impl Tag {
         }
     }
 }
+/// Whether a tag is live or has been deleted.
 #[derive(
     Clone, Copy, Debug, Default, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize,
 )]
 pub enum State {
+    /// The tag is live.
     #[serde(rename = "active")]
     #[default]
     Active,
+    /// The tag has been deleted. CKAN deletes softly, so the record is still
+    /// returned.
     #[serde(rename = "deleted")]
     Deleted,
 }

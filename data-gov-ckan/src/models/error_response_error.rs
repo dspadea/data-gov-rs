@@ -10,6 +10,12 @@
 
 use serde::{Deserialize, Serialize};
 
+/// The error object carried by a failed action's envelope.
+///
+/// This is CKAN's fixed failure shape. A *validation* failure does not use
+/// it: that replaces `message` with one array of messages per rejected
+/// field, which is why [`crate::models::ActionResponse::error`] keeps a raw
+/// [`serde_json::Value`] rather than this type.
 #[derive(Clone, Default, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ErrorResponseError {
     /// The type of error
@@ -21,6 +27,7 @@ pub struct ErrorResponseError {
 }
 
 impl ErrorResponseError {
+    /// Create an [`ErrorResponseError`] from the two members CKAN always sends.
     pub fn new(__type: String, message: String) -> ErrorResponseError {
         ErrorResponseError { __type, message }
     }

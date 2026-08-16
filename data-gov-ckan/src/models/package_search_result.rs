@@ -11,11 +11,17 @@
 use crate::models;
 use serde::{Deserialize, Serialize};
 
+/// The result envelope from `package_search`.
+///
+/// [`Self::count`] is the total number of matches, not the number in
+/// [`Self::results`] - paging through the set means reading `count` and
+/// advancing `start`.
 #[derive(Clone, Default, Debug, PartialEq, Serialize, Deserialize)]
 pub struct PackageSearchResult {
     /// Total number of matching packages
     #[serde(rename = "count", skip_serializing_if = "Option::is_none")]
     pub count: Option<i32>,
+    /// The datasets on this page.
     #[serde(rename = "results", skip_serializing_if = "Option::is_none")]
     pub results: Option<Vec<models::Package>>,
     /// Faceted search results
@@ -27,6 +33,7 @@ pub struct PackageSearchResult {
 }
 
 impl PackageSearchResult {
+    /// Create an empty [`PackageSearchResult`]; every field starts as `None`.
     pub fn new() -> PackageSearchResult {
         PackageSearchResult {
             count: None,

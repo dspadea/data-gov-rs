@@ -11,6 +11,10 @@
 use crate::models;
 use serde::{Deserialize, Serialize};
 
+/// A controlled vocabulary that tags may belong to.
+///
+/// A tag naming a vocabulary is drawn from that list rather than being
+/// free-form - see [`crate::models::Tag::vocabulary_id`].
 #[derive(Clone, Default, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Vocabulary {
     /// Unique identifier for the vocabulary.
@@ -19,13 +23,16 @@ pub struct Vocabulary {
     /// for why this is a `String` rather than a `uuid::Uuid`.
     #[serde(rename = "id", skip_serializing_if = "Option::is_none")]
     pub id: Option<String>,
+    /// Name of the vocabulary.
     #[serde(rename = "name", skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
+    /// The tags this vocabulary contains.
     #[serde(rename = "tags", skip_serializing_if = "Option::is_none")]
     pub tags: Option<Vec<models::Tag>>,
 }
 
 impl Vocabulary {
+    /// Create an empty [`Vocabulary`]; every field starts as `None`.
     pub fn new() -> Vocabulary {
         Vocabulary {
             id: None,

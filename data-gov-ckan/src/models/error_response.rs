@@ -11,17 +11,25 @@
 use crate::models;
 use serde::{Deserialize, Serialize};
 
+/// The envelope CKAN returns when an action fails.
+///
+/// Note that a failed action is still HTTP 200: [`Self::success`] is what
+/// marks the failure, not the status code.
 #[derive(Clone, Default, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ErrorResponse {
+    /// URL of the documentation for the action that failed.
     #[serde(rename = "help")]
     pub help: String,
+    /// Always `false` on this envelope.
     #[serde(rename = "success")]
     pub success: bool,
+    /// What went wrong.
     #[serde(rename = "error")]
     pub error: Box<models::ErrorResponseError>,
 }
 
 impl ErrorResponse {
+    /// Create an [`ErrorResponse`] from its three members.
     pub fn new(help: String, success: bool, error: models::ErrorResponseError) -> ErrorResponse {
         ErrorResponse {
             help,

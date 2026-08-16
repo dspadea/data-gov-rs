@@ -10,25 +10,44 @@
 
 use serde::{Deserialize, Serialize};
 
+/// What the portal reports about itself.
+///
+/// Returned by `status_show`. Useful mainly for [`Self::ckan_version`] and
+/// [`Self::extensions`], which together say which actions a deployment
+/// actually supports.
 #[derive(Clone, Default, Debug, PartialEq, Serialize, Deserialize)]
 pub struct StatusInfo {
+    /// The portal's title.
     #[serde(rename = "site_title", skip_serializing_if = "Option::is_none")]
     pub site_title: Option<String>,
+    /// The portal's description.
     #[serde(rename = "site_description", skip_serializing_if = "Option::is_none")]
     pub site_description: Option<String>,
+    /// The portal's own base URL.
     #[serde(rename = "site_url", skip_serializing_if = "Option::is_none")]
     pub site_url: Option<String>,
+    /// Which CKAN release the portal runs.
+    ///
+    /// Worth checking before relying on a newer action: this crate targets the
+    /// v3 Action API, but individual actions came in at different releases.
     #[serde(rename = "ckan_version", skip_serializing_if = "Option::is_none")]
     pub ckan_version: Option<String>,
+    /// Where the portal sends its error reports.
     #[serde(rename = "error_emails_to", skip_serializing_if = "Option::is_none")]
     pub error_emails_to: Option<String>,
+    /// The portal's default locale.
     #[serde(rename = "locale_default", skip_serializing_if = "Option::is_none")]
     pub locale_default: Option<String>,
+    /// Extensions the portal has enabled.
+    ///
+    /// An extension can add actions and fields beyond core CKAN, which is one
+    /// reason a response may carry more than these models name.
     #[serde(rename = "extensions", skip_serializing_if = "Option::is_none")]
     pub extensions: Option<Vec<String>>,
 }
 
 impl StatusInfo {
+    /// Create an empty [`StatusInfo`]; every field starts as `None`.
     pub fn new() -> StatusInfo {
         StatusInfo {
             site_title: None,

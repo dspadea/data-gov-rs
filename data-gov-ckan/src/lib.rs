@@ -14,6 +14,9 @@
 //! instances), and the client works unchanged against any compliant CKAN
 //! deployment. Point [`Configuration::base_path`] at your target instance.
 
+// Every public item in this crate carries a doc comment, and that is
+// enforced rather than remembered (#118).
+#![deny(missing_docs)]
 #![allow(clippy::too_many_arguments)]
 
 // A TLS backend is not optional: every endpoint this crate talks to is HTTPS.
@@ -26,7 +29,9 @@ compile_error!(
      Building with `default-features = false` and neither feature produces a client that \
      cannot complete any HTTPS request."
 );
+/// The HTTP client, its configuration, and its error type.
 pub mod client;
+/// Types modelling the CKAN Action API's JSON payloads.
 pub mod models;
 
 // Re-export the ergonomic client and configuration for easy access

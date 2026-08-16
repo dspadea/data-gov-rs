@@ -11,13 +11,16 @@
 use crate::models;
 use serde::{Deserialize, Serialize};
 
+/// The `ResultSet` member of the utility tag-autocomplete envelope.
 #[derive(Clone, Default, Debug, PartialEq, Serialize, Deserialize)]
 pub struct UtilTagAutocompleteGet200ResponseResultSet {
+    /// The suggestions themselves.
     #[serde(rename = "Result", skip_serializing_if = "Option::is_none")]
     pub result: Option<Vec<models::UtilTagAutocompleteGet200ResponseResultSetResultInner>>,
 }
 
 impl UtilTagAutocompleteGet200ResponseResultSet {
+    /// Create an empty [`UtilTagAutocompleteGet200ResponseResultSet`]; every field starts as `None`.
     pub fn new() -> UtilTagAutocompleteGet200ResponseResultSet {
         UtilTagAutocompleteGet200ResponseResultSet { result: None }
     }

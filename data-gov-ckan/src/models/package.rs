@@ -11,6 +11,12 @@
 use crate::models;
 use serde::{Deserialize, Serialize};
 
+/// A dataset, which CKAN calls a package.
+///
+/// The unit a portal publishes: metadata plus the files and endpoints in
+/// [`Self::resources`]. Almost every field is optional, because which
+/// metadata a publisher fills in varies widely between portals and even
+/// between datasets on one portal.
 #[derive(Clone, Default, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Package {
     /// Unique identifier for the dataset.
@@ -87,10 +93,16 @@ pub struct Package {
     /// When the dataset metadata was last modified
     #[serde(rename = "metadata_modified", skip_serializing_if = "Option::is_none")]
     pub metadata_modified: Option<String>,
+    /// The files and API endpoints that carry the dataset's actual data.
+    ///
+    /// Absent rather than empty when a call did not ask for them - `package_show`
+    /// includes them, some search responses do not.
     #[serde(rename = "resources", skip_serializing_if = "Option::is_none")]
     pub resources: Option<Vec<models::Resource>>,
+    /// Tags attached to the dataset.
     #[serde(rename = "tags", skip_serializing_if = "Option::is_none")]
     pub tags: Option<Vec<models::Tag>>,
+    /// Groups the dataset belongs to.
     #[serde(rename = "groups", skip_serializing_if = "Option::is_none")]
     pub groups: Option<Vec<models::Group>>,
     /// Additional metadata key-value pairs
@@ -102,6 +114,8 @@ pub struct Package {
 }
 
 impl Package {
+    /// Create a [`Package`] with the required `name`; every other field starts
+    /// as `None`.
     pub fn new(name: String) -> Package {
         Package {
             id: None,
@@ -140,11 +154,15 @@ impl Package {
     Clone, Copy, Debug, Default, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize,
 )]
 pub enum State {
+    /// The dataset is published and live.
     #[serde(rename = "active")]
     #[default]
     Active,
+    /// The dataset has been deleted. CKAN deletes softly, so the record is
+    /// still returned.
     #[serde(rename = "deleted")]
     Deleted,
+    /// The dataset is part-created and not yet published.
     #[serde(rename = "draft")]
     Draft,
 }

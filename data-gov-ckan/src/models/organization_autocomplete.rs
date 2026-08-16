@@ -10,17 +10,25 @@
 
 use serde::{Deserialize, Serialize};
 
+/// One organization suggestion from `organization_autocomplete`.
 #[derive(Clone, Default, Debug, PartialEq, Serialize, Deserialize)]
 pub struct OrganizationAutocomplete {
+    /// Identifier of the suggested organization.
+    ///
+    /// CKAN's `id` column is unconstrained text, and organizations are where
+    /// this bites in practice - see [`crate::models::Group::id`].
     #[serde(rename = "id", skip_serializing_if = "Option::is_none")]
     pub id: Option<String>,
+    /// URL-friendly name (slug) of the suggested organization.
     #[serde(rename = "name", skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
+    /// Human-readable title of the suggested organization.
     #[serde(rename = "title", skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
 }
 
 impl OrganizationAutocomplete {
+    /// Create an empty [`OrganizationAutocomplete`]; every field starts as `None`.
     pub fn new() -> OrganizationAutocomplete {
         OrganizationAutocomplete {
             id: None,

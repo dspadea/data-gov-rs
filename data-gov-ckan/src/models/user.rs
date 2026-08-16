@@ -10,6 +10,11 @@
 
 use serde::{Deserialize, Serialize};
 
+/// A user account.
+///
+/// How much of this a caller sees depends on who is asking:
+/// [`Self::email`] and [`Self::sysadmin`] are withheld from anonymous
+/// requests.
 #[derive(Clone, Default, Debug, PartialEq, Serialize, Deserialize)]
 pub struct User {
     /// Unique identifier for the user.
@@ -27,20 +32,30 @@ pub struct User {
     /// Computed display name
     #[serde(rename = "display_name", skip_serializing_if = "Option::is_none")]
     pub display_name: Option<String>,
+    /// The user's email address.
+    ///
+    /// Returned only to a caller entitled to see it - anonymous requests get
+    /// `None` rather than an error.
     #[serde(rename = "email", skip_serializing_if = "Option::is_none")]
     pub email: Option<String>,
     /// User biography/about text
     #[serde(rename = "about", skip_serializing_if = "Option::is_none")]
     pub about: Option<String>,
+    /// When the account was created, as an ISO 8601 timestamp.
     #[serde(rename = "created", skip_serializing_if = "Option::is_none")]
     pub created: Option<String>,
     /// Whether user is a system administrator
     #[serde(rename = "sysadmin", skip_serializing_if = "Option::is_none")]
     pub sysadmin: Option<bool>,
+    /// Whether the account is active, deleted, or not yet activated.
     #[serde(rename = "state", skip_serializing_if = "Option::is_none")]
     pub state: Option<State>,
+    /// URL of the user's avatar, possibly relative to the site.
     #[serde(rename = "image_url", skip_serializing_if = "Option::is_none")]
     pub image_url: Option<String>,
+    /// Fully-qualified URL of the avatar, resolved by the portal.
+    ///
+    /// Prefer this over [`Self::image_url`] when fetching the image.
     #[serde(rename = "image_display_url", skip_serializing_if = "Option::is_none")]
     pub image_display_url: Option<String>,
     /// Number of packages created by this user
@@ -52,6 +67,8 @@ pub struct User {
 }
 
 impl User {
+    /// Create a [`User`] with the required `name`; every other field starts as
+    /// `None`.
     pub fn new(name: String) -> User {
         User {
             id: None,
@@ -69,15 +86,20 @@ impl User {
         }
     }
 }
+/// Whether a user account is live, deleted, or not yet activated.
 #[derive(
     Clone, Copy, Debug, Default, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize,
 )]
 pub enum State {
+    /// The account is live.
     #[serde(rename = "active")]
     #[default]
     Active,
+    /// The account has been deleted. CKAN deletes softly, so the record is
+    /// still returned.
     #[serde(rename = "deleted")]
     Deleted,
+    /// The account exists but has not been activated.
     #[serde(rename = "inactive")]
     Inactive,
 }
