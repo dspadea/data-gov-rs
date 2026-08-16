@@ -20,7 +20,7 @@ default:
     @just --list
 
 # The full gate. Run this before you push.
-check: fmt-check check-ascii check-home-paths check-print-macros check-deps lint build test check-rustls examples docs
+check: fmt-check check-ascii check-home-paths check-print-macros check-release-helpers check-deps lint build test check-rustls examples docs
 
 # Format every file in place.
 fmt:
@@ -57,6 +57,17 @@ check-home-paths:
 check-print-macros:
     python3 scripts/check-print-macros.py --self-test
     python3 scripts/check-print-macros.py
+
+# Fail if the crates.io release helpers get the index answer wrong.
+#
+# They run on the one path a mistake cannot be taken back from: a publish to
+# crates.io is permanent, and yanking does not free the version number. So
+# they must tell "the index says this version is absent" from "the index did
+# not answer", and only the first of those means publish. A stub index serves
+# the 404, the 500, the rate-limit and the refused connection on demand, none
+# of which the live service can be asked for. No network needed.
+check-release-helpers:
+    ./scripts/release/test-release-helpers.sh
 
 # Fail if a crate declares a dependency nothing imports.
 #

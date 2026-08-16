@@ -62,6 +62,13 @@ jobs:
       run: just check-print-macros
       if: matrix.rust == 'stable'
 
+    # The release helpers decide whether an irreversible `cargo publish` runs.
+    # Testing them here, against a stub index, is the only place the 500 and
+    # the refused-connection paths get exercised before a tag depends on them.
+    - name: Check the crates.io release helpers
+      run: just check-release-helpers
+      if: matrix.rust == 'stable'
+
     - name: Check for unused dependencies
       run: just check-deps
       if: matrix.rust == 'stable'
