@@ -597,6 +597,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   of which the live service can be asked for - and asserts that `cargo` is
   never invoked when the index state is unknown. The workflow's behaviour,
   publish order and dependency waits are unchanged.
+- **The release-helper tests now fail when the helper they name stops
+  working.** Two of them could not. Each asserted on "could not be reached", a
+  phrase `index-has.sh` prints to stderr itself, and the capture holds the
+  whole subtree's output - so the needle was present whatever the script under
+  test said. Proved by mutation: replacing `publish-crate.sh`'s refusal message
+  with `echo "::error::MUTATED"` left the suite green, and so did collapsing
+  `wait-for-crate.sh`'s "the index could not be reached" into "not yet
+  visible" - the exact distinction its own test is named for, and the only
+  guard on it. Each needle is now a phrase only the script under test can
+  produce, and the wait case is asserted from both sides, so collapsing either
+  branch into the other fails a test.
+- **A 200 that is not the index file no longer reads as "not published"**.
+  `index-has.sh` concluded absent from any 200 whose body did not list the
+  version, including a captive portal or a proxy sign-in page that lists no
+  version at all - and absent is the answer that means publish. The body must
+  now carry `"name":"<crate>"`, the field every sparse-index line opens with,
+  before absent is concluded. Without it the answer is unknown, which stops
+  the job.
+- **A filtered run of the helper tests no longer reads another case's
+  output.** Each follow-up assertion filtered on its own name, which differs
+  from the name of the run whose capture it reads, so
+  `test-release-helpers.sh publish_names` skipped the run and then grepped a
+  file that was missing or left over from an earlier case - a stale pass in
+  the second instance. Assertions now inherit the filter decision of the run
+  they inspect and say when they are refused, and a filter that selects no run
+  fails instead of reporting an empty pass. The suite also caps the per-probe
+  timeout, so the unreachable-index cases cannot stall the gate for minutes
+  behind a host that drops packets instead of refusing them.
 - **The index wait now has a ceiling it actually keeps**. `wait-for-crate.sh`
   reported a bound of `attempts * delay`, but its `curl` had no timeout at
   all, so a connection that hung stalled the release job with no limit. Each

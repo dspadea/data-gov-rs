@@ -9,9 +9,11 @@
 #   exit 0  published   - the index answered and lists this version
 #   exit 1  absent      - the index answered and does not list this version,
 #                         or has never heard of the crate (404)
-#   exit 2  unknown     - the index could not be reached, or answered with
-#                         something other than 200 or 404, and kept doing so
-#                         across every retry. The caller must stop.
+#   exit 2  unknown     - the index could not be reached, answered with
+#                         something other than 200 or 404, or answered 200
+#                         with a body that is not this crate's index file,
+#                         and kept doing so across every retry. The caller
+#                         must stop.
 #
 # The status comes from curl's -w '%{http_code}', not from curl's exit code
 # alone: a 500, a reset connection and a genuine 404 are one single non-zero
@@ -65,6 +67,12 @@ curl_error="${work}/curl-error"
 # answer for it.
 needle="\"vers\":\"${version}\""
 
+# Every line of a sparse-index file carries the crate name, so a 200 without
+# it is not this crate's index file: a captive portal, a proxy sign-in page,
+# or a CDN error page served with 200. Absent this check, such a body reads as
+# "the version is not listed", which is the one answer that means publish.
+crate_needle="\"name\":\"${name}\""
+
 reason="no probe was attempted"
 for attempt in $(seq 1 "$attempts"); do
   curl_status=0
@@ -78,10 +86,13 @@ for attempt in $(seq 1 "$attempts"); do
   else
     case "$http_code" in
       200)
-        if grep -qF -- "$needle" "$body"; then
+        if ! grep -qF -- "$crate_needle" "$body"; then
+          reason="the index answered HTTP 200 with a body that is not the index file for ${name}"
+        elif grep -qF -- "$needle" "$body"; then
           exit "$EXIT_PUBLISHED"
+        else
+          exit "$EXIT_ABSENT"
         fi
-        exit "$EXIT_ABSENT"
         ;;
       404)
         exit "$EXIT_ABSENT"
