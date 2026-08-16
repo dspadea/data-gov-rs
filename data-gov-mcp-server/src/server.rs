@@ -20,10 +20,21 @@ pub(crate) const CANCELLED_NOTIFICATION: &str = "notifications/cancelled";
 
 /// How long one request may run before the server abandons it.
 ///
-/// Downloads set the floor: `data_gov.downloadResources` allows 300 seconds
-/// per file with three in flight, so a large dataset legitimately takes
-/// minutes. This is the outer bound that stops a hung upstream holding a
-/// request, and its slot in the cancellation registry, open forever.
+/// Applies to every method except a tool the registry marks
+/// [`crate::tools::WallClockBound::Exempt`] - today only
+/// `data_gov.downloadResources`. What is left answers from memory or from a
+/// single catalog call, each of which carries its own 30-second bound, so a
+/// request still running after this has gone wrong rather than gone slowly.
+/// Abandoning it is what stops a hung upstream holding a request, and its slot
+/// in the cancellation registry, open forever.
+///
+/// The figure is deliberately far above anything a bounded method should need,
+/// because it is not operator tunable and the cost of setting it too low is a
+/// request killed while it was working. It is not a download budget: a
+/// transfer's honest runtime is the size of a file over the width of a link,
+/// which no constant here can predict, so downloads are exempt and are bounded
+/// instead by reqwest's `read_timeout` on the download client - which restarts
+/// on every frame that arrives - and by `notifications/cancelled`.
 pub(crate) const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(900);
 
 /// Responses buffered between the dispatch tasks and the writer.
@@ -49,7 +60,10 @@ const RESPONSE_QUEUE_DEPTH: usize = 64;
 /// `notifications/cancelled` queued behind the request that saturated it waits
 /// too. That is inherent to backpressure on a single ordered stream - the
 /// cancellation cannot be read without reading the line in front of it - and
-/// [`DEFAULT_REQUEST_TIMEOUT`] is the backstop that always frees a slot.
+/// [`DEFAULT_REQUEST_TIMEOUT`] is the backstop that frees the slot of every
+/// request it bounds. A download is deliberately not one of them: its slot is
+/// given up when the transfer finishes, when its own stall bound fires, or on
+/// a cancellation, never on elapsed time.
 const MAX_CONCURRENT_DISPATCHES: usize = 256;
 
 /// The largest message the server will accept, in bytes, newline included.

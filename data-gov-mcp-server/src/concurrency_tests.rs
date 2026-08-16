@@ -17,11 +17,13 @@ use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::AsyncWriteExt;
-use wiremock::MockServer;
+use wiremock::matchers::{method as wm_method, path as wm_path};
+use wiremock::{Mock, MockServer, ResponseTemplate};
 
 use crate::test_support::{
     INVALID_PARAMS, INVALID_REQUEST, METHOD_NOT_FOUND, PARSE_ERROR, Session, drive, error_code,
-    error_message, gated_server, gated_twice, test_server, test_server_with_gate,
+    error_message, gated_server, gated_twice, scratch_dir, test_server, test_server_with_gate,
+    timed_server,
 };
 
 /// The largest message the server accepts, in bytes, newline included.
@@ -37,6 +39,11 @@ const DISPATCH_SLOTS: usize = 256;
 /// download, no network, and no timing is involved.
 const SLOW_METHOD: &str = "data_gov.downloadResources";
 
+/// A tool method the per-request budget does bound, for the tests that check
+/// the budget still works. [`SLOW_METHOD`] cannot serve here: it is the one
+/// tool the registry marks exempt.
+const BOUNDED_METHOD: &str = "data_gov.search";
+
 /// A `tools/call` for the tool that maps to [`SLOW_METHOD`].
 fn slow_call(id: i64) -> Value {
     json!({
@@ -46,6 +53,19 @@ fn slow_call(id: i64) -> Value {
         "params": {
             "name": "data_gov_download_resources",
             "arguments": {"datasetId": "held-dataset"}
+        }
+    })
+}
+
+/// A `tools/call` for the tool that maps to [`BOUNDED_METHOD`].
+fn bounded_call(id: i64) -> Value {
+    json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "method": "tools/call",
+        "params": {
+            "name": "data_gov_search",
+            "arguments": {"query": "held"}
         }
     })
 }
@@ -334,21 +354,26 @@ async fn concurrent_responses_are_written_as_whole_lines() {
 // The per-request timeout
 // ---------------------------------------------------------------------------
 
-/// A request that never finishes must not hold its slot forever. The gate is
-/// never released here, so the wait is unbounded and any finite timeout has to
-/// fire: the outcome does not depend on how long the test takes.
+/// A bounded request that never finishes must not hold its slot forever. The
+/// gate is never released here, so the wait is unbounded and any finite timeout
+/// has to fire: the outcome does not depend on how long the test takes.
 ///
 /// A tool that timed out reports it the way any other execution failure does,
 /// because the model can act on it - retry with fewer files, or a narrower
 /// filter.
+///
+/// The name says *bounded* because that is all this exercises. Exempting the
+/// download tool from the budget must not weaken the budget for anything else,
+/// and the mirror case is
+/// [`a_progressing_download_outlives_the_wall_clock_budget`].
 #[tokio::test]
-async fn a_tool_that_outruns_the_timeout_is_answered_with_a_tool_error() {
+async fn a_bounded_tool_that_outruns_the_timeout_is_answered_with_a_tool_error() {
     let mock = MockServer::start().await;
     let (server, _never_released) =
-        gated_server(&mock.uri(), SLOW_METHOD, Duration::from_millis(50));
+        gated_server(&mock.uri(), BOUNDED_METHOD, Duration::from_millis(50));
     let mut session = Session::start(server);
 
-    session.send(&slow_call(1)).await;
+    session.send(&bounded_call(1)).await;
 
     let response = session.next_response().await;
     assert_eq!(response.get("id"), Some(&json!(1)), "got: {response}");
@@ -361,7 +386,7 @@ async fn a_tool_that_outruns_the_timeout_is_answered_with_a_tool_error() {
         .as_str()
         .unwrap_or_default();
     assert!(
-        text.contains(SLOW_METHOD),
+        text.contains(BOUNDED_METHOD),
         "the message must name the call that was abandoned: {response}"
     );
 
@@ -403,6 +428,98 @@ async fn a_protocol_method_that_outruns_the_timeout_is_a_server_error() {
     }
 
     session.finish().await;
+}
+
+/// The product rule: work that is progressing is never killed by a wall-clock
+/// budget. `data_gov.downloadResources` is the one tool whose honest runtime is
+/// the size of a file over the width of a link, so the request budget cannot
+/// say anything true about it - a 222 MB dataset over a 250 KB/s link is a
+/// quarter of an hour of healthy transfer, and the old blanket bound killed it
+/// mid-flight after the user had already waited that long.
+///
+/// The transfer here is deliberately slower than the budget the server is
+/// given. Nothing about the numbers decides the outcome in the passing
+/// direction: with the exemption in place no wall clock applies at all, so a
+/// loaded machine cannot fail this. Without it the call is abandoned, because
+/// the response cannot arrive before the budget expires.
+///
+/// What still stops a download is unchanged and untested here: reqwest's
+/// `read_timeout` on the download client, which fires when no byte arrives for
+/// `download_timeout_secs`, and `notifications/cancelled`.
+#[tokio::test]
+async fn a_progressing_download_outlives_the_wall_clock_budget() {
+    /// Shorter than the transfer, so a bounded download cannot survive it.
+    const REQUEST_BUDGET: Duration = Duration::from_millis(50);
+    /// Longer than the budget, so the transfer provably outruns it.
+    const TRANSFER_TIME: Duration = Duration::from_millis(400);
+
+    let mock = MockServer::start().await;
+    Mock::given(wm_method("GET"))
+        .and(wm_path("/api/dataset/slow-but-alive"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "results": [{
+                "slug": "slow-but-alive",
+                "title": "Slow But Alive",
+                "dcat": {
+                    "@type": "dcat:Dataset",
+                    "title": "Slow But Alive",
+                    "distribution": [{
+                        "@type": "dcat:Distribution",
+                        "title": "bulk",
+                        "downloadURL": format!("{}/bulk.csv", mock.uri()),
+                        "mediaType": "text/csv"
+                    }]
+                }
+            }],
+            "sort": "relevance"
+        })))
+        .mount(&mock)
+        .await;
+    Mock::given(wm_method("GET"))
+        .and(wm_path("/bulk.csv"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string("a,b\n1,2\n")
+                .set_delay(TRANSFER_TIME),
+        )
+        .mount(&mock)
+        .await;
+
+    let server = timed_server(&mock.uri(), REQUEST_BUDGET);
+    let output_dir = scratch_dir("slow-but-alive");
+
+    let value = server
+        .dispatch(
+            "tools/call",
+            Some(json!({
+                "name": "data_gov_download_resources",
+                "arguments": {
+                    "datasetId": "slow-but-alive",
+                    "outputDir": output_dir.to_string_lossy(),
+                    "datasetSubdirectory": false
+                }
+            })),
+        )
+        .await
+        .expect("a download is a tool result, not a JSON-RPC error");
+
+    let _ = std::fs::remove_dir_all(&output_dir);
+
+    assert_eq!(
+        value["isError"],
+        json!(false),
+        "a transfer that was progressing must not be abandoned: {value}"
+    );
+    let summary = &value["structuredContent"];
+    assert_eq!(
+        summary["successfulCount"],
+        json!(1),
+        "the file must actually have arrived: {value}"
+    );
+    assert_eq!(
+        summary["downloads"][0]["status"], "success",
+        "the file must actually have arrived: {value}"
+    );
 }
 
 // ---------------------------------------------------------------------------

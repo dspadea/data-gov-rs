@@ -127,6 +127,29 @@ pub(crate) fn test_server_with_gate(
     gated_server(mock_uri, method, DEFAULT_REQUEST_TIMEOUT)
 }
 
+/// A server that abandons a request after `request_timeout` and gates nothing.
+///
+/// A gate holds a method before it does any work, which is exactly wrong for a
+/// test that has to watch real work run past the budget. This door leaves the
+/// handler free to run and moves only the budget.
+pub(crate) fn timed_server(mock_uri: &str, request_timeout: Duration) -> Arc<DataGovMcpServer> {
+    let mut server = test_server(mock_uri);
+    server.request_timeout = request_timeout;
+    Arc::new(server)
+}
+
+/// A scratch directory under the system temp dir, removed first so a previous
+/// run cannot influence this one. The caller removes it when finished.
+pub(crate) fn scratch_dir(name: &str) -> std::path::PathBuf {
+    let dir = std::env::temp_dir().join(format!(
+        "data-gov-mcp-{name}-{}-{:?}",
+        std::process::id(),
+        std::thread::current().id()
+    ));
+    let _ = std::fs::remove_dir_all(&dir);
+    dir
+}
+
 /// A gated server that abandons a request after `request_timeout`.
 pub(crate) fn gated_server(
     mock_uri: &str,

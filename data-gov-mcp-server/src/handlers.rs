@@ -9,7 +9,8 @@ use tokio::time::timeout;
 
 use crate::server::DataGovMcpServer;
 use crate::tools::{
-    ListToolsResult, ToolResponse, find_tool_spec, find_tool_spec_by_method, tool_descriptors,
+    ListToolsResult, ToolResponse, WallClockBound, find_tool_spec, find_tool_spec_by_method,
+    tool_descriptors, wall_clock_bound,
 };
 use crate::types::*;
 
@@ -73,11 +74,23 @@ impl DataGovMcpServer {
     /// execution failure, because a model can act on it; a timed-out protocol
     /// method has no tool result to travel in and stays a JSON-RPC error.
     /// [`ServerError::is_tool_execution_failure`] makes that split.
+    ///
+    /// A tool the registry marks [`WallClockBound::Exempt`] runs without it.
+    /// Elapsed time says nothing true about a transfer, so a budget that fits
+    /// one link kills a healthy download on a slower one; what still stops
+    /// such a tool is its own stall bound and `notifications/cancelled`. The
+    /// answer is read from the tool registry rather than matched on the method
+    /// name here, so a tool added later has to declare it - see
+    /// [`crate::tools::ToolSpec::wall_clock`].
     async fn invoke_method(
         &self,
         method: &str,
         params: Option<Value>,
     ) -> Result<Value, ServerError> {
+        if wall_clock_bound(method) == WallClockBound::Exempt {
+            return self.run_method(method, params).await;
+        }
+
         match timeout(self.request_timeout, self.run_method(method, params)).await {
             Ok(result) => result,
             Err(_elapsed) => {

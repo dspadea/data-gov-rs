@@ -360,13 +360,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   client with specific timeouts.
 
 ### Fixed
+- **The MCP request timeout no longer kills a download that is progressing**
+  (#131). Every method ran inside a 900-second wall-clock bound that is not
+  operator-tunable, `data_gov.downloadResources` among them, so a transfer that
+  was perfectly healthy was abandoned mid-flight at fifteen minutes. That is a
+  real size, not a corner: a 222 MB dataset over a 250 KB/s link is fifteen
+  minutes of honest work, and a 2 GB dataset on an ordinary home connection was
+  killed every time, after the user had already waited a quarter of an hour. No
+  constant can predict a transfer's runtime - it is the size of a file over the
+  width of a link - so the bound could only ever be wrong somewhere. Two things
+  already stop a download and both are unchanged: reqwest's `read_timeout` on
+  the download client, whose timer restarts on every frame that arrives, so a
+  dead connection still dies at `download_timeout_secs` while a slow live one
+  does not; and `notifications/cancelled`, which is how a host deliberately
+  stops a transfer. Every other method is bounded exactly as before -
+  abandoning one is what frees its dispatch slot and its cancellation-registry
+  entry. The exemption is a field on the tool registry rather than a method
+  name matched at the dispatch, so a tool added later has to state its answer
+  and cannot inherit one by omission.
 - **A cancelled download no longer leaves its temporary file behind** (#125).
   A transfer writes to a hidden `.data-gov-<pid>-<serial>.part` beside the
   destination and renames it into place at the end. Every error path removed
   that file before returning, but a cancelled download returns from none of
   them: the future is dropped where it stands and no code in the function body
-  runs. The MCP server does exactly that on two deliberate paths - the
-  per-request timeout, and `notifications/cancelled` - and nothing anywhere
+  runs. The MCP server does exactly that when a host sends
+  `notifications/cancelled`, and nothing anywhere
   swept the leftovers, so a user who cancelled a few large downloads
   accumulated hidden files in the download directory forever. The temporary
   file is now owned by a guard whose `Drop` removes it, disarmed once the
