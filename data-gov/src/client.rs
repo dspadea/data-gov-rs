@@ -107,9 +107,10 @@ impl Drop for PartialFileGuard {
             Ok(()) => {}
             // Already gone: an error path discarded it before returning.
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
-            Err(err) => eprintln!(
-                "data-gov: could not remove the unfinished download {}: {err}",
-                self.path.display()
+            Err(err) => tracing::warn!(
+                path = %self.path.display(),
+                error = %err,
+                "could not remove the unfinished download"
             ),
         }
     }
@@ -138,15 +139,27 @@ impl DataGovClient {
     /// # Errors
     ///
     /// Returns [`DataGovError::ConfigError`] when `max_concurrent_downloads`
-    /// or `download_timeout_secs` is zero. Both are `pub` fields on a struct
-    /// that is not `#[non_exhaustive]`, so a struct literal can reach either
-    /// one without the builder that would otherwise clamp it -- and neither
-    /// zero has a useful meaning: a zero-permit semaphore never closes
-    /// (#73), and a zero-second connect/read timeout fails every download
-    /// immediately, in a way that reads as a network problem rather than a
-    /// configuration one (#107). Rejecting here, rather than clamping, means
-    /// the caller finds out at construction instead of at the first silent
-    /// failure.
+    /// or `download_timeout_secs` is zero. Neither zero has a useful meaning:
+    /// a zero-permit semaphore never closes (#73), and a zero-second
+    /// connect/read timeout fails every download immediately, in a way that
+    /// reads as a network problem rather than a configuration one (#107).
+    ///
+    /// Every route to a configuration ends here, and none of them clamps on
+    /// the way. The fields are `pub` on a struct that is not
+    /// `#[non_exhaustive]`, so a struct literal arrives at this check
+    /// directly; and
+    /// [`with_max_concurrent_downloads`](crate::DataGovConfig::with_max_concurrent_downloads)
+    /// and
+    /// [`with_download_timeout`](crate::DataGovConfig::with_download_timeout)
+    /// store what they were given, zero included, so the builder is a
+    /// convenience rather than a second gate to get past. A zero therefore
+    /// always surfaces as an error naming the setting, at construction -
+    /// never as a substituted value the caller never chose, and never as a
+    /// download that hangs or fails with nothing to explain it.
+    ///
+    /// Returns [`DataGovError::HttpError`] if the underlying HTTP client
+    /// cannot be built - a missing or unusable TLS backend is the realistic
+    /// cause.
     pub fn with_config(config: DataGovConfig) -> Result<Self> {
         if config.max_concurrent_downloads == 0 {
             return Err(DataGovError::config_error(
@@ -872,14 +885,16 @@ impl DataGovClient {
     /// Best effort by design: the transfer has already failed, and being
     /// unable to tidy up is not a second failure to report to the caller. It
     /// is still worth saying out loud, because the alternative is a `.part`
-    /// file nobody can account for.
+    /// file nobody can account for - so it goes out as a `tracing` warning,
+    /// which an embedder can route, rather than to a stderr it does not own.
     async fn discard_partial(temp_path: &Path) {
         match tokio::fs::remove_file(temp_path).await {
             Ok(()) => {}
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
-            Err(err) => eprintln!(
-                "data-gov: could not remove the unfinished download {}: {err}",
-                temp_path.display()
+            Err(err) => tracing::warn!(
+                path = %temp_path.display(),
+                error = %err,
+                "could not remove the unfinished download"
             ),
         }
     }
@@ -1284,6 +1299,27 @@ mod tests {
             DataGovError::ConfigError { message } => {
                 assert!(
                     message.contains("max_concurrent_downloads"),
+                    "the error must name the field, got: {message}"
+                );
+            }
+            other => panic!("expected ConfigError, got {other:?}"),
+        }
+    }
+
+    /// The rustdoc on `with_config` tells a consumer that no builder is a
+    /// way round the zero check, and names this setter alongside the
+    /// concurrency one. The concurrency half is pinned above; this pins the
+    /// half that was only ever asserted in prose.
+    #[test]
+    fn a_zero_download_timeout_from_the_builder_reaches_the_named_error() {
+        let config = crate::config::DataGovConfig::new().with_download_timeout(0);
+
+        let err = DataGovClient::with_config(config)
+            .expect_err("a zero from the builder must be refused, not silently become 1");
+        match err {
+            DataGovError::ConfigError { message } => {
+                assert!(
+                    message.contains("download_timeout_secs"),
                     "the error must name the field, got: {message}"
                 );
             }

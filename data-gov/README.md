@@ -365,6 +365,20 @@ let config = resolved.into_config();
 file, no home directory — which is what makes the chain testable without
 mutating process state.
 
+## Logging
+
+The library never writes to your process's terminal. Progress and per-file
+download events reach you through the `StatusReporter` you install on the
+config; diagnostics - a `.part` file that could not be removed, a working
+directory that could not be read - go out as `tracing` warnings with
+structured fields. Install any `tracing` subscriber to see them:
+
+```rust
+tracing_subscriber::fmt::init();
+```
+
+With no subscriber installed, nothing is emitted and nothing is printed.
+
 ## Cargo features
 
 | Feature       | Default | Effect                                             |
