@@ -7,8 +7,10 @@
 
 use std::error::Error as StdError;
 use std::fmt;
+use std::future::Future;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::{Component, Path};
+use std::time::Duration;
 
 use reqwest::dns::{Addrs, Name, Resolve, Resolving};
 use url::{Host, Url};
@@ -244,11 +246,14 @@ pub(crate) fn check_url_without_dns(
 
 /// Check a download URL before the request leaves.
 ///
+/// `lookup_timeout` bounds the name lookup; see [`check_download_url_with`].
+///
 /// # Errors
 ///
 /// Returns [`DataGovError::ValidationError`] when the URL does not parse, uses
-/// a scheme other than `http` or `https`, names no host, cannot be resolved,
-/// or points at an address downloads may not reach.
+/// a scheme other than `http` or `https`, names no host, is not resolved
+/// within `lookup_timeout`, cannot be resolved at all, or points at an address
+/// downloads may not reach.
 ///
 /// # A limit worth stating
 ///
@@ -257,7 +262,68 @@ pub(crate) fn check_url_without_dns(
 /// differently - the DNS-rebinding case. [`GuardedResolver`] narrows that
 /// window by checking the addresses reqwest actually connects to, but a client
 /// at this layer cannot close it.
-pub(crate) async fn check_download_url(raw: &str, allow_private: bool) -> Result<()> {
+pub(crate) async fn check_download_url(
+    raw: &str,
+    allow_private: bool,
+    lookup_timeout: Duration,
+) -> Result<()> {
+    check_download_url_with(raw, allow_private, lookup_timeout, |host, port| {
+        tokio::net::lookup_host((host, port))
+    })
+    .await
+}
+
+/// The body of [`check_download_url`], with the name lookup supplied.
+///
+/// Taking the lookup as an argument is what makes the bound testable: a test
+/// drives a lookup that answers late, or not at all, without a name server and
+/// without depending on how long anything really takes.
+///
+/// # Why the lookup needs a bound of its own
+///
+/// This runs outside reqwest, so neither of the download client's bounds
+/// reaches it. `read_timeout` is a property of the response body, so it starts
+/// only once a request is in flight, and `connect_timeout` wraps reqwest's own
+/// connector, which covers the lookup [`GuardedResolver`] does and not this
+/// one. A name server that accepts a query and never answers therefore had
+/// nothing to end it. Cutting it off does not contradict the rule that work
+/// which is progressing is never killed on elapsed time: a lookup that is not
+/// answering is not progressing, and no byte of any transfer is in flight yet.
+///
+/// # Why the bound is passed rather than derived
+///
+/// The value is the download's own stall bound, `download_timeout_secs`, which
+/// already bounds the connect and each read of the body. One setting has to
+/// govern all three. Deriving a constant here would give an operator who
+/// raises the setting for a slow or distant link two thirds of what they asked
+/// for, and a third bound they can neither see nor change.
+///
+/// # A limit worth stating
+///
+/// The bound frees the caller, not the thread. `tokio::net::lookup_host` runs
+/// `getaddrinfo` on the blocking pool, and that call cannot be cancelled
+/// portably, so the pool task runs on until the system resolver gives up. What
+/// this ends is the download - and, above it, the MCP request - waiting on it.
+///
+/// # Errors
+///
+/// Returns [`DataGovError::ValidationError`] when the URL does not parse, uses
+/// a scheme other than `http` or `https`, names no host, is not resolved
+/// within `lookup_timeout`, cannot be resolved at all, or points at an address
+/// downloads may not reach. A lookup that ran out of time is reported
+/// separately from one that answered "no such host", so an operator can tell a
+/// silent name server from a name that does not exist.
+async fn check_download_url_with<L, F, I>(
+    raw: &str,
+    allow_private: bool,
+    lookup_timeout: Duration,
+    lookup: L,
+) -> Result<()>
+where
+    L: FnOnce(String, u16) -> F,
+    F: Future<Output = std::io::Result<I>>,
+    I: Iterator<Item = SocketAddr>,
+{
     let url = Url::parse(raw).map_err(|err| {
         DataGovError::validation_error(format!("download URL `{raw}` does not parse: {err}"))
     })?;
@@ -269,13 +335,20 @@ pub(crate) async fn check_download_url(raw: &str, allow_private: bool) -> Result
     };
 
     let port = url.port_or_known_default().unwrap_or(80);
-    let resolved = tokio::net::lookup_host((host.as_str(), port))
-        .await
-        .map_err(|err| {
-            DataGovError::validation_error(format!(
+    let resolved = match tokio::time::timeout(lookup_timeout, lookup(host.clone(), port)).await {
+        Err(_elapsed) => {
+            return Err(DataGovError::validation_error(format!(
+                "download URL host `{host}` did not resolve within {lookup_timeout:?}: \
+                 the name lookup timed out"
+            )));
+        }
+        Ok(Err(err)) => {
+            return Err(DataGovError::validation_error(format!(
                 "download URL host `{host}` does not resolve: {err}"
-            ))
-        })?;
+            )));
+        }
+        Ok(Ok(addresses)) => addresses,
+    };
 
     for address in resolved {
         if let Some(message) = address_refusal(&host, address.ip(), allow_private) {
@@ -313,6 +386,9 @@ pub(crate) async fn check_download_url(raw: &str, allow_private: bool) -> Result
 /// [`MAX_REDIRECT_HOPS`], and [`DataGovError::HttpError`] when a request fails
 /// for a transport reason.
 ///
+/// `lookup_timeout` is forwarded to [`check_download_url`] and so bounds the
+/// name lookup of every hop, not only the first.
+///
 /// # A limit worth stating
 ///
 /// This closes the case where a redirect to a name was followed with nothing
@@ -326,6 +402,7 @@ pub(crate) async fn fetch_checked(
     http_client: &reqwest::Client,
     url: &str,
     allow_private: bool,
+    lookup_timeout: Duration,
 ) -> Result<reqwest::Response> {
     let mut target = Url::parse(url).map_err(|err| {
         DataGovError::validation_error(format!("download URL `{url}` does not parse: {err}"))
@@ -333,7 +410,7 @@ pub(crate) async fn fetch_checked(
     let mut hops = 0usize;
 
     loop {
-        check_download_url(target.as_str(), allow_private).await?;
+        check_download_url(target.as_str(), allow_private, lookup_timeout).await?;
 
         let response =
             http_client
@@ -554,6 +631,9 @@ mod tests {
     use super::*;
     use std::str::FromStr;
 
+    /// A lookup bound no test means to reach.
+    const GENEROUS: Duration = Duration::from_secs(300);
+
     /// Every address here is drawn from the RFC that reserves the range, not
     /// from the implementation: RFC 1918 (private), RFC 3927 and RFC 4291
     /// (link-local), RFC 6598 (carrier-grade NAT), RFC 4193 (unique-local).
@@ -695,7 +775,7 @@ mod tests {
 
     #[tokio::test]
     async fn check_download_url_refuses_a_name_that_resolves_to_loopback() {
-        let error = check_download_url("http://localhost/data.csv", false)
+        let error = check_download_url("http://localhost/data.csv", false, GENEROUS)
             .await
             .expect_err("localhost resolves to loopback and must be refused");
         assert!(error.to_string().contains("localhost"), "got: {error}");
@@ -703,10 +783,190 @@ mod tests {
 
     #[tokio::test]
     async fn check_download_url_rejects_text_that_is_not_a_url() {
-        let error = check_download_url("not a url", false)
+        let error = check_download_url("not a url", false, GENEROUS)
             .await
             .expect_err("unparseable text must be refused");
         assert!(matches!(error, DataGovError::ValidationError { .. }));
+    }
+
+    /// A name lookup that answers after `delay`, standing in for a real one.
+    ///
+    /// The delay is a `tokio::time::sleep`, so under a paused clock it costs no
+    /// real time and the outcome is decided by which of the two timers - this
+    /// one or the bound - is nearer, never by how loaded the machine is.
+    async fn lookup_answering_after(
+        delay: Duration,
+        address: &str,
+    ) -> std::io::Result<std::vec::IntoIter<SocketAddr>> {
+        let address: SocketAddr = address.parse().expect("the test address must parse");
+        tokio::time::sleep(delay).await;
+        Ok(vec![address].into_iter())
+    }
+
+    /// A name lookup that fails the way an absent name does.
+    async fn lookup_failing_with_no_such_host() -> std::io::Result<std::vec::IntoIter<SocketAddr>> {
+        Err(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "no such host",
+        ))
+    }
+
+    /// A name lookup that must never be reached.
+    async fn lookup_that_must_not_run() -> std::io::Result<std::vec::IntoIter<SocketAddr>> {
+        panic!("this URL must be judged without a lookup");
+    }
+
+    /// The bound exists so a name server that never answers cannot hold a
+    /// download open. Without it nothing in the download path ends this wait:
+    /// the lookup runs outside reqwest, so `connect_timeout` and `read_timeout`
+    /// both miss it.
+    #[tokio::test(start_paused = true)]
+    async fn a_lookup_that_outlasts_the_bound_is_cut_off() {
+        let error = check_download_url_with(
+            "http://silent.example/data.csv",
+            false,
+            Duration::from_secs(5),
+            |_host, _port| lookup_answering_after(Duration::from_secs(3600), "93.184.216.34:80"),
+        )
+        .await
+        .expect_err("a lookup that outlasts the bound must be cut off");
+
+        let message = error.to_string();
+        assert!(
+            message.contains("silent.example"),
+            "the refusal must name the host an operator has to go and look at, got: {message}"
+        );
+        assert!(
+            message.contains("timed out"),
+            "a lookup that ran out of time must say so, got: {message}"
+        );
+    }
+
+    /// The bound that decides has to be the configured one, not a constant.
+    ///
+    /// The same lookup is driven twice and only the bound differs, so nothing
+    /// but the configured value can account for the two outcomes. The quoted
+    /// figure is checked too: an operator reading the message has to be able to
+    /// tell which setting cut the lookup off.
+    #[tokio::test(start_paused = true)]
+    async fn the_configured_bound_is_the_one_that_decides() {
+        const LOOKUP_TAKES: Duration = Duration::from_secs(30);
+
+        let cut_off = check_download_url_with(
+            "http://slow.example/data.csv",
+            false,
+            Duration::from_secs(5),
+            |_host, _port| lookup_answering_after(LOOKUP_TAKES, "93.184.216.34:80"),
+        )
+        .await
+        .expect_err("a five second bound is shorter than a thirty second lookup");
+        assert!(
+            cut_off.to_string().contains("5s"),
+            "the message must quote the bound that fired, got: {cut_off}"
+        );
+
+        check_download_url_with(
+            "http://slow.example/data.csv",
+            false,
+            Duration::from_secs(300),
+            |_host, _port| lookup_answering_after(LOOKUP_TAKES, "93.184.216.34:80"),
+        )
+        .await
+        .expect("a bound longer than the lookup must let the same lookup through");
+    }
+
+    /// A lookup that ran out of time and a name that does not exist are
+    /// different operational problems - a silent name server against a bad URL
+    /// - so the two messages have to be told apart without guessing.
+    #[tokio::test(start_paused = true)]
+    async fn a_lookup_that_times_out_reads_differently_from_one_that_fails() {
+        let timed_out = check_download_url_with(
+            "http://silent.example/data.csv",
+            false,
+            Duration::from_secs(5),
+            |_host, _port| lookup_answering_after(Duration::from_secs(3600), "93.184.216.34:80"),
+        )
+        .await
+        .expect_err("the lookup outlasts the bound")
+        .to_string();
+
+        let failed = check_download_url_with(
+            "http://absent.example/data.csv",
+            false,
+            GENEROUS,
+            |_host, _port| lookup_failing_with_no_such_host(),
+        )
+        .await
+        .expect_err("a lookup that fails is still a refusal")
+        .to_string();
+
+        assert!(timed_out.contains("timed out"), "got: {timed_out}");
+        assert!(failed.contains("does not resolve"), "got: {failed}");
+        assert!(
+            !failed.contains("timed out"),
+            "an NXDOMAIN must not read as a timeout, got: {failed}"
+        );
+    }
+
+    /// Bounding the lookup must not smuggle an address past the range check.
+    #[tokio::test(start_paused = true)]
+    async fn a_bounded_lookup_still_judges_the_address_it_gets() {
+        let error = check_download_url_with(
+            "http://mirror.example/data.csv",
+            false,
+            GENEROUS,
+            |_host, _port| lookup_answering_after(Duration::from_secs(1), "127.0.0.1:80"),
+        )
+        .await
+        .expect_err("an answer of loopback must still be refused");
+        assert!(error.to_string().contains("loopback"), "got: {error}");
+
+        check_download_url_with(
+            "http://mirror.example/data.csv",
+            false,
+            GENEROUS,
+            |_host, _port| lookup_answering_after(Duration::from_secs(1), "93.184.216.34:80"),
+        )
+        .await
+        .expect("a routable answer must pass");
+    }
+
+    /// The host and port the lookup is asked for are the ones the URL names,
+    /// including the port the scheme implies when the URL states none.
+    #[tokio::test(start_paused = true)]
+    async fn the_lookup_is_asked_for_the_host_and_port_the_url_names() {
+        for (url, expected_host, expected_port) in [
+            ("https://mirror.example/data.csv", "mirror.example", 443u16),
+            ("http://mirror.example/data.csv", "mirror.example", 80),
+            (
+                "http://mirror.example:8443/data.csv",
+                "mirror.example",
+                8443,
+            ),
+        ] {
+            check_download_url_with(url, false, GENEROUS, |host, port| {
+                assert_eq!(host, expected_host, "for {url}");
+                assert_eq!(port, expected_port, "for {url}");
+                lookup_answering_after(Duration::ZERO, "93.184.216.34:80")
+            })
+            .await
+            .expect("a routable answer must pass");
+        }
+    }
+
+    /// A literal address is judged without a lookup, so no bound applies to it.
+    /// A zero bound would cut off any lookup at all, which is what makes it the
+    /// proof that none was made.
+    #[tokio::test(start_paused = true)]
+    async fn a_literal_address_reaches_no_lookup_and_so_no_bound() {
+        check_download_url_with(
+            "http://93.184.216.34/data.csv",
+            false,
+            Duration::ZERO,
+            |_host, _port| lookup_that_must_not_run(),
+        )
+        .await
+        .expect("a routable literal address passes without resolving anything");
     }
 
     /// The resolver is the half of the check a synchronous redirect policy

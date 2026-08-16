@@ -20,10 +20,11 @@ pub(crate) enum WallClockBound {
     ///
     /// Only for a tool that streams bulk bytes, where progress rather than
     /// elapsed time says whether it is healthy. Such a tool must carry its own
-    /// stall bound - for downloads, reqwest's `read_timeout`, which restarts
+    /// stall bounds - for downloads, reqwest's `read_timeout`, which restarts
     /// on every frame that arrives and therefore kills a dead connection
-    /// without touching a live slow one - and must remain stoppable by
-    /// `notifications/cancelled`.
+    /// without touching a live slow one, and the bound on the pre-flight name
+    /// lookup, which runs outside reqwest and would otherwise reach no timer
+    /// at all - and must remain stoppable by `notifications/cancelled`.
     Exempt,
 }
 
@@ -305,9 +306,11 @@ pub(crate) static TOOL_SPECS: LazyLock<Vec<ToolSpec>> = LazyLock::new(|| {
             }),
             // The one exempt tool. Its runtime is the size of a file over
             // the width of a link, so no wall-clock figure can tell a healthy
-            // transfer from a stuck one. reqwest's `read_timeout` on the
-            // download client can, and `notifications/cancelled` is how a
-            // host asks for one to stop.
+            // transfer from a stuck one. Two bounds inside the transfer can:
+            // reqwest's `read_timeout` on the download client, and the same
+            // `download_timeout_secs` on the pre-flight name lookup, which
+            // runs outside reqwest. `notifications/cancelled` is how a host
+            // asks for one to stop.
             wall_clock: WallClockBound::Exempt,
         },
     ]

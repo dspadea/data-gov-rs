@@ -94,9 +94,11 @@ pub struct DataGovConfig {
     /// How long a download may stall, in seconds.
     ///
     /// This is a stall timeout, not a deadline on the whole transfer. It caps
-    /// the connect phase, and it caps the wait for each read of the response
+    /// three waits: the pre-flight name lookup of the download URL and of
+    /// every redirect hop, the connect phase, and each read of the response
     /// body, resetting after every successful read. A large file that arrives
-    /// slowly but steadily is not cut off; a connection that stops sending is.
+    /// slowly but steadily is not cut off; a connection that stops sending is,
+    /// and so is a name server that accepts the query and never answers.
     pub download_timeout_secs: u64,
     /// Permit downloads whose destination is on a private network.
     ///

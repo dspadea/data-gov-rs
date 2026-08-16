@@ -588,8 +588,8 @@ impl ConfigResolver {
             return Ok((defaults.download_timeout_secs, SettingSource::Default));
         };
 
-        // A zero stall timeout fails every download at the first read, with no
-        // explanation (#107).
+        // A zero stall bound fails every download at the name lookup, before a
+        // connection is even attempted, with no explanation (#107).
         if secs == 0 {
             return Err(at_least_one(key, source));
         }

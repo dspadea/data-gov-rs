@@ -14,6 +14,7 @@ use futures::StreamExt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Duration;
 use tokio::fs::File;
 use tokio::io::AsyncWriteExt;
 use url::Url;
@@ -55,6 +56,10 @@ struct DownloadJob<'a> {
     resource_name: Option<String>,
     dataset_name: Option<String>,
     allow_private_network: bool,
+    /// Bound on the pre-flight name lookup of the URL and of every redirect
+    /// hop, from [`DataGovClient::stall_bound`]. The lookup runs outside
+    /// reqwest, so no bound on the HTTP client reaches it.
+    lookup_timeout: Duration,
 }
 
 /// Owns the temporary file of a transfer in progress and removes it on drop.
@@ -140,9 +145,10 @@ impl DataGovClient {
     ///
     /// Returns [`DataGovError::ConfigError`] when `max_concurrent_downloads`
     /// or `download_timeout_secs` is zero. Neither zero has a useful meaning:
-    /// a zero-permit semaphore never closes (#73), and a zero-second
-    /// connect/read timeout fails every download immediately, in a way that
-    /// reads as a network problem rather than a configuration one (#107).
+    /// a zero-permit semaphore never closes (#73), and a zero-second stall
+    /// bound fails every download immediately - at the name lookup, before a
+    /// connection is even attempted - in a way that reads as a network problem
+    /// rather than a configuration one (#107).
     ///
     /// Every route to a configuration ends here, and none of them clamps on
     /// the way. The fields are `pub` on a struct that is not
@@ -169,17 +175,14 @@ impl DataGovClient {
         if config.download_timeout_secs == 0 {
             return Err(DataGovError::config_error(
                 "download_timeout_secs must be at least 1, got 0 (a zero-second \
-                 connect/read timeout would fail every download immediately)",
+                 lookup/connect/read timeout would fail every download immediately)",
             ));
         }
 
         let catalog = CatalogClient::new(config.catalog_config.clone());
 
         let allow_private = config.allow_private_network_downloads;
-        // A stall timeout, not a deadline on the transfer. `timeout` runs from
-        // the start of the connect until the body has finished, which caps how
-        // large a file can be fetched rather than how long it may hang.
-        let stall = std::time::Duration::from_secs(config.download_timeout_secs);
+        let stall = Self::stall_bound(&config);
         let http_client = reqwest::Client::builder()
             .connect_timeout(stall)
             .read_timeout(stall)
@@ -196,6 +199,20 @@ impl DataGovClient {
             config,
             http_client,
         })
+    }
+
+    /// How long a download may go without progress before it is abandoned.
+    ///
+    /// A stall bound, not a deadline on the transfer: a whole-request timeout
+    /// would run from the start of the connect until the body had finished,
+    /// which caps how large a file can be fetched rather than how long it may
+    /// hang. One value bounds all three places a download can stop making
+    /// progress - the connect, each read of the response body, and the
+    /// pre-flight name lookup - so an operator who raises
+    /// `download_timeout_secs` for a slow or distant link moves every one of
+    /// them rather than two.
+    fn stall_bound(config: &DataGovConfig) -> Duration {
+        Duration::from_secs(config.download_timeout_secs)
     }
 
     // === Search and Discovery ===
@@ -539,6 +556,7 @@ impl DataGovClient {
                 resource_name: distribution.title.clone(),
                 dataset_name: None,
                 allow_private_network: self.config.allow_private_network_downloads,
+                lookup_timeout: Self::stall_bound(&self.config),
             },
             self.reporter(),
         )
@@ -590,6 +608,7 @@ impl DataGovClient {
 
         let status_reporter = self.reporter();
         let allow_private_network = self.config.allow_private_network_downloads;
+        let lookup_timeout = Self::stall_bound(&self.config);
         let mut futures = Vec::with_capacity(distributions.len());
 
         for (index, distribution) in distributions.iter().enumerate() {
@@ -649,6 +668,7 @@ impl DataGovClient {
                         resource_name: distribution.title.clone(),
                         dataset_name: None,
                         allow_private_network,
+                        lookup_timeout,
                     },
                     status_reporter,
                 )
@@ -690,6 +710,7 @@ impl DataGovClient {
             resource_name,
             dataset_name,
             allow_private_network,
+            lookup_timeout,
         } = job;
 
         let notify_failure =
@@ -710,7 +731,8 @@ impl DataGovClient {
         // nothing behind. `fetch_checked` judges it again, which is one extra
         // lookup and deliberate: it has to be safe called on its own, rather
         // than safe because this caller happened to check first.
-        if let Err(err) = util::check_download_url(url, allow_private_network).await {
+        if let Err(err) = util::check_download_url(url, allow_private_network, lookup_timeout).await
+        {
             notify_failure(err.to_string(), &status_reporter);
             return Err(err);
         }
@@ -730,7 +752,14 @@ impl DataGovClient {
         // Every hop of the redirect chain goes through the same check the URL
         // above did, including the last one, and no request is made for a hop
         // that has not passed it.
-        let response = match util::fetch_checked(http_client, url, allow_private_network).await {
+        let response = match util::fetch_checked(
+            http_client,
+            url,
+            allow_private_network,
+            lookup_timeout,
+        )
+        .await
+        {
             Ok(resp) => resp,
             Err(err) => {
                 notify_failure(err.to_string(), &status_reporter);
@@ -1244,6 +1273,28 @@ mod tests {
         }
     }
 
+    /// One setting has to reach every bound a download can stall against.
+    ///
+    /// `with_config` builds the connect and read timeouts from
+    /// [`DataGovClient::stall_bound`], and every [`DownloadJob`] takes its
+    /// pre-flight lookup bound from the same call, so this is what pins the
+    /// value to the setting an operator actually sets. A constant creeping in
+    /// anywhere would leave a bound they cannot move.
+    #[test]
+    fn the_stall_bound_is_the_configured_download_timeout() {
+        for secs in [1u64, 42, 300, 86_400] {
+            let config = crate::config::DataGovConfig {
+                download_timeout_secs: secs,
+                ..crate::config::DataGovConfig::default()
+            };
+            assert_eq!(
+                DataGovClient::stall_bound(&config),
+                Duration::from_secs(secs),
+                "the stall bound must be download_timeout_secs, not a constant"
+            );
+        }
+    }
+
     // === #107: with_config rejects the zero values a struct literal or a
     // clamp-free builder path can produce ===
 
@@ -1254,7 +1305,7 @@ mod tests {
             ..crate::config::DataGovConfig::default()
         };
         let err = DataGovClient::with_config(config)
-            .expect_err("a zero-second connect/read timeout must be rejected, not clamped");
+            .expect_err("a zero-second stall bound must be rejected, not clamped");
         match err {
             DataGovError::ConfigError { message } => {
                 assert!(

@@ -52,7 +52,10 @@ toml = { version = "1.1.4", default-features = false, features = ["std", "serde"
 
 [dev-dependencies]
 wiremock = "0.6"
-tokio = { version = "1", features = ["full"] }
+# `test-util` is what lets a test pause the clock. The pre-flight name lookup
+# bound in src/util.rs is proved against a paused clock, so the outcome is
+# decided by which timer is nearer and never by how loaded the machine is.
+tokio = { version = "1", features = ["full", "test-util"] }
 serde_json = "1.0"
 tempfile = "3"
 # Process-level CLI tests (tests/cli_process_tests.rs): drives the real
