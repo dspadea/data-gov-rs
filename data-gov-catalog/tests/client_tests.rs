@@ -955,6 +955,47 @@ async fn a_short_configured_timeout_bounds_a_stalled_request() {
     );
 }
 
+/// The fallible twin of `with_timeouts` has to apply the timeouts it is
+/// handed, not merely build a client from them. Same harness as
+/// `a_short_configured_timeout_bounds_a_stalled_request`: wiremock delays 5s
+/// against the 100ms overall timeout passed to the constructor, so a client
+/// that carries the argument through returns promptly, while one left on
+/// [`data_gov_catalog::DEFAULT_TIMEOUT`] (30s) is still waiting when the
+/// bound below expires.
+///
+/// Only the overall timeout is exercised. Reaching the connect timeout needs
+/// a peer that never answers the TCP handshake, which an in-process mock
+/// server cannot offer.
+#[tokio::test]
+async fn try_with_timeouts_bounds_a_stalled_request_to_the_given_timeout() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/search"))
+        .respond_with(ResponseTemplate::new(200).set_delay(Duration::from_secs(5)))
+        .mount(&server)
+        .await;
+
+    let mut config =
+        Configuration::try_with_timeouts(Duration::from_millis(50), Duration::from_millis(100))
+            .expect("a client builds on this host");
+    config.base_path = server.uri();
+    let client = CatalogClient::new(Arc::new(config));
+
+    let start = Instant::now();
+    let result = client.search(SearchParams::new().q("x")).await;
+    let elapsed = start.elapsed();
+
+    assert!(
+        elapsed < Duration::from_secs(2),
+        "took {elapsed:?} against the 100ms timeout passed to try_with_timeouts and a 5s \
+         server delay; the argument is not reaching the client"
+    );
+    assert!(
+        matches!(result, Err(CatalogError::RequestError(_))),
+        "an unresponsive server must produce a RequestError, not hang or succeed: got {result:?}"
+    );
+}
+
 /// Values that have no representation as a URL path segment.
 ///
 /// Percent-encoding cannot save these: the URL standard removes dot-segments

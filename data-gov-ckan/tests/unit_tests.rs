@@ -1225,3 +1225,54 @@ async fn with_timeouts_bounds_a_call_to_the_given_duration() {
          but the call returned {result:?} after {elapsed:?}"
     );
 }
+
+/// `try_with_timeouts` is the fallible twin of `with_timeouts`, and has to
+/// apply the timeouts it is handed rather than merely build a client from
+/// them. Same harness as `with_timeouts_bounds_a_call_to_the_given_duration`:
+/// a mock delays 300ms against the 50ms overall timeout passed to the
+/// constructor, so a client that carries the argument through errors well
+/// under the delay, while one left on `DEFAULT_TIMEOUT` (30s) returns the
+/// delayed response instead.
+///
+/// Only the overall timeout is exercised. Reaching the connect timeout needs
+/// a peer that never answers the TCP handshake, which an in-process mock
+/// server cannot offer.
+#[tokio::test]
+async fn try_with_timeouts_bounds_a_call_to_the_given_duration() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/action/package_search"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(json!({"help": "", "success": true, "result": {}}))
+                .set_delay(std::time::Duration::from_millis(300)),
+        )
+        .mount(&server)
+        .await;
+
+    let config = Arc::new(Configuration {
+        base_path: server.uri(),
+        ..Configuration::try_with_timeouts(
+            std::time::Duration::from_millis(50),
+            std::time::Duration::from_millis(50),
+        )
+        .expect("a client builds on this host")
+    });
+
+    let started = std::time::Instant::now();
+    let result = CkanClient::new(config)
+        .package_search(None, None, None, None)
+        .await;
+    let elapsed = started.elapsed();
+
+    assert!(
+        result.is_err(),
+        "a 50ms try_with_timeouts client must bound a 300ms delayed response, \
+         but the call returned {result:?} after {elapsed:?}"
+    );
+    assert!(
+        elapsed < std::time::Duration::from_millis(300),
+        "took {elapsed:?} against the 50ms timeout passed to try_with_timeouts and a \
+         300ms server delay; the argument is not reaching the client"
+    );
+}
