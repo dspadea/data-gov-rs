@@ -210,6 +210,13 @@ cat > "$tmp/index-regex-trap.txt" <<'BODY'
 {"name":"data-gov-ckan","vers":"0X5X0","deps":[],"cksum":"2222222222222222222222222222222222222222222222222222222222222222","features":{},"yanked":false}
 BODY
 
+# A 200 that is not an index file at all. A captive portal, a proxy sign-in
+# page, or a CDN error page served with 200 all look like this.
+cat > "$tmp/index-interception.txt" <<'BODY'
+<html><head><title>Sign in</title></head>
+<body><h1>Sign in to continue</h1></body></html>
+BODY
+
 # Keep the retries and the polling short. The defaults are tuned for a real
 # release; a test must not spend minutes proving a guard fires.
 #
@@ -270,6 +277,15 @@ want retries_a_transient_server_error_before_answering \
 start_stub --mode ok --body "$tmp/index-regex-trap.txt"
 want matches_the_version_literally_rather_than_as_a_regex \
   "$NOT_PUBLISHED" index_has "$stub_base" data-gov-ckan 0.5.0
+
+# A 200 whose body is not this crate's index file answers no question about
+# the crate. Reading it as "absent" would be reading it as an instruction to
+# publish, on the one path that cannot be taken back.
+start_stub --mode ok --body "$tmp/index-interception.txt"
+want reports_unknown_when_a_200_body_is_not_the_index_file \
+  "$UNKNOWN" index_has "$stub_base" data-gov-ckan 0.5.0
+and_output_has reports_unknown_when_a_200_body_is_not_the_index_file_and_says_so \
+  "with a body that is not the index file"
 
 echo "== publish-crate.sh =="
 

@@ -574,6 +574,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   guard on it. Each needle is now a phrase only the script under test can
   produce, and the wait case is asserted from both sides, so collapsing either
   branch into the other fails a test.
+- **A 200 that is not the index file no longer reads as "not published"**.
+  `index-has.sh` concluded absent from any 200 whose body did not list the
+  version, including a captive portal or a proxy sign-in page that lists no
+  version at all - and absent is the answer that means publish. The body must
+  now carry `"name":"<crate>"`, the field every sparse-index line opens with,
+  before absent is concluded. Without it the answer is unknown, which stops
+  the job.
 - **A filtered run of the helper tests no longer reads another case's
   output.** Each follow-up assertion filtered on its own name, which differs
   from the name of the run whose capture it reads, so
