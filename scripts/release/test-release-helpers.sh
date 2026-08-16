@@ -12,6 +12,10 @@
 # that cannot be reached must stop the publish, never wave it through.
 #
 # Usage: test-release-helpers.sh [name-substring]
+#
+# The substring selects runs. A run's follow-up assertions come with it,
+# whether or not their own names match, because they have nothing to read
+# without it.
 
 set -uo pipefail
 
@@ -28,6 +32,15 @@ stub_pid=""
 stub_base=""
 passed=0
 failed=0
+skipped=0
+
+# Every `and_*` assertion reads the capture that the most recent `want` left
+# behind, so the filter decides once, at the `want`, and the assertions after
+# it inherit that decision. An assertion admitted by a filter that excluded
+# its own run would otherwise read whatever capture happened to be on disk -
+# some earlier case's, or none - and report a pass on another test's evidence.
+last_want_name=""
+last_want_ran=0
 
 stop_stub() {
   if [ -n "$stub_pid" ]; then
@@ -75,9 +88,12 @@ unreachable_base() {
 want() {
   local name="$1" expected="$2"
   shift 2
+  last_want_name="$name"
+  last_want_ran=0
   if [ -n "$filter" ] && [[ "$name" != *"$filter"* ]]; then
     return 0
   fi
+  last_want_ran=1
   : > "$tmp/cargo.log"
   local actual=0
   "$@" > "$tmp/out" 2>&1 || actual=$?
@@ -91,13 +107,35 @@ want() {
   fi
 }
 
+# True when the run an `and_*` is about to inspect actually happened. When it
+# did not, the assertion is refused and said to be refused, rather than run
+# against a capture belonging to some other case.
+inspects_the_last_run() {
+  local name="$1"
+  if [ "$last_want_ran" -eq 1 ]; then
+    return 0
+  fi
+  if [ -z "$last_want_name" ]; then
+    printf 'FAIL %s: nothing to inspect - no run came before it\n' "$name"
+    failed=$((failed + 1))
+    return 1
+  fi
+  skipped=$((skipped + 1))
+  # Only say so when the filter named this assertion. Then the operator asked
+  # for a check whose run was left behind, and silence would look like a pass.
+  # Otherwise the filter is simply doing its job, and a line per case is noise.
+  if [[ "$name" == *"$filter"* ]]; then
+    printf 'skip %s: the run it inspects (%s) is outside the filter %s\n' \
+      "$name" "$last_want_name" "$filter"
+  fi
+  return 1
+}
+
 # Assertions about the run `want` just made. Kept separate so one case can
 # check both the exit status and what the operator was told.
 and_output_has() {
   local name="$1" needle="$2"
-  if [ -n "$filter" ] && [[ "$name" != *"$filter"* ]]; then
-    return 0
-  fi
+  inspects_the_last_run "$name" || return 0
   if grep -qF -- "$needle" "$tmp/out"; then
     printf 'ok   %s\n' "$name"
     passed=$((passed + 1))
@@ -110,9 +148,7 @@ and_output_has() {
 
 and_probes_numbered() {
   local name="$1" expected="$2"
-  if [ -n "$filter" ] && [[ "$name" != *"$filter"* ]]; then
-    return 0
-  fi
+  inspects_the_last_run "$name" || return 0
   local actual
   actual="$(cat "$tmp/probe-count" 2>/dev/null)"
   actual="${actual:-0}"
@@ -128,9 +164,7 @@ and_probes_numbered() {
 
 and_cargo_ran() {
   local name="$1"
-  if [ -n "$filter" ] && [[ "$name" != *"$filter"* ]]; then
-    return 0
-  fi
+  inspects_the_last_run "$name" || return 0
   if [ -s "$tmp/cargo.log" ]; then
     printf 'ok   %s\n' "$name"
     passed=$((passed + 1))
@@ -142,9 +176,7 @@ and_cargo_ran() {
 
 and_cargo_did_not_run() {
   local name="$1"
-  if [ -n "$filter" ] && [[ "$name" != *"$filter"* ]]; then
-    return 0
-  fi
+  inspects_the_last_run "$name" || return 0
   if [ -s "$tmp/cargo.log" ]; then
     printf 'FAIL %s: cargo ran anyway: %s\n' "$name" "$(cat "$tmp/cargo.log")"
     failed=$((failed + 1))
@@ -180,8 +212,16 @@ BODY
 
 # Keep the retries and the polling short. The defaults are tuned for a real
 # release; a test must not spend minutes proving a guard fires.
+#
+# The per-probe timeout is capped for the same reason, and it is not
+# redundant: the unreachable-index cases point curl at 127.0.0.1:1, which
+# normally refuses at once, but a host that DROPs instead makes each of those
+# fifteen probes sit out the timeout. At the 20s default that is five minutes
+# added to `just check`; five seconds is already far longer than a loopback
+# needs.
 export CRATES_INDEX_ATTEMPTS=3
 export CRATES_INDEX_RETRY_DELAY=0
+export CRATES_INDEX_TIMEOUT=5
 export CRATES_WAIT_ATTEMPTS=3
 export CRATES_WAIT_DELAY=0
 
@@ -246,8 +286,13 @@ and_cargo_ran publish_runs_cargo_when_the_index_does_not_list_the_version_call
 want publish_refuses_when_the_index_state_is_unknown \
   1 publish_crate "$(unreachable_base)" data-gov-ckan 0.5.0
 and_cargo_did_not_run publish_refuses_when_the_index_state_is_unknown_no_cargo
+# The needle has to be a phrase only publish-crate.sh can produce. The capture
+# holds the whole subtree's stderr, and index-has.sh writes its own "the
+# crates.io index could not be reached" into it on the way past - so that
+# phrase is present whatever publish-crate.sh decides, and asserting on it
+# tests nothing about the script this case is named for.
 and_output_has publish_names_the_unknown_index_state_in_its_error \
-  "could not be reached"
+  "::error::refusing to publish data-gov-ckan 0.5.0"
 
 start_stub --mode server-error
 want publish_refuses_when_the_index_returns_a_server_error \
@@ -263,6 +308,8 @@ want wait_returns_once_the_version_appears \
 start_stub --mode missing
 want wait_fails_when_the_version_never_appears \
   1 wait_for_crate "$stub_base" data-gov-ckan 0.5.0
+and_output_has wait_names_a_missing_publish_rather_than_an_unreachable_index \
+  ": not yet visible. If crates.io is healthy, the publish may have failed silently"
 
 # The poll loop is already the retry, so letting the probe retry inside it
 # would multiply the wait ceiling by the probe's attempt count. The bound is
@@ -275,10 +322,24 @@ and_probes_numbered wait_spends_one_probe_per_poll 3
 
 want wait_fails_when_the_index_stays_unreachable \
   1 wait_for_crate "$(unreachable_base)" data-gov-ckan 0.5.0
+# The two cases above are the two halves of one property: the final message
+# says which of "the version never appeared" and "the index never answered"
+# happened, because they call for different responses. Each needle is the
+# whole tail of that message, state and advice together, so collapsing either
+# branch into the other fails one of them.
+#
+# "could not be reached" on its own cannot do that job. index-has.sh runs
+# inside the poll loop and prints its own copy of that phrase on every poll,
+# into the same captured stream, so the needle is satisfied no matter what
+# wait-for-crate.sh concludes.
 and_output_has wait_names_the_unreachable_index_rather_than_a_missing_publish \
-  "could not be reached"
+  ": the index could not be reached. The publish itself may well have succeeded"
 
 stop_stub
 echo
-echo "passed: ${passed}, failed: ${failed}"
+echo "passed: ${passed}, failed: ${failed}, skipped: ${skipped}"
+if [ -n "$filter" ] && [ "$((passed + failed))" -eq 0 ]; then
+  echo "no run matched the filter '${filter}'; nothing was checked." >&2
+  exit 1
+fi
 [ "$failed" -eq 0 ]
