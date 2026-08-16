@@ -282,6 +282,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - All dependencies refreshed to their latest semver-compatible releases.
   `rustyline` 17 → 18 is deliberately **not** included; it is a major bump
   under the whole REPL and is tracked separately.
+- **The `data-gov` library reports through `tracing`, not stderr.** Three
+  places in the library wrote a line straight to the terminal of whatever
+  program had linked it: two reporting a `.part` file that could not be
+  removed, and one reporting that the working directory could not be read,
+  on the path that chooses a download directory - which runs once per
+  download call, so it could repeat. An
+  embedder could not route, level or silence any of them, and a program that
+  collects `tracing` lost them entirely while getting unattributed noise on
+  its stderr. They are now `tracing::warn!` with structured fields. `tracing`
+  is a new dependency of `data-gov`, the facade only: a consumer that installs
+  no subscriber sees nothing and pays nothing, and the crate was already in
+  the lockfile at the same version through `data-gov-mcp-server`.
+  `just check-print-macros` now scans the library crates too, so the next bare
+  `eprintln!` fails the build rather than shipping.
 
 ### Security
 - **Credentials in a `base_url` are masked wherever it is displayed** (#86). A
@@ -409,12 +423,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   is not an error, so a command that succeeded still exits 0 - but a command
   that failed still exits non-zero, and destructors still run, neither of
   which survives a `process::exit` taken at the first broken write. The cost
-  is that `data-gov list organizations | head -5` now finishes fetching
-  rather than stopping at the fifth line. Any other write error stays as loud
-  as it was. The usual `SIGPIPE` fix needs `unsafe`, which this project
-  forbids.
+  is that a command keeps working after its reader leaves:
+  `data-gov download <slug> | head -1` now carries the transfer through to
+  the end, where before it died on the line announcing the download - which
+  is printed before any of the file is written - and so transferred nothing.
+  Any other write error stays as loud as it was. The usual `SIGPIPE` fix
+  needs `unsafe`, which this project forbids.
   `just check-print-macros` now fails the build if a bare `println!` returns
-  to the CLI.
+  to the CLI or to a library crate.
 - **`DataGovError::sanitized_message` no longer leaks the paths it promises to
   remove** (#59). It documented itself as stripping filesystem paths, had no
   test and no caller, and stripped only tokens that began with `/` or `./`.

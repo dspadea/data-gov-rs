@@ -31,10 +31,12 @@
 //!   finishes and reports as it would have.
 //!
 //! The cost of not exiting is that a long command keeps working after its
-//! reader leaves: `data-gov list organizations | head -5` now fetches every
-//! page rather than stopping at the fifth line. That is the price of an
-//! honest exit code, and it is bounded by what the command was going to do
-//! anyway.
+//! reader leaves: `data-gov download <slug> | head -1` now carries the
+//! transfer through to the end. Before, it died on the next line it wrote
+//! after `head` had gone - the line announcing the download, which is
+//! printed before any of the file is written - so the transfer never
+//! happened at all. That is the price of an honest exit code, and it is
+//! bounded by what the command was going to do anyway.
 //!
 //! Any other write error keeps the old loud behaviour, so a genuinely
 //! broken stdout is still not silent.

@@ -200,7 +200,10 @@ impl DataGovConfig {
     /// in [`OperatingMode::CommandLine`].
     ///
     /// When the working directory cannot be read, this falls back to `"."` and
-    /// says so on stderr. It never fails silently (#53).
+    /// reports the reason as a `tracing` warning. It never fails silently
+    /// (#53). A download that names no directory of its own comes through
+    /// here, so the same warning can repeat: it goes somewhere an embedder
+    /// can filter, rather than onto a stderr the library does not own.
     pub fn get_base_download_dir(&self) -> PathBuf {
         if let Some(dir) = &self.base_download_dir {
             return dir.clone();
@@ -208,7 +211,11 @@ impl DataGovConfig {
 
         let (dir, warning) = default_download_dir_for(&self.mode, std::env::current_dir());
         if let Some(warning) = warning {
-            eprintln!("Warning: {warning}");
+            tracing::warn!(
+                warning = %warning,
+                fallback = %dir.display(),
+                "could not settle the download directory from the working directory"
+            );
         }
         dir
     }

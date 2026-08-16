@@ -34,6 +34,14 @@ indicatif = { version = "0.18.1", features = ["tokio"] }
 url = "2.5"
 # Cross-platform directories
 dirs = "6.0"
+# Library diagnostics (src/client.rs, src/config.rs). A library linked into
+# somebody else's program must not write to their terminal: a bare stderr line
+# cannot be routed, levelled or silenced by the embedder, and is lost outright
+# to one that collects `tracing`. This is the facade only - no subscriber - so
+# a consumer that installs none pays nothing. Already in the lockfile at the
+# same version through data-gov-mcp-server, so it adds no new transitive
+# dependency.
+tracing = "0.1"
 # Configuration file (src/config/file.rs). The standard library has no TOML
 # parser and no derive-based deserialization, and config.toml is a data shape
 # with a known key set that CLAUDE.md requires be modelled as a struct rather
