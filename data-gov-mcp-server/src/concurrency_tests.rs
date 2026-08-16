@@ -443,9 +443,11 @@ async fn a_protocol_method_that_outruns_the_timeout_is_a_server_error() {
 /// loaded machine cannot fail this. Without it the call is abandoned, because
 /// the response cannot arrive before the budget expires.
 ///
-/// What still stops a download is unchanged and untested here: reqwest's
-/// `read_timeout` on the download client, which fires when no byte arrives for
-/// `download_timeout_secs`, and `notifications/cancelled`.
+/// What still stops a download is untested here: reqwest's `read_timeout` on
+/// the download client, which fires when no byte arrives for
+/// `download_timeout_secs`; the bound on the pre-flight name lookup, set from
+/// the same value and proved in `data_gov::util`; and
+/// `notifications/cancelled`.
 #[tokio::test]
 async fn a_progressing_download_outlives_the_wall_clock_budget() {
     /// Shorter than the transfer, so a bounded download cannot survive it.

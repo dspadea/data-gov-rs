@@ -374,6 +374,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   client with specific timeouts.
 
 ### Fixed
+- **A download's pre-flight name lookup is bounded** (#136). `check_download_url`
+  resolved the download URL's host with a bare `tokio::net::lookup_host` and no
+  timeout, once per file and once more per redirect hop. The lookup runs outside
+  reqwest, so neither bound on the download client reached it: `read_timeout` is
+  a property of the response body and starts only once a request is in flight,
+  and `connect_timeout` wraps reqwest's own connector, which covers the guarded
+  resolver's lookup and not this separate pre-flight one. Until #131 the MCP
+  server's 900-second request timeout was the only thing that ever ended it, and
+  exempting downloads from that timeout - the right fix for #131, because it was
+  killing transfers that were progressing - left this lookup with nothing to end
+  it at all. Worked case: 100 distributions against a host whose name servers
+  black-hole the query is roughly 30s per `getaddrinfo` on a stock glibc
+  `resolv.conf`, two lookups per file, so about 100 minutes of one MCP request
+  holding a dispatch slot with nothing server-side ending it. The bound is
+  `download_timeout_secs`, the same value that bounds the connect and each read,
+  so one setting governs every wait a download can stall on rather than two of
+  three. Nothing here can cut off a transfer that is moving bytes: a lookup that
+  is not answering has no byte in flight yet. A lookup that ran out of time
+  reports separately from one that answered "no such host", so a silent name
+  server can be told from a bad URL. **Stated plainly: the bound frees the
+  download, not the thread** - `getaddrinfo` runs on the blocking pool and
+  cannot be cancelled portably, so the pool task runs on until the system
+  resolver gives up.
 - **The MCP request timeout no longer kills a download that is progressing**
   (#131). Every method ran inside a 900-second wall-clock bound that is not
   operator-tunable, `data_gov.downloadResources` among them, so a transfer that

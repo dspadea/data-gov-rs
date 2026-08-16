@@ -33,8 +33,12 @@ pub(crate) const CANCELLED_NOTIFICATION: &str = "notifications/cancelled";
 /// request killed while it was working. It is not a download budget: a
 /// transfer's honest runtime is the size of a file over the width of a link,
 /// which no constant here can predict, so downloads are exempt and are bounded
-/// instead by reqwest's `read_timeout` on the download client - which restarts
-/// on every frame that arrives - and by `notifications/cancelled`.
+/// instead by the stall bounds inside the transfer itself and by
+/// `notifications/cancelled`. There are two stall bounds, both set from
+/// `download_timeout_secs`: reqwest's `read_timeout` on the download client,
+/// whose timer restarts on every frame that arrives, and a bound on the
+/// pre-flight name lookup, which runs outside reqwest and so is reached by
+/// neither `read_timeout` nor `connect_timeout`.
 pub(crate) const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(900);
 
 /// Responses buffered between the dispatch tasks and the writer.
@@ -62,8 +66,8 @@ const RESPONSE_QUEUE_DEPTH: usize = 64;
 /// cancellation cannot be read without reading the line in front of it - and
 /// [`DEFAULT_REQUEST_TIMEOUT`] is the backstop that frees the slot of every
 /// request it bounds. A download is deliberately not one of them: its slot is
-/// given up when the transfer finishes, when its own stall bound fires, or on
-/// a cancellation, never on elapsed time.
+/// given up when the transfer finishes, when one of its own stall bounds
+/// fires, or on a cancellation, never on elapsed time.
 const MAX_CONCURRENT_DISPATCHES: usize = 256;
 
 /// The largest message the server will accept, in bytes, newline included.

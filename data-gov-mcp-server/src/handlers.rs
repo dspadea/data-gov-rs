@@ -78,7 +78,9 @@ impl DataGovMcpServer {
     /// A tool the registry marks [`WallClockBound::Exempt`] runs without it.
     /// Elapsed time says nothing true about a transfer, so a budget that fits
     /// one link kills a healthy download on a slower one; what still stops
-    /// such a tool is its own stall bound and `notifications/cancelled`. The
+    /// such a tool is its own stall bounds - for a download, reqwest's
+    /// `read_timeout` and the bound on the pre-flight name lookup, which runs
+    /// outside reqwest - and `notifications/cancelled`. The
     /// answer is read from the tool registry rather than matched on the method
     /// name here, so a tool added later has to declare it - see
     /// [`crate::tools::ToolSpec::wall_clock`].
