@@ -1283,28 +1283,51 @@ mod tests {
     }
 
     /// On a host that can build a client at all, both fallible constructors
-    /// leave every non-timeout field at the value the panicking constructors
-    /// use.
+    /// leave every field except `client` at the value the panicking
+    /// constructors use. `client` is exempt because it is the one field a
+    /// timeout is carried in.
     ///
-    /// The timeouts themselves are out of reach here: a built
-    /// [`reqwest::Client`] does not expose the values it was configured with,
-    /// so nothing in this test can distinguish a client that honours its
-    /// argument from one that ignored it. That property is behavioural and is
-    /// proved against a delaying server by
+    /// The timeouts themselves are not asserted on here, for two different
+    /// reasons. The connect timeout is held in the connector and never
+    /// appears in a built [`reqwest::Client`] at all. The overall timeout
+    /// does appear, in reqwest 0.13.4's `Debug` output, so an assertion could
+    /// read it -- but the field name there is whatever
+    /// [`std::any::type_name`] returns for a private reqwest type
+    /// (`reqwest::config::TotalTimeout` today), and neither std nor reqwest
+    /// promises anything about that string. A test that parsed it would be
+    /// pinned to an implementation detail that can change in a patch release.
+    /// The property is behavioural and is proved against a delaying server by
     /// `try_with_timeouts_bounds_a_call_to_the_given_duration` in
     /// `tests/unit_tests.rs`.
     #[test]
     fn try_new_and_try_with_timeouts_leave_the_non_timeout_fields_at_their_defaults() {
+        // The four credential fields, none of which either constructor sets.
+        // They are checked together so no field of `Configuration` other than
+        // `client` goes unasserted.
+        fn assert_credentials_unset(config: &Configuration, which: &str) {
+            assert!(config.basic_auth.is_none(), "{which} set basic_auth");
+            assert!(
+                config.oauth_access_token.is_none(),
+                "{which} set oauth_access_token"
+            );
+            assert!(
+                config.bearer_access_token.is_none(),
+                "{which} set bearer_access_token"
+            );
+            assert!(config.api_key.is_none(), "{which} set api_key");
+        }
+
+        let panicking = Configuration::new();
         let config = Configuration::try_new().expect("a client builds on this host");
-        assert_eq!(config.base_path, Configuration::new().base_path);
-        assert_eq!(config.user_agent, Configuration::new().user_agent);
-        assert!(config.api_key.is_none(), "no credential is configured");
+        assert_eq!(config.base_path, panicking.base_path);
+        assert_eq!(config.user_agent, panicking.user_agent);
+        assert_credentials_unset(&config, "try_new");
 
         let timed =
             Configuration::try_with_timeouts(Duration::from_secs(1), Duration::from_secs(2))
                 .expect("a client builds on this host");
         assert_eq!(timed.base_path, config.base_path);
         assert_eq!(timed.user_agent, config.user_agent);
-        assert!(timed.api_key.is_none(), "no credential is configured");
+        assert_credentials_unset(&timed, "try_with_timeouts");
     }
 }

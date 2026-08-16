@@ -812,6 +812,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   needs a peer that never answers the TCP handshake, which an in-process mock
   server cannot offer. The old test is renamed to what it checks - that both
   fallible constructors leave the non-timeout fields at their defaults.
+- **Three doc comments that stated something untrue are corrected, and the
+  print-macro gate now describes the scope it actually scans.** The unit test
+  on the fallible constructors, in both client crates, said a built
+  `reqwest::Client` does not expose the timeouts it was configured with.
+  reqwest 0.13.4 prints the overall timeout in its `Debug` output, so an
+  assertion on it was possible all along; the real reason not to write one is
+  that the field name is `std::any::type_name` of a private reqwest type, which
+  nothing promises to keep stable. The docs now say that, and separate it from
+  the connect timeout, which genuinely never leaves the connector.
+  `DataGovConfig::get_base_download_dir` claimed its working-directory fallback
+  "never fails silently", which stopped being true when that line moved from
+  stderr to `tracing`: an embedder that installs no subscriber sees nothing. It
+  now says the report goes through `tracing` only and names the subscriber as
+  the way to receive it, agreeing with `data-gov/README.md`. `just
+  check-print-macros` and its CI step still called themselves CLI-only and
+  pointed at `outln!`/`errln!`, the wrong remedy for a library crate, where the
+  remedy is `tracing`; both now name the scopes the script scans and the two
+  remedies it prints.
+- **The renamed constructor test now checks every field its name claims.** On
+  `data-gov-ckan` it asserted `base_path`, `user_agent` and `api_key` while
+  claiming every non-timeout field, leaving `basic_auth`, `oauth_access_token`
+  and `bearer_access_token` unread. All four credential fields are asserted
+  now, so the only field of `Configuration` the test does not read is `client`,
+  which is where the timeouts live.
 
 ## [0.4.0] - 2026-04-25
 

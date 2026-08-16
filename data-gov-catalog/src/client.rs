@@ -973,14 +973,20 @@ mod tests {
     }
 
     /// On a host that can build a client at all, both fallible constructors
-    /// leave every non-timeout field at the value the panicking constructors
-    /// use.
+    /// leave every field except `client` at the value the panicking
+    /// constructors use. `client` is exempt because it is the one field a
+    /// timeout is carried in.
     ///
-    /// The timeouts themselves are out of reach here: a built
-    /// [`reqwest::Client`] does not expose the values it was configured with,
-    /// so nothing in this test can distinguish a client that honours its
-    /// argument from one that ignored it. That property is behavioural and is
-    /// proved against a stalled server by
+    /// The timeouts themselves are not asserted on here, for two different
+    /// reasons. The connect timeout is held in the connector and never
+    /// appears in a built [`reqwest::Client`] at all. The overall timeout
+    /// does appear, in reqwest 0.13.4's `Debug` output, so an assertion could
+    /// read it -- but the field name there is whatever
+    /// [`std::any::type_name`] returns for a private reqwest type
+    /// (`reqwest::config::TotalTimeout` today), and neither std nor reqwest
+    /// promises anything about that string. A test that parsed it would be
+    /// pinned to an implementation detail that can change in a patch release.
+    /// The property is behavioural and is proved against a stalled server by
     /// `try_with_timeouts_bounds_a_stalled_request_to_the_given_timeout` in
     /// `tests/client_tests.rs`.
     #[test]
