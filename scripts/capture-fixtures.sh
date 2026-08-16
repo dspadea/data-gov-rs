@@ -81,6 +81,14 @@ HARVEST_WITH_TRANSFORM=$(curl -sS --fail --max-time 60 -H 'Accept: application/j
     "$BASE/search?per_page=1&org_slug=census" \
   | python3 -c 'import sys,json;print(json.load(sys.stdin)["results"][0]["harvest_record"].rstrip("/").split("/")[-1])')
 
+# The OpenSearch document id of $PINNED_SLUG. /api/dataset accepts it as well as
+# the slug, and the response it answers with carries no copy of it -- which is
+# why dataset_by_slug cannot verify a document-id lookup and returns None for
+# one. It is re-indexed on harvest, so it is discovered, never pinned.
+DOC_ID=$(curl -sS --fail --max-time 60 -H 'Accept: application/json' \
+    "$BASE/search?per_page=1&q=$PINNED_SLUG" \
+  | python3 -c "import sys,json;h=json.load(sys.stdin)['results'][0];sys.exit('top hit is %s, not the pinned slug' % h.get('slug')) if h.get('slug')!='$PINNED_SLUG' else print(h['_sort'][2])")
+
 # If a pinned dataset ever disappears, say so loudly rather than silently
 # capturing a fixture that no longer contains what the tests look for.
 for pinned in "$PINNED_SLUG" "$PINNED_SLUG_TRUNCATED"; do
@@ -92,7 +100,7 @@ for pinned in "$PINNED_SLUG" "$PINNED_SLUG_TRUNCATED"; do
   fi
 done
 
-echo "capturing from $BASE (harvest=$HARVEST harvest_with_transform=$HARVEST_WITH_TRANSFORM location=$LOCATION)"
+echo "capturing from $BASE (harvest=$HARVEST harvest_with_transform=$HARVEST_WITH_TRANSFORM location=$LOCATION doc_id=$DOC_ID)"
 
 # Success responses.
 get "/search?per_page=3"                              search.json
@@ -100,6 +108,7 @@ get "/search?per_page=3&org_slug=nasa"                search_filtered.json
 get "/search?per_page=3&q=$PINNED_SLUG"               search_by_slug.json
 get "/api/dataset/$PINNED_SLUG"                       dataset_by_slug.json
 get "/api/dataset/$PINNED_SLUG_TRUNCATED"             dataset_by_slug_truncated.json
+get "/api/dataset/$DOC_ID"                            dataset_by_document_id.json
 get "/api/organizations"                              organizations.json
 # size/min_count are echoed back in the response and asserted by client_tests.
 get "/api/keywords?size=10&min_count=5"               keywords.json

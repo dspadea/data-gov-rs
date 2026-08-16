@@ -311,6 +311,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `Error::downcast_mut()`.
 
 ### Added
+- **Fallible client construction: `Configuration::try_new` and
+  `Configuration::try_with_timeouts`**, on both `data-gov-catalog` and
+  `data-gov-ckan`. `new`, `default`, and `with_timeouts` cannot report a
+  failure to build an HTTP client, because they have no `Result` to propagate
+  through; these return it as `RequestError` instead, so a consumer that must
+  not take a panic from a library can report the cause and exit. Additive: the
+  existing constructors keep their signatures.
 - **`data-gov-ckan`'s models are documented** (#118). Every public item in the
   crate now carries a doc comment: what each CKAN concept is, and the things
   that are not guessable from a field name - that `Group` models both groups
@@ -340,6 +347,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   client with specific timeouts.
 
 ### Fixed
+- **A failure to build the HTTP client now names its cause instead of
+  reqwest's `Client::new()`.** Both client crates fell back to
+  `reqwest::Client::new()` / `Client::default()` when `ClientBuilder::build()`
+  failed, documented as the option that "does not turn a working call into a
+  panic". It is not: verified against reqwest 0.13.4,
+  `<reqwest::Client as Default>::default()` calls `Client::new()`, which is
+  `ClientBuilder::new().build().expect("Client::new()")` - so on a host whose
+  TLS backend will not start, the fallback hits the same error and panics with
+  the bare text `Client::new()`, naming neither the crate nor the cause. Worse,
+  for a build failure reqwest's own default does not share, the fallback
+  silently returned a client with **no timeouts at all**, undoing the timeouts
+  the call had just asked for (#48). There is no non-panicking fallback to
+  have: if no client can be built, none can be built. The panic now names the
+  crate, the causes to look at (TLS backend, proxy, DNS resolver), and the
+  fallible constructor that returns the failure as an error instead.
+- **`dataset_by_slug` documents that it resolves slugs, not the `_id` half of
+  `{slug_or_id}`.** The endpoint does accept an OpenSearch document id and
+  answers 200 with the correct dataset, but its response carries no copy of
+  the id it was asked for - `_sort` arrives null on that endpoint - so nothing
+  in the body can show the dataset is the one the caller named. The wrapper
+  keeps returning `None` rather than an unverified hit (#94), and now says so,
+  with the reason and the way round it: use the `slug` from the `/search` hit
+  the id came from. A fixture captured from a live document-id lookup pins
+  that the id really is absent, so the day the API starts returning it, the
+  test fails and the restriction can be lifted.
 - **The CLI no longer panics when a reader closes the pipe early** (#115).
   `data-gov list organizations | head -5` died with exit 101 and a Rust
   backtrace note the moment `head` stopped reading, because `println!` panics

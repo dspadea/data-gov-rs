@@ -19,19 +19,66 @@ pub const DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 /// documented posture and the shipped default agree.
 pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
 
-/// Build a [`reqwest::Client`] with an explicit connect and overall timeout.
-///
-/// Falls back to [`reqwest::Client::new`] (no timeout at all) only if the
-/// builder itself fails. In practice that happens for a TLS backend
-/// misconfiguration, never for a timeout value -- but [`Default::default`]
-/// has no `Result` to propagate through, so a fallback is the only option
-/// that does not turn a working call into a panic.
-fn build_client(connect_timeout: Duration, timeout: Duration) -> reqwest::Client {
+/// The builder every client in this module is finished from.
+fn client_builder(connect_timeout: Duration, timeout: Duration) -> reqwest::ClientBuilder {
     reqwest::Client::builder()
         .connect_timeout(connect_timeout)
         .timeout(timeout)
+}
+
+/// Finish a [`reqwest::ClientBuilder`], reporting a build failure as an error.
+///
+/// # Errors
+///
+/// [`CatalogError::RequestError`], carrying reqwest's own message, when no
+/// client can be constructed. In reqwest 0.13 `ClientBuilder::build` fails
+/// only for TLS backend, proxy, or DNS resolver setup -- never for a timeout
+/// value.
+fn try_finish_client(builder: reqwest::ClientBuilder) -> Result<reqwest::Client, CatalogError> {
+    builder
         .build()
-        .unwrap_or_default()
+        .map_err(|e| CatalogError::RequestError(Box::new(e)))
+}
+
+/// Finish a [`reqwest::ClientBuilder`] for a constructor that has no `Result`
+/// to propagate through.
+///
+/// There is deliberately no fallback client. `reqwest::Client::new` and
+/// `<reqwest::Client as Default>::default` both call `ClientBuilder::build`
+/// and `expect` its result, so on a host whose TLS backend, proxy, or DNS
+/// resolver cannot be set up they fail exactly as this call did -- and panic
+/// with the bare text `Client::new()`, which names neither the crate nor the
+/// cause. A fallback would therefore not avoid the panic; it would only hide
+/// where it came from. Worse, for a build failure reqwest's own default does
+/// not share, it silently returns a client with no timeouts at all.
+///
+/// # Panics
+///
+/// When reqwest cannot construct a client at all. [`Configuration::try_new`]
+/// and [`Configuration::try_with_timeouts`] return that failure as a
+/// [`CatalogError`] instead.
+fn finish_client(builder: reqwest::ClientBuilder) -> reqwest::Client {
+    match builder.build() {
+        Ok(client) => client,
+        Err(e) => panic!(
+            "data-gov-catalog: no HTTP client could be constructed. reqwest's \
+             client builder failed, which happens for TLS backend, proxy, or \
+             DNS resolver setup - never for a timeout value. \
+             reqwest::Client::new() fails the same way, so there is no \
+             fallback client to return. Use Configuration::try_new or \
+             Configuration::try_with_timeouts to handle this as an error. \
+             Cause: {e}"
+        ),
+    }
+}
+
+/// Build a [`reqwest::Client`] with an explicit connect and overall timeout.
+///
+/// # Panics
+///
+/// See [`finish_client`].
+fn build_client(connect_timeout: Duration, timeout: Duration) -> reqwest::Client {
+    finish_client(client_builder(connect_timeout, timeout))
 }
 
 /// Configuration for the Catalog API client.
@@ -58,9 +105,72 @@ pub struct Configuration {
 }
 
 impl Configuration {
+    /// Assemble a [`Configuration`] around an already-built client.
+    ///
+    /// Every constructor funnels through here so the default `base_path` and
+    /// `user_agent` are written once, and so the fallible constructors never
+    /// reach [`Default::default`] -- which builds a client of its own, and
+    /// panics if it cannot.
+    fn with_client(client: reqwest::Client) -> Self {
+        Self {
+            base_path: "https://catalog.data.gov".to_owned(),
+            user_agent: Some(concat!("data-gov-rs/", env!("CARGO_PKG_VERSION")).to_owned()),
+            client,
+        }
+    }
+
     /// Build a [`Configuration`] with default values.
+    ///
+    /// # Panics
+    ///
+    /// If reqwest cannot construct an HTTP client at all -- a TLS backend,
+    /// proxy, or DNS resolver that will not start. Nothing can be returned in
+    /// that case: `reqwest::Client::new` fails the same way. Use
+    /// [`Configuration::try_new`] to receive it as an error instead.
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Build a [`Configuration`] with default values, reporting a client
+    /// construction failure instead of panicking.
+    ///
+    /// # Errors
+    ///
+    /// [`CatalogError::RequestError`] when reqwest cannot construct an HTTP
+    /// client: TLS backend, proxy, or DNS resolver setup. There is no
+    /// degraded client to fall back to, so a consumer that must not panic
+    /// should report this and stop.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use data_gov_catalog::Configuration;
+    ///
+    /// let config = Configuration::try_new()?;
+    /// assert_eq!(config.base_path, "https://catalog.data.gov");
+    /// # Ok::<(), data_gov_catalog::CatalogError>(())
+    /// ```
+    pub fn try_new() -> Result<Self, CatalogError> {
+        Self::try_with_timeouts(DEFAULT_CONNECT_TIMEOUT, DEFAULT_TIMEOUT)
+    }
+
+    /// Build a [`Configuration`] with the given timeouts, reporting a client
+    /// construction failure instead of panicking.
+    ///
+    /// The fallible counterpart of [`Configuration::with_timeouts`].
+    ///
+    /// # Errors
+    ///
+    /// [`CatalogError::RequestError`] when reqwest cannot construct an HTTP
+    /// client. Timeout values themselves are never rejected.
+    pub fn try_with_timeouts(
+        connect_timeout: Duration,
+        timeout: Duration,
+    ) -> Result<Self, CatalogError> {
+        Ok(Self::with_client(try_finish_client(client_builder(
+            connect_timeout,
+            timeout,
+        ))?))
     }
 
     /// Build a [`Configuration`] whose client uses the given timeouts
@@ -80,21 +190,25 @@ impl Configuration {
     ///     Duration::from_secs(15),
     /// );
     /// ```
+    ///
+    /// # Panics
+    ///
+    /// If reqwest cannot construct an HTTP client at all. See
+    /// [`Configuration::new`]; [`Configuration::try_with_timeouts`] returns
+    /// that failure as an error.
     pub fn with_timeouts(connect_timeout: Duration, timeout: Duration) -> Self {
-        Self {
-            client: build_client(connect_timeout, timeout),
-            ..Self::default()
-        }
+        Self::with_client(build_client(connect_timeout, timeout))
     }
 }
 
 impl Default for Configuration {
+    /// # Panics
+    ///
+    /// If reqwest cannot construct an HTTP client at all. See
+    /// [`Configuration::new`], whose [`Configuration::try_new`] counterpart
+    /// returns that failure as an error.
     fn default() -> Self {
-        Self {
-            base_path: "https://catalog.data.gov".to_owned(),
-            user_agent: Some(concat!("data-gov-rs/", env!("CARGO_PKG_VERSION")).to_owned()),
-            client: build_client(DEFAULT_CONNECT_TIMEOUT, DEFAULT_TIMEOUT),
-        }
+        Self::with_client(build_client(DEFAULT_CONNECT_TIMEOUT, DEFAULT_TIMEOUT))
     }
 }
 
@@ -583,6 +697,20 @@ impl CatalogClient {
     /// the endpoint does no prefix or substring matching, so a near-miss slug
     /// returns 404 rather than a plausible wrong dataset.
     ///
+    /// **Slugs only, though the endpoint takes more.** The `_id` half of
+    /// `{slug_or_id}` is the OpenSearch document id, the third element of a
+    /// hit's `_sort` array on `/search`. The endpoint resolves one and answers
+    /// 200 with the right dataset, but this call still returns `Ok(None)` for
+    /// it: the response carries no copy of the id it was asked for -- `_sort`
+    /// arrives null on this endpoint -- so nothing in the body can show the
+    /// dataset is the one the caller named. Returning it would mean trusting
+    /// the server's match unverified, which is what the slug comparison below
+    /// exists to prevent. Nothing else resolves at all: the harvest_record
+    /// UUID, the CKAN id, and the DCAT `identifier` each 404.
+    ///
+    /// To go from a document id to a dataset, take the `slug` from the
+    /// `/search` hit the id came from and pass that instead.
+    ///
     /// # Errors
     ///
     /// Returns [`CatalogError::ApiError`] for any non-2xx status other than
@@ -597,10 +725,12 @@ impl CatalogClient {
         let path = format!("/api/dataset/{}", encode_path_segment(slug)?);
         let response: Option<models::SearchResponse> = self.get_json_optional(&path).await?;
 
-        // Belt and braces: the endpoint is exact, but a hit whose slug differs
-        // from the request would mean the server matched something else, and
-        // returning it would be the silent-wrong-dataset failure this call
-        // exists to avoid.
+        // The slug is the only thing in the response that can be checked
+        // against what was asked for, so a hit whose slug differs is a hit
+        // this call cannot attribute to the request -- either the server
+        // matched something else, or the caller passed a document id, and the
+        // body cannot tell the two apart. Returning it either way would be the
+        // silent-wrong-dataset failure this call exists to avoid.
         Ok(response
             .and_then(|r| r.results.into_iter().next())
             .filter(|hit| hit.slug.as_deref() == Some(slug)))
@@ -786,5 +916,73 @@ mod tests {
 
         let new_config = Configuration::new();
         assert_eq!(new_config.base_path, default_config.base_path);
+    }
+
+    /// A builder that cannot be built, so the no-client-at-all paths can be
+    /// exercised on a host whose TLS backend works.
+    ///
+    /// `\n` is not a legal header value, so `ClientBuilder::user_agent`
+    /// stores the error and `build()` returns it. That is the same `Err` a
+    /// TLS backend failure produces, and it is the only one reachable from a
+    /// test: this crate's builder sets nothing but timeouts, and a timeout
+    /// value cannot fail.
+    fn unbuildable_client() -> reqwest::ClientBuilder {
+        reqwest::Client::builder().user_agent("\n")
+    }
+
+    /// When reqwest can build no client, neither can this crate: `Client::new`
+    /// and `Client::default` call the same failing builder. The panic is
+    /// therefore unavoidable, and what the caller reads must name the crate,
+    /// the causes to look at, and the fallible constructor that returns the
+    /// failure instead -- not reqwest's bare `Client::new()`, and never a
+    /// silently substituted client with no timeouts.
+    #[test]
+    fn client_construction_failure_panics_with_a_message_naming_the_cause() {
+        let payload = std::panic::catch_unwind(|| finish_client(unbuildable_client()))
+            .expect_err("a builder that cannot build must not yield a client");
+        let message = payload
+            .downcast_ref::<String>()
+            .map(String::as_str)
+            .or_else(|| payload.downcast_ref::<&str>().copied())
+            .unwrap_or("<non-string panic payload>");
+
+        for expected in ["data-gov-catalog", "TLS", "try_new"] {
+            assert!(
+                message.contains(expected),
+                "panic message must name {expected:?}, got {message:?}"
+            );
+        }
+    }
+
+    /// The fallible constructors exist so a consumer can report the failure
+    /// and exit cleanly rather than take a panic from a library.
+    #[test]
+    fn try_finish_client_reports_a_construction_failure_as_a_request_error() {
+        let error = try_finish_client(unbuildable_client())
+            .expect_err("a builder that cannot build must fail");
+
+        assert!(
+            matches!(error, CatalogError::RequestError(_)),
+            "expected RequestError, got {error:?}"
+        );
+        let rendered = error.to_string();
+        assert!(
+            rendered.len() > "Request error: ".len(),
+            "the error must carry reqwest's own reason, got {rendered:?}"
+        );
+    }
+
+    /// On a host that can build a client at all, the fallible constructors
+    /// return the same configuration as the panicking ones.
+    #[test]
+    fn try_new_and_try_with_timeouts_return_the_documented_defaults() {
+        let config = Configuration::try_new().expect("a client builds on this host");
+        assert_eq!(config.base_path, Configuration::new().base_path);
+        assert_eq!(config.user_agent, Configuration::new().user_agent);
+
+        let timed =
+            Configuration::try_with_timeouts(Duration::from_secs(1), Duration::from_secs(2))
+                .expect("a client builds on this host");
+        assert_eq!(timed.base_path, config.base_path);
     }
 }

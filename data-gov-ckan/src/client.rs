@@ -73,9 +73,84 @@ impl std::fmt::Debug for ApiKey {
 }
 
 impl Configuration {
+    /// Assemble a [`Configuration`] around an already-built client.
+    ///
+    /// Every constructor funnels through here so the defaults are written
+    /// once, and so the fallible constructors never reach
+    /// [`Default::default`] -- which builds a client of its own, and panics
+    /// if it cannot.
+    fn with_client(client: reqwest::Client) -> Configuration {
+        Configuration {
+            // This crate serves any compliant CKAN deployment, not one
+            // portal, so there is no principled reason to default to one
+            // government's live service over another's -- Canada's,
+            // Ireland's, and Australia's all appear in this crate's own
+            // fixtures with equal standing. Defaulting to any of them sends
+            // live traffic to a third party that never consented to it
+            // (previously open.canada.ca, silently, from every unconfigured
+            // client). `.invalid` is reserved by RFC 2606 and never
+            // resolves, so an unconfigured client fails fast and loud with
+            // RequestError -- not a confusing 404 that reads like the
+            // request itself, rather than the configuration, is broken.
+            // Point this at your own CKAN-compatible portal.
+            base_path: "https://ckan.example.invalid/api/3".to_owned(),
+            user_agent: Some(concat!("data-gov-rs/", env!("CARGO_PKG_VERSION")).to_owned()),
+            client,
+            basic_auth: None,
+            oauth_access_token: None,
+            bearer_access_token: None,
+            api_key: None,
+        }
+    }
+
     /// Create a new configuration with default values
+    ///
+    /// # Panics
+    ///
+    /// If reqwest cannot construct an HTTP client at all -- a TLS backend,
+    /// proxy, or DNS resolver that will not start. Nothing can be returned in
+    /// that case: `reqwest::Client::new` fails the same way. Use
+    /// [`Configuration::try_new`] to receive it as an error instead.
     pub fn new() -> Configuration {
         Configuration::default()
+    }
+
+    /// Create a configuration with default values, reporting a client
+    /// construction failure instead of panicking.
+    ///
+    /// # Errors
+    ///
+    /// [`CkanError::RequestError`] when reqwest cannot construct an HTTP
+    /// client: TLS backend, proxy, or DNS resolver setup. There is no
+    /// degraded client to fall back to, so a consumer that must not panic
+    /// should report this and stop.
+    ///
+    /// ```rust
+    /// # use data_gov_ckan::Configuration;
+    /// let config = Configuration::try_new()?;
+    /// assert!(config.base_path.ends_with("/api/3"));
+    /// # Ok::<(), data_gov_ckan::CkanError>(())
+    /// ```
+    pub fn try_new() -> Result<Configuration, CkanError> {
+        Configuration::try_with_timeouts(DEFAULT_CONNECT_TIMEOUT, DEFAULT_TIMEOUT)
+    }
+
+    /// Build a [`Configuration`] with the given timeouts, reporting a client
+    /// construction failure instead of panicking.
+    ///
+    /// The fallible counterpart of [`Configuration::with_timeouts`].
+    ///
+    /// # Errors
+    ///
+    /// [`CkanError::RequestError`] when reqwest cannot construct an HTTP
+    /// client. Timeout values themselves are never rejected.
+    pub fn try_with_timeouts(
+        connect_timeout: Duration,
+        timeout: Duration,
+    ) -> Result<Configuration, CkanError> {
+        Ok(Configuration::with_client(try_finish_client(
+            client_builder(connect_timeout, timeout),
+        )?))
     }
 
     /// Build a [`Configuration`] whose [`Self::client`] has the given
@@ -95,52 +170,87 @@ impl Configuration {
     ///     ..Configuration::with_timeouts(Duration::from_secs(5), Duration::from_secs(15))
     /// };
     /// ```
+    ///
+    /// # Panics
+    ///
+    /// If reqwest cannot construct an HTTP client at all. See
+    /// [`Configuration::new`]; [`Configuration::try_with_timeouts`] returns
+    /// that failure as an error.
     pub fn with_timeouts(connect_timeout: Duration, timeout: Duration) -> Configuration {
-        Configuration {
-            client: build_client(connect_timeout, timeout),
-            ..Configuration::default()
-        }
+        Configuration::with_client(build_client(connect_timeout, timeout))
+    }
+}
+
+/// The builder every client in this module is finished from.
+fn client_builder(connect_timeout: Duration, timeout: Duration) -> reqwest::ClientBuilder {
+    reqwest::Client::builder()
+        .connect_timeout(connect_timeout)
+        .timeout(timeout)
+}
+
+/// Finish a [`reqwest::ClientBuilder`], reporting a build failure as an error.
+///
+/// # Errors
+///
+/// [`CkanError::RequestError`], carrying reqwest's own message, when no client
+/// can be constructed. In reqwest 0.13 `ClientBuilder::build` fails only for
+/// TLS backend, proxy, or DNS resolver setup -- never for a timeout value.
+fn try_finish_client(builder: reqwest::ClientBuilder) -> Result<reqwest::Client, CkanError> {
+    builder
+        .build()
+        .map_err(|e| CkanError::RequestError(Box::new(e)))
+}
+
+/// Finish a [`reqwest::ClientBuilder`] for a constructor that has no `Result`
+/// to propagate through.
+///
+/// There is deliberately no fallback client. #48 accepted an untimed client as
+/// a fallback on the premise that it beat no client at all, but the fallback it
+/// used cannot deliver one: `reqwest::Client::new` and
+/// `<reqwest::Client as Default>::default` call the same `ClientBuilder::build`
+/// and `expect` its result, so a TLS backend, proxy, or DNS resolver that will
+/// not start fails there too -- and panics with the bare text `Client::new()`,
+/// which names neither the crate nor the cause. Worse, for a builder failure
+/// that reqwest's own default does not share, the fallback quietly hands back a
+/// client with no timeouts at all, which is the failure #48 existed to close.
+///
+/// # Panics
+///
+/// When reqwest cannot construct a client at all. [`Configuration::try_new`]
+/// and [`Configuration::try_with_timeouts`] return that failure as a
+/// [`CkanError`] instead.
+fn finish_client(builder: reqwest::ClientBuilder) -> reqwest::Client {
+    match builder.build() {
+        Ok(client) => client,
+        Err(e) => panic!(
+            "data-gov-ckan: no HTTP client could be constructed. reqwest's \
+             client builder failed, which happens for TLS backend, proxy, or \
+             DNS resolver setup - never for a timeout value. \
+             reqwest::Client::new() fails the same way, so there is no \
+             fallback client to return. Use Configuration::try_new or \
+             Configuration::try_with_timeouts to handle this as an error. \
+             Cause: {e}"
+        ),
     }
 }
 
 /// Build a [`reqwest::Client`] with an explicit connect and request timeout.
 ///
-/// `ClientBuilder::build()` only fails for structurally invalid client
-/// configuration (a bad TLS backend or proxy setup); a builder that sets only
-/// timeouts cannot fail in practice. Fall back to an untimed client rather
-/// than panicking, per #48's acceptance criteria -- a client with no timeout
-/// is still strictly better than no client at all.
+/// # Panics
+///
+/// See [`finish_client`].
 fn build_client(connect_timeout: Duration, timeout: Duration) -> reqwest::Client {
-    reqwest::Client::builder()
-        .connect_timeout(connect_timeout)
-        .timeout(timeout)
-        .build()
-        .unwrap_or_else(|_| reqwest::Client::new())
+    finish_client(client_builder(connect_timeout, timeout))
 }
 
 impl Default for Configuration {
+    /// # Panics
+    ///
+    /// If reqwest cannot construct an HTTP client at all. See
+    /// [`Configuration::new`], whose [`Configuration::try_new`] counterpart
+    /// returns that failure as an error.
     fn default() -> Self {
-        Configuration {
-            // This crate serves any compliant CKAN deployment, not one
-            // portal, so there is no principled reason to default to one
-            // government's live service over another's -- Canada's,
-            // Ireland's, and Australia's all appear in this crate's own
-            // fixtures with equal standing. Defaulting to any of them sends
-            // live traffic to a third party that never consented to it
-            // (previously open.canada.ca, silently, from every unconfigured
-            // client). `.invalid` is reserved by RFC 2606 and never
-            // resolves, so an unconfigured client fails fast and loud with
-            // RequestError -- not a confusing 404 that reads like the
-            // request itself, rather than the configuration, is broken.
-            // Point this at your own CKAN-compatible portal.
-            base_path: "https://ckan.example.invalid/api/3".to_owned(),
-            user_agent: Some(concat!("data-gov-rs/", env!("CARGO_PKG_VERSION")).to_owned()),
-            client: build_client(DEFAULT_CONNECT_TIMEOUT, DEFAULT_TIMEOUT),
-            basic_auth: None,
-            oauth_access_token: None,
-            bearer_access_token: None,
-            api_key: None,
-        }
+        Configuration::with_client(build_client(DEFAULT_CONNECT_TIMEOUT, DEFAULT_TIMEOUT))
     }
 }
 
@@ -1116,5 +1226,74 @@ mod tests {
             "expected the 100ms timeout to fire well before the mock's 10s \
              delay; took {elapsed:?}"
         );
+    }
+
+    /// A builder that cannot be built, so the no-client-at-all paths can be
+    /// exercised on a host whose TLS backend works.
+    ///
+    /// `\n` is not a legal header value, so `ClientBuilder::user_agent`
+    /// stores the error and `build()` returns it. That is the same `Err` a
+    /// TLS backend failure produces, and it is the only one reachable from a
+    /// test: this crate's builder sets nothing but timeouts, and a timeout
+    /// value cannot fail.
+    fn unbuildable_client() -> reqwest::ClientBuilder {
+        reqwest::Client::builder().user_agent("\n")
+    }
+
+    /// When reqwest can build no client, neither can this crate: `Client::new`
+    /// and `Client::default` call the same failing builder. The panic is
+    /// therefore unavoidable, and what the caller reads must name the crate,
+    /// the causes to look at, and the fallible constructor that returns the
+    /// failure instead -- not reqwest's bare `Client::new()`, and never a
+    /// silently substituted client with no timeouts.
+    #[test]
+    fn client_construction_failure_panics_with_a_message_naming_the_cause() {
+        let payload = std::panic::catch_unwind(|| finish_client(unbuildable_client()))
+            .expect_err("a builder that cannot build must not yield a client");
+        let message = payload
+            .downcast_ref::<String>()
+            .map(String::as_str)
+            .or_else(|| payload.downcast_ref::<&str>().copied())
+            .unwrap_or("<non-string panic payload>");
+
+        for expected in ["data-gov-ckan", "TLS", "try_new"] {
+            assert!(
+                message.contains(expected),
+                "panic message must name {expected:?}, got {message:?}"
+            );
+        }
+    }
+
+    /// The fallible constructors exist so a consumer can report the failure
+    /// and exit cleanly rather than take a panic from a library.
+    #[test]
+    fn try_finish_client_reports_a_construction_failure_as_a_request_error() {
+        let error = try_finish_client(unbuildable_client())
+            .expect_err("a builder that cannot build must fail");
+
+        assert!(
+            matches!(error, CkanError::RequestError(_)),
+            "expected RequestError, got {error:?}"
+        );
+        let rendered = error.to_string();
+        assert!(
+            rendered.len() > "Request error: ".len(),
+            "the error must carry reqwest's own reason, got {rendered:?}"
+        );
+    }
+
+    /// On a host that can build a client at all, the fallible constructors
+    /// return the same configuration as the panicking ones.
+    #[test]
+    fn try_new_and_try_with_timeouts_return_the_documented_defaults() {
+        let config = Configuration::try_new().expect("a client builds on this host");
+        assert_eq!(config.base_path, Configuration::new().base_path);
+        assert_eq!(config.user_agent, Configuration::new().user_agent);
+        assert!(config.api_key.is_none(), "no credential is configured");
+
+        let timed =
+            Configuration::try_with_timeouts(Duration::from_secs(1), Duration::from_secs(2))
+                .expect("a client builds on this host");
+        assert_eq!(timed.base_path, config.base_path);
     }
 }

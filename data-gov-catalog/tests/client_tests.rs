@@ -17,6 +17,24 @@ fn fixture(name: &str) -> String {
     std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("fixture {path} missing: {e}"))
 }
 
+/// The last path segment of the endpoint a fixture was captured from.
+///
+/// An OpenSearch document id is re-indexed on harvest, so the capture script
+/// discovers it rather than pinning it, and `MANIFEST.json` records the value
+/// it used. Reading the request back out of the manifest keeps a test asking
+/// for the exact id that produced the body it serves.
+fn captured_path_tail(fixture_name: &str) -> String {
+    let manifest: serde_json::Value =
+        serde_json::from_str(&fixture("MANIFEST.json")).expect("MANIFEST.json parses");
+    manifest["fixtures"][fixture_name]["endpoint"]
+        .as_str()
+        .unwrap_or_else(|| panic!("MANIFEST.json records no endpoint for {fixture_name}"))
+        .rsplit('/')
+        .next()
+        .expect("an endpoint path has at least one segment")
+        .to_owned()
+}
+
 fn client_for(server: &MockServer) -> CatalogClient {
     CatalogClient::new(Arc::new(Configuration {
         base_path: server.uri(),
@@ -370,6 +388,37 @@ async fn dataset_by_slug_returns_none_when_the_hit_has_a_different_slug() {
     assert!(
         result.is_none(),
         "a hit whose slug differs from the request must not be returned, got {result:?}"
+    );
+}
+
+/// `/api/dataset/{slug_or_id}` resolves an OpenSearch document id as well as a
+/// slug: this fixture is the live 200 it answered a document id with, carrying
+/// the correct dataset. The wrapper still returns `None`, and deliberately.
+/// The response contains no copy of the id that was asked for -- asserted by
+/// `fixture_parity_tests::exact_lookup_by_document_id_returns_the_dataset_without_echoing_the_id`
+/// -- so nothing in it can show the dataset is the one the caller named, and
+/// handing it back would be the unverified hit the slug check exists to stop.
+#[tokio::test]
+async fn dataset_by_slug_returns_none_for_a_document_id_it_cannot_verify() {
+    let document_id = captured_path_tail("dataset_by_document_id.json");
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path(format!("/api/dataset/{document_id}")))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_raw(fixture("dataset_by_document_id.json"), "application/json"),
+        )
+        .mount(&server)
+        .await;
+
+    let result = client_for(&server)
+        .dataset_by_slug(&document_id)
+        .await
+        .expect("the lookup itself succeeds: the server answered 200");
+
+    assert!(
+        result.is_none(),
+        "a hit the request cannot be shown to identify must not be returned, got {result:?}"
     );
 }
 

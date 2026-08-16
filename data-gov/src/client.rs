@@ -186,6 +186,12 @@ impl DataGovClient {
     ///
     /// Returns `Err(ResourceNotFound)` if no dataset matches.
     ///
+    /// Slugs only. An OpenSearch document id reaches the same endpoint and
+    /// resolves there, but yields `ResourceNotFound` here, because the
+    /// response carries nothing that ties the dataset back to the id that was
+    /// asked for -- see
+    /// [`CatalogClient::dataset_by_slug`](data_gov_catalog::CatalogClient::dataset_by_slug).
+    ///
     /// # Errors
     ///
     /// Returns [`DataGovError::ResourceNotFound`] if no dataset carries that
