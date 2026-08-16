@@ -40,6 +40,9 @@ def build_handler(args: argparse.Namespace, body: bytes) -> type:
             with lock:
                 state["seen"] += 1
                 seen = state["seen"]
+                if args.count_file:
+                    with open(args.count_file, "w") as handle:
+                        handle.write(f"{seen}\n")
 
             early = seen <= args.fail_first
             if args.mode == "missing" or (args.mode == "late" and early):
@@ -84,6 +87,11 @@ def main() -> int:
         type=int,
         default=0,
         help="number of leading failures in --mode flaky and --mode late",
+    )
+    parser.add_argument(
+        "--count-file",
+        help="file rewritten with the running request count, so a caller can "
+        "assert how many probes a helper actually made",
     )
     args = parser.parse_args()
 

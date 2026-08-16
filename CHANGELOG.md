@@ -486,6 +486,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   of which the live service can be asked for - and asserts that `cargo` is
   never invoked when the index state is unknown. The workflow's behaviour,
   publish order and dependency waits are unchanged.
+- **The index wait now has a ceiling it actually keeps**. `wait-for-crate.sh`
+  reported a bound of `attempts * delay`, but its `curl` had no timeout at
+  all, so a connection that hung stalled the release job with no limit. Each
+  probe is now capped by `--max-time`, the poll loop spends one probe per
+  poll rather than letting the probe retry inside the loop that is already
+  the retry, and the timeout message reports the seconds that actually
+  elapsed instead of a product that understated them.
 - **`clippy::missing_errors_doc` and `clippy::missing_panics_doc` are denied
   workspace-wide** (#59), and the 24 public `Result`-returning functions that
   had no `# Errors` section now have one naming the variants that call path can

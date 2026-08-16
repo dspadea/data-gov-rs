@@ -29,6 +29,11 @@ version="$2"
 max_attempts="${CRATES_WAIT_ATTEMPTS:-40}"
 delay="${CRATES_WAIT_DELAY:-15}"
 
+# This loop is already the retry, so the probe inside it does not need its own.
+# Left at the probe's default, every poll would cost several probes and the
+# ceiling below would be that many times longer than it says.
+export CRATES_INDEX_ATTEMPTS="${CRATES_INDEX_ATTEMPTS:-1}"
+
 echo "Waiting for ${name} ${version} to reach the crates.io index..."
 
 state="not yet visible"
@@ -54,5 +59,5 @@ for attempt in $(seq 1 "$max_attempts"); do
   sleep "$delay"
 done
 
-echo "::error::${name} ${version} did not appear in the crates.io index within $((max_attempts * delay))s: ${state}. ${advice}" >&2
+echo "::error::${name} ${version} did not appear in the crates.io index after ${max_attempts} polls over ${SECONDS}s: ${state}. ${advice}" >&2
 exit 1

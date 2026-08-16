@@ -48,7 +48,9 @@ trap cleanup EXIT
 start_stub() {
   stop_stub
   : > "$tmp/stub.out"
-  python3 "$here/stub-index-server.py" "$@" > "$tmp/stub.out" 2> "$tmp/stub.err" &
+  : > "$tmp/probe-count"
+  python3 "$here/stub-index-server.py" --count-file "$tmp/probe-count" "$@" \
+    > "$tmp/stub.out" 2> "$tmp/stub.err" &
   stub_pid=$!
   local port=""
   for _ in $(seq 1 100); do
@@ -102,6 +104,24 @@ and_output_has() {
   else
     printf 'FAIL %s: output does not mention %s\n' "$name" "$needle"
     sed 's/^/       | /' "$tmp/out"
+    failed=$((failed + 1))
+  fi
+}
+
+and_probes_numbered() {
+  local name="$1" expected="$2"
+  if [ -n "$filter" ] && [[ "$name" != *"$filter"* ]]; then
+    return 0
+  fi
+  local actual
+  actual="$(cat "$tmp/probe-count" 2>/dev/null)"
+  actual="${actual:-0}"
+  if [ "$actual" -eq "$expected" ]; then
+    printf 'ok   %s\n' "$name"
+    passed=$((passed + 1))
+  else
+    printf 'FAIL %s: expected %s probes, the index saw %s\n' \
+      "$name" "$expected" "$actual"
     failed=$((failed + 1))
   fi
 }
@@ -243,6 +263,15 @@ want wait_returns_once_the_version_appears \
 start_stub --mode missing
 want wait_fails_when_the_version_never_appears \
   1 wait_for_crate "$stub_base" data-gov-ckan 0.5.0
+
+# The poll loop is already the retry, so letting the probe retry inside it
+# would multiply the wait ceiling by the probe's attempt count. The bound is
+# stated in the error message this script prints, so it has to be real.
+start_stub --mode server-error
+CRATES_INDEX_ATTEMPTS="" \
+  want wait_does_not_multiply_its_ceiling_by_the_probe_retries \
+  1 wait_for_crate "$stub_base" data-gov-ckan 0.5.0
+and_probes_numbered wait_spends_one_probe_per_poll 3
 
 want wait_fails_when_the_index_stays_unreachable \
   1 wait_for_crate "$(unreachable_base)" data-gov-ckan 0.5.0
