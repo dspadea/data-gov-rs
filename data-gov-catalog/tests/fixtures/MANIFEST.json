@@ -1,5 +1,11 @@
 {
   "fixtures": {
+    "dataset_by_document_id.json": {
+      "endpoint": "/api/dataset/488e78de-3a7f-4b2c-8975-81817dcc8dfe",
+      "status": 200,
+      "source": "https://catalog.data.gov",
+      "captured": "2026-08-16"
+    },
     "dataset_by_slug.json": {
       "endpoint": "/api/dataset/crime-data-from-2020-to-present",
       "status": 200,

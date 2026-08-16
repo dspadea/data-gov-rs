@@ -215,6 +215,62 @@ fn contact_point_name_survives_deserialization() {
     );
 }
 
+/// Why [`data_gov_catalog::CatalogClient::dataset_by_slug`] resolves slugs
+/// only, though the endpoint behind it is `/api/dataset/{slug_or_id}`.
+///
+/// The endpoint does accept an OpenSearch document id -- the third element of
+/// a `/search` hit's `_sort` array -- and answers 200 with the right dataset.
+/// This capture is that answer. What it does not contain is the id that was
+/// asked for: `_sort` arrives null on this endpoint, and the id appears
+/// nowhere else in the body. Nothing in the response can therefore show the
+/// dataset is the one the caller named, so the wrapper returns `None` rather
+/// than a hit it cannot attribute to the request.
+///
+/// When this test fails because `_sort` now arrives populated, that reason has
+/// expired: compare the requested value against `sort_key[2]` and accept the
+/// hit when they match, alongside the existing slug comparison.
+#[test]
+fn exact_lookup_by_document_id_returns_the_dataset_without_echoing_the_id() {
+    let name = "dataset_by_document_id.json";
+    let endpoint = manifest()["fixtures"][name]["endpoint"]
+        .as_str()
+        .unwrap_or_else(|| panic!("MANIFEST.json records no endpoint for {name}"))
+        .to_owned();
+    let document_id = endpoint
+        .rsplit('/')
+        .next()
+        .expect("an endpoint path has at least one segment");
+
+    let response: models::SearchResponse = parse(name);
+    let hit = response
+        .results
+        .first()
+        .expect("the capture must carry the dataset the id resolved to");
+
+    assert_ne!(
+        hit.slug.as_deref(),
+        Some(document_id),
+        "the capture must be a lookup by document id, not by slug"
+    );
+    assert!(
+        hit.dcat.is_some(),
+        "the server really did answer with the dataset, so what the wrapper \
+         drops is a correct record, not an empty one"
+    );
+    assert!(
+        hit.sort_key.is_none(),
+        "`_sort` now arrives on the exact-lookup endpoint: {:?}. The document \
+         id can be verified from the response, so dataset_by_slug can accept \
+         one.",
+        hit.sort_key
+    );
+    assert!(
+        !fixture(name).contains(document_id),
+        "the requested document id {document_id} appears in the response body: \
+         dataset_by_slug can verify a document-id lookup after all"
+    );
+}
+
 // --- Fixture provenance -----------------------------------------------------
 //
 // A fixture with no recorded origin is indistinguishable from one somebody

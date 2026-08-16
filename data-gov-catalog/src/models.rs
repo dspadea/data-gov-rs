@@ -97,6 +97,11 @@ pub struct SearchHit {
     #[serde(default, rename = "_score", skip_serializing_if = "Option::is_none")]
     pub score: Option<f64>,
     /// Cursor components that generated this hit's position.
+    ///
+    /// An array whose third element is the OpenSearch document id of this
+    /// hit. `/api/dataset/{slug_or_id}` resolves that id, but answers with
+    /// `_sort` null, so a hit fetched by exact lookup never carries one --
+    /// see [`CatalogClient::dataset_by_slug`](crate::CatalogClient::dataset_by_slug).
     #[serde(default, rename = "_sort", skip_serializing_if = "Option::is_none")]
     pub sort_key: Option<Value>,
 }
