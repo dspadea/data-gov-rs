@@ -463,6 +463,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `data_gov::catalog` re-export. The lockfile drops from 308 to 279 crates.
 
 ### Infrastructure
+- **A crates.io index it cannot reach no longer reads as "not published"**.
+  The release workflow probed the sparse index with
+  `curl -fsS ... | grep -q`, which exits non-zero identically for a genuine
+  404, a 500, a DNS failure and a reset connection. `publish-crate.sh` read
+  that single non-zero as "not on crates.io; publish it", so one transient
+  blip would run `cargo publish` against a version that was already live and
+  hard-fail on "crate version already exists" - the exact failure the skip
+  exists to prevent - blocking every crate behind it in the dependency chain.
+  That path is the documented recovery for a half-finished release, and a
+  publish cannot be undone, only yanked. The probe now reads curl's HTTP
+  status rather than inferring from its exit code, retries a bounded number
+  of times, and answers three ways: published, absent, or unknown. Unknown
+  stops the job with an error naming the situation instead of publishing on a
+  guess. The version is matched with `grep -F`, so the dots in `0.5.0` are
+  no longer wildcards that also match `0X5X0`.
+- **The release helpers are tracked scripts under `scripts/release/`, and
+  tested.** They were heredocs written to `/tmp` inside the workflow, which
+  cannot be unit-tested and so had never been run against a failing index.
+  `just check-release-helpers` now drives them against a stub index that
+  serves a 404, a 500, a rate-limit and a refused connection on demand - none
+  of which the live service can be asked for - and asserts that `cargo` is
+  never invoked when the index state is unknown. The workflow's behaviour,
+  publish order and dependency waits are unchanged.
 - **`clippy::missing_errors_doc` and `clippy::missing_panics_doc` are denied
   workspace-wide** (#59), and the 24 public `Result`-returning functions that
   had no `# Errors` section now have one naming the variants that call path can
