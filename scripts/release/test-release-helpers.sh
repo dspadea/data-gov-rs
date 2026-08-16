@@ -351,6 +351,41 @@ want wait_fails_when_the_index_stays_unreachable \
 and_output_has wait_names_the_unreachable_index_rather_than_a_missing_publish \
   ": the index could not be reached. The publish itself may well have succeeded"
 
+# A poll sequence that changes its answer between polls. Every wait case above
+# holds one answer for all three polls, so the loop never has to overwrite what
+# an earlier poll left behind - and the "not yet visible" arm writes exactly
+# what the two initialisers above the loop already hold, so with a uniform
+# sequence that arm can be deleted whole and no test can tell. A forty-poll,
+# ten-minute production wait is not uniform: one blip followed by clean 404s is
+# the ordinary shape of it, and the operator must be told about the last poll,
+# not the first.
+#
+# The stub answers 500 once and then serves an index file that omits 0.5.0, so
+# the first poll is unknown and the rest are absent. `CRATES_INDEX_ATTEMPTS`
+# is cleared to leave the probe at its production default of one attempt, which
+# is what makes each poll one request and the sequence reach the loop intact.
+start_stub --mode flaky --fail-first 1 --body "$tmp/index-body.txt"
+CRATES_INDEX_ATTEMPTS="" \
+  want wait_names_a_missing_publish_after_an_earlier_unreachable_poll \
+  1 wait_for_crate "$stub_base" data-gov-ckan 0.5.0
+and_output_has wait_drops_the_unreachable_wording_once_a_later_poll_answers \
+  ": not yet visible. If crates.io is healthy, the publish may have failed silently"
+
+# The same sequence in the other direction: the index answers 404 first, then
+# serves a 200 that is not an index file, which is unknown. This one is kept
+# even though the all-unreachable case above already fails if the unknown arm
+# stops writing its state - that case enters its first poll holding the same
+# two initialisers the absent arm writes, so it happens to cover this
+# direction. It covers it by coincidence, and that coincidence is the whole
+# reason the other direction went untested; a different initialiser would end
+# it silently.
+start_stub --mode late --fail-first 1 --body "$tmp/index-interception.txt"
+CRATES_INDEX_ATTEMPTS="" \
+  want wait_names_an_unreachable_index_after_an_earlier_absent_poll \
+  1 wait_for_crate "$stub_base" data-gov-ckan 0.5.0
+and_output_has wait_drops_the_missing_publish_wording_once_the_index_stops_answering \
+  ": the index could not be reached. The publish itself may well have succeeded"
+
 stop_stub
 echo
 echo "passed: ${passed}, failed: ${failed}, skipped: ${skipped}"
