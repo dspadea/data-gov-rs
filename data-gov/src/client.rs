@@ -57,6 +57,63 @@ struct DownloadJob<'a> {
     allow_private_network: bool,
 }
 
+/// Owns the temporary file of a transfer in progress and removes it on drop.
+///
+/// `perform_download` discards its temporary file on every path it returns an
+/// error from, but a cancelled download returns from none of them: the future
+/// is dropped where it stands, and no code in the function body runs. The MCP
+/// server does exactly that on two deliberate paths - the per-request timeout,
+/// and `notifications/cancelled` - so without this a user who cancels a few
+/// large downloads accumulates hidden `.part` files in the download directory
+/// that nothing ever sweeps (#125).
+///
+/// Call [`PartialFileGuard::keep`] once the file has been renamed onto the
+/// destination, so a finished download does not have its own result removed.
+struct PartialFileGuard {
+    path: PathBuf,
+    armed: bool,
+}
+
+impl PartialFileGuard {
+    /// Take responsibility for removing `path` when this value is dropped.
+    fn new(path: PathBuf) -> Self {
+        Self { path, armed: true }
+    }
+
+    /// The temporary path this guard is responsible for.
+    fn path(&self) -> &Path {
+        &self.path
+    }
+
+    /// Give up responsibility for the file: drop then removes nothing.
+    fn keep(mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for PartialFileGuard {
+    fn drop(&mut self) {
+        if !self.armed {
+            return;
+        }
+        // A blocking unlink inside an async program, which the rest of this
+        // crate does not do. `Drop` cannot await, and the alternative -
+        // spawning a task to remove the file - loses the file whenever the
+        // runtime is already shutting down, which is one of the moments a
+        // cancelled download drops. One unlink syscall is short enough that
+        // holding the executor for it costs nothing measurable.
+        match std::fs::remove_file(&self.path) {
+            Ok(()) => {}
+            // Already gone: an error path discarded it before returning.
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+            Err(err) => eprintln!(
+                "data-gov: could not remove the unfinished download {}: {err}",
+                self.path.display()
+            ),
+        }
+    }
+}
+
 impl DataGovClient {
     /// Create a new DataGov client with default configuration.
     ///
@@ -683,8 +740,13 @@ impl DataGovClient {
         // The transfer goes to a temporary file beside the destination, so the
         // destination only ever holds a complete file. The two share a
         // directory because `rename` is atomic only within one filesystem.
-        let temp_path = Self::partial_path(output_dir);
-        let mut file = match File::create(&temp_path).await {
+        // The guard is armed before the file is opened, so the temporary file
+        // is owned by something that removes it from the moment it can exist.
+        // Every `return Err` below still discards it explicitly; the guard is
+        // the backstop for the way out that runs no code at all - the future
+        // being dropped mid-transfer (#125).
+        let partial = PartialFileGuard::new(Self::partial_path(output_dir));
+        let mut file = match File::create(partial.path()).await {
             Ok(file) => file,
             Err(err) => {
                 notify_failure(err.to_string(), &status_reporter);
@@ -705,14 +767,14 @@ impl DataGovClient {
             let chunk = match chunk_result {
                 Ok(chunk) => chunk,
                 Err(err) => {
-                    Self::discard_partial(&temp_path).await;
+                    Self::discard_partial(partial.path()).await;
                     notify_failure(err.to_string(), &status_reporter);
                     return Err(err.into());
                 }
             };
 
             if let Err(err) = file.write_all(&chunk).await {
-                Self::discard_partial(&temp_path).await;
+                Self::discard_partial(partial.path()).await;
                 notify_failure(err.to_string(), &status_reporter);
                 return Err(err.into());
             }
@@ -727,23 +789,27 @@ impl DataGovClient {
         // Dropping a `tokio::fs::File` does not flush it, so without this the
         // last chunk can be lost and the transfer still reported as complete.
         if let Err(err) = file.flush().await {
-            Self::discard_partial(&temp_path).await;
+            Self::discard_partial(partial.path()).await;
             notify_failure(err.to_string(), &status_reporter);
             return Err(err.into());
         }
         drop(file);
 
         if let Some(message) = Self::short_transfer(url, total_size, progress.downloaded_bytes) {
-            Self::discard_partial(&temp_path).await;
+            Self::discard_partial(partial.path()).await;
             notify_failure(message.clone(), &status_reporter);
             return Err(DataGovError::download_error(message));
         }
 
-        if let Err(err) = tokio::fs::rename(&temp_path, output_path).await {
-            Self::discard_partial(&temp_path).await;
+        if let Err(err) = tokio::fs::rename(partial.path(), output_path).await {
+            Self::discard_partial(partial.path()).await;
             notify_failure(err.to_string(), &status_reporter);
             return Err(err.into());
         }
+
+        // The transfer is now the destination file, so there is no temporary
+        // file left for the guard to remove.
+        partial.keep();
 
         if let Some(reporter) = status_reporter.as_ref() {
             let event = DownloadFinished {
@@ -1217,5 +1283,43 @@ mod tests {
         assert_eq!(DataGovClient::download_permits(0), 1);
         assert_eq!(DataGovClient::download_permits(1), 1);
         assert_eq!(DataGovClient::download_permits(5), 5);
+    }
+
+    #[test]
+    fn partial_file_guard_removes_the_file_when_it_is_dropped() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let path = tmp.path().join(".data-gov-test.part");
+        std::fs::write(&path, b"an unfinished transfer").expect("seed");
+
+        drop(PartialFileGuard::new(path.clone()));
+
+        assert!(
+            !path.exists(),
+            "an armed guard must remove the temporary file it owns"
+        );
+    }
+
+    #[test]
+    fn partial_file_guard_keeps_the_file_once_it_has_been_disarmed() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let path = tmp.path().join(".data-gov-test.part");
+        std::fs::write(&path, b"a transfer that finished").expect("seed");
+
+        PartialFileGuard::new(path.clone()).keep();
+
+        assert!(
+            path.exists(),
+            "a disarmed guard must leave the file where a finished transfer put it"
+        );
+    }
+
+    #[test]
+    fn partial_file_guard_accepts_a_file_an_error_path_already_removed() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let path = tmp.path().join(".data-gov-never-created.part");
+
+        // Every error path in `perform_download` discards the temporary file
+        // before returning, so the guard usually finds nothing to remove.
+        drop(PartialFileGuard::new(path));
     }
 }

@@ -309,3 +309,115 @@ async fn a_stalled_transfer_is_still_cut_off() {
         "the stall must be cut off near the configured timeout, took {elapsed:?}"
     );
 }
+
+/// Watch `dir` until an entry appears in it, or `deadline` passes.
+///
+/// The dropped-transfer tests need this. Without it a run where the transfer
+/// never started would find an empty directory and pass while proving
+/// nothing, which is the one way those tests could go green for the wrong
+/// reason.
+async fn wait_for_first_entry(dir: std::path::PathBuf, deadline: Duration) -> bool {
+    let started = Instant::now();
+    while started.elapsed() < deadline {
+        if !entries(&dir).is_empty() {
+            return true;
+        }
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    false
+}
+
+/// An origin that sends a little and then stalls, so the transfer is still
+/// running when the caller drops it. Returns the origin's base URL.
+async fn stalling_origin() -> String {
+    scripted_origin(
+        4096,
+        vec![
+            b"the first bytes and then a long wait".to_vec(),
+            b"never arrives".to_vec(),
+        ],
+        Duration::from_secs(30),
+    )
+    .await
+}
+
+/// A caller that cancels a download - an MCP request that times out, or a
+/// `notifications/cancelled` - drops the transfer future rather than returning
+/// through any of its error paths, so nothing in the function body runs.
+#[tokio::test]
+async fn a_dropped_transfer_leaves_no_temporary_file_behind() {
+    let tmp = TempDir::new().expect("tempdir");
+    let origin = stalling_origin().await;
+    // A ten second stall timeout, so the client's own timeout cannot fire
+    // first and take the error path this test is not about.
+    let client = client_for(tmp.path(), 10);
+    let dist = distribution(&format!("{origin}/report"), "report", "csv");
+
+    let watcher = tokio::spawn(wait_for_first_entry(
+        tmp.path().to_path_buf(),
+        Duration::from_secs(5),
+    ));
+
+    // The block bounds the timeout's own lifetime, so the transfer future is
+    // dropped before the assertions read the directory.
+    {
+        let download = client.download_distribution(&dist, Some(tmp.path()));
+        tokio::time::timeout(Duration::from_secs(1), download)
+            .await
+            .expect_err("the stalled transfer must still be running when it is dropped");
+    }
+
+    assert!(
+        watcher.await.expect("watcher task"),
+        "the transfer never reached the point of creating a file, so this run proves nothing"
+    );
+    assert_eq!(
+        entries(tmp.path()),
+        Vec::<String>::new(),
+        "a dropped transfer must not leave its temporary file behind"
+    );
+}
+
+/// Cancel, then retry: the second attempt must land, and the first must not
+/// still be sitting in the directory beside it.
+#[tokio::test]
+async fn a_download_retried_after_a_cancelled_one_leaves_only_the_destination() {
+    let tmp = TempDir::new().expect("tempdir");
+    let stalled = stalling_origin().await;
+    let client = client_for(tmp.path(), 10);
+    let cancelled = distribution(&format!("{stalled}/report"), "report", "csv");
+
+    let watcher = tokio::spawn(wait_for_first_entry(
+        tmp.path().to_path_buf(),
+        Duration::from_secs(5),
+    ));
+    {
+        let download = client.download_distribution(&cancelled, Some(tmp.path()));
+        tokio::time::timeout(Duration::from_secs(1), download)
+            .await
+            .expect_err("the stalled transfer must still be running when it is dropped");
+    }
+    assert!(
+        watcher.await.expect("watcher task"),
+        "the cancelled transfer never created a file, so this run proves nothing"
+    );
+
+    let body = b"a complete body".to_vec();
+    let whole = scripted_origin(body.len(), vec![body.clone()], Duration::ZERO).await;
+    let dist = distribution(&format!("{whole}/report"), "report", "csv");
+    let written = client
+        .download_distribution(&dist, Some(tmp.path()))
+        .await
+        .expect("the retry must land");
+
+    assert_eq!(
+        tokio::fs::read(&written).await.expect("read back"),
+        body,
+        "the retry must hold the whole body"
+    );
+    assert_eq!(
+        entries(tmp.path()),
+        vec!["report.csv".to_string()],
+        "the cancelled transfer's temporary file must not outlive it"
+    );
+}

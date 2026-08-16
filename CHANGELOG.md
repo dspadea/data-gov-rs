@@ -340,6 +340,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   client with specific timeouts.
 
 ### Fixed
+- **A cancelled download no longer leaves its temporary file behind** (#125).
+  A transfer writes to a hidden `.data-gov-<pid>-<serial>.part` beside the
+  destination and renames it into place at the end. Every error path removed
+  that file before returning, but a cancelled download returns from none of
+  them: the future is dropped where it stands and no code in the function body
+  runs. The MCP server does exactly that on two deliberate paths - the
+  per-request timeout, and `notifications/cancelled` - and nothing anywhere
+  swept the leftovers, so a user who cancelled a few large downloads
+  accumulated hidden files in the download directory forever. The temporary
+  file is now owned by a guard whose `Drop` removes it, disarmed once the
+  rename onto the destination has succeeded. `std::process::exit` still skips
+  `Drop`, so a process that exits without unwinding can leave one.
 - **The CLI no longer panics when a reader closes the pipe early** (#115).
   `data-gov list organizations | head -5` died with exit 101 and a Rust
   backtrace note the moment `head` stopped reading, because `println!` panics
