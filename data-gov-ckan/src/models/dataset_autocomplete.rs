@@ -10,21 +10,35 @@
 
 use serde::{Deserialize, Serialize};
 
+/// One dataset suggestion from the dataset-autocomplete endpoint.
+///
+/// Every field is optional because the endpoint returns only what it
+/// matched on, which varies with the query.
 #[derive(Clone, Default, Debug, PartialEq, Serialize, Deserialize)]
 pub struct DatasetAutocomplete {
+    /// Identifier of the suggested dataset.
+    ///
+    /// CKAN's `id` column is unconstrained text; see
+    /// [`crate::models::Package::id`] for why this is a `String` rather than a
+    /// `uuid::Uuid`.
     #[serde(rename = "id", skip_serializing_if = "Option::is_none")]
     pub id: Option<String>,
+    /// URL-friendly name (slug) of the suggested dataset.
     #[serde(rename = "name", skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
+    /// Human-readable title of the suggested dataset.
     #[serde(rename = "title", skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
+    /// The matched text, as the portal would display it.
     #[serde(rename = "match_displayed", skip_serializing_if = "Option::is_none")]
     pub match_displayed: Option<String>,
+    /// Which field the query matched, such as `title` or `name`.
     #[serde(rename = "match_field", skip_serializing_if = "Option::is_none")]
     pub match_field: Option<String>,
 }
 
 impl DatasetAutocomplete {
+    /// Create an empty [`DatasetAutocomplete`]; every field starts as `None`.
     pub fn new() -> DatasetAutocomplete {
         DatasetAutocomplete {
             id: None,

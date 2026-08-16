@@ -11,17 +11,25 @@
 use crate::models;
 use serde::{Deserialize, Serialize};
 
+/// The envelope CKAN returns when an action fails validation.
+///
+/// Still HTTP 200, like every other Action API failure: [`Self::success`]
+/// is what marks it.
 #[derive(Clone, Default, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ValidationErrorResponse {
+    /// URL of the documentation for the action that was rejected.
     #[serde(rename = "help")]
     pub help: String,
+    /// Always `false` on this envelope.
     #[serde(rename = "success")]
     pub success: bool,
+    /// Which fields were rejected, and why.
     #[serde(rename = "error")]
     pub error: models::ValidationErrorResponseError,
 }
 
 impl ValidationErrorResponse {
+    /// Create a [`ValidationErrorResponse`] from its three members.
     pub fn new(
         help: String,
         success: bool,

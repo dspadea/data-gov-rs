@@ -11,13 +11,20 @@
 use crate::models;
 use serde::{Deserialize, Serialize};
 
+/// The outer envelope from the utility API's resource-format-autocomplete endpoint.
+///
+/// The utility API (`/api/{version}/util/...`) predates the v3 Action
+/// API and capitalises its members, which is why this nests through
+/// `ResultSet` before reaching anything useful.
 #[derive(Clone, Default, Debug, PartialEq, Serialize, Deserialize)]
 pub struct UtilResourceFormatAutocompleteGet200Response {
+    /// The `ResultSet` member holding the suggestions.
     #[serde(rename = "ResultSet", skip_serializing_if = "Option::is_none")]
     pub result_set: Option<Box<models::UtilResourceFormatAutocompleteGet200ResponseResultSet>>,
 }
 
 impl UtilResourceFormatAutocompleteGet200Response {
+    /// Create an empty [`UtilResourceFormatAutocompleteGet200Response`]; every field starts as `None`.
     pub fn new() -> UtilResourceFormatAutocompleteGet200Response {
         UtilResourceFormatAutocompleteGet200Response { result_set: None }
     }

@@ -10,6 +10,10 @@
 
 use serde::{Deserialize, Serialize};
 
+/// The response from the legacy `/api/1` version endpoint.
+///
+/// The only thing that endpoint reports is which API version the portal
+/// serves.
 #[derive(Clone, Default, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ApiVersionResponse {
     /// API version number
@@ -18,6 +22,7 @@ pub struct ApiVersionResponse {
 }
 
 impl ApiVersionResponse {
+    /// Create an [`ApiVersionResponse`] carrying `version`.
     pub fn new(version: i32) -> ApiVersionResponse {
         ApiVersionResponse { version }
     }

@@ -10,17 +10,27 @@
 
 use serde::{Deserialize, Serialize};
 
-/// ValidationErrorResponseError : Validation error details with field-specific messages
+/// The error object carried by a validation failure.
+///
+/// CKAN also sends one entry per rejected field alongside these two members,
+/// each holding an array of messages
+/// (`{"name": ["Missing value"], "__type": "Validation Error"}`). Those
+/// entries are not modelled here, because their names are the names of
+/// whatever fields the call got wrong; read them from
+/// [`crate::models::ActionResponse::error`], which keeps the raw JSON.
 #[derive(Clone, Default, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ValidationErrorResponseError {
+    /// Always `Validation Error` on this object.
     #[serde(rename = "__type", skip_serializing_if = "Option::is_none")]
     pub __type: Option<Type>,
+    /// A summary message, where CKAN sends one.
     #[serde(rename = "message", skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,
 }
 
 impl ValidationErrorResponseError {
-    /// Validation error details with field-specific messages
+    /// Create an empty [`ValidationErrorResponseError`]; every field starts
+    /// as `None`.
     pub fn new() -> ValidationErrorResponseError {
         ValidationErrorResponseError {
             __type: None,
@@ -28,10 +38,12 @@ impl ValidationErrorResponseError {
         }
     }
 }
+/// The single error type this object carries.
 #[derive(
     Clone, Copy, Debug, Default, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize,
 )]
 pub enum Type {
+    /// Serialized as `Validation Error`.
     #[serde(rename = "Validation Error")]
     #[default]
     ValidationError,

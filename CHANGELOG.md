@@ -311,6 +311,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `Error::downcast_mut()`.
 
 ### Added
+- **`data-gov-ckan`'s models are documented** (#118). Every public item in the
+  crate now carries a doc comment: what each CKAN concept is, and the things
+  that are not guessable from a field name - that `Group` models both groups
+  and organizations and `is_organization` is the only thing separating them,
+  that a failed action is still HTTP 200 so `success` is what marks it, that a
+  validation failure does not use `ErrorResponseError` because it replaces
+  `message` with per-field arrays, and that the utility API capitalises its
+  members, which is why the autocomplete envelopes nest through `ResultSet`.
+  The `id` and `size` fields keep the notes explaining why they are `String`
+  and `i64` rather than `uuid::Uuid` and `i32` (#63, #62).
 - **`data_gov::ui` is documented** (#59). The download progress-reporting port
   - [`StatusReporter`] and its five event structs - carried no documentation at
   all, so a consumer implementing it had to read the client's source to learn
@@ -458,12 +468,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   had no `# Errors` section now have one naming the variants that call path can
   actually produce. CLAUDE.md required the section; nothing enforced it, so it
   was missing across three crates.
-- **`missing_docs` is denied in `data-gov-catalog`, `data-gov`, and
-  `data-gov-mcp-server`** (#59), clearing 100 undocumented public items: the 60
-  DCAT-US 3 model fields in the catalog crate, and in `data-gov` the whole
-  `ui` module, the error variants' fields, and the `client` and `error` module
-  docs. `data-gov-ckan` is deliberately not covered yet - its 170 model fields
-  are tracked in #118, and it is the crate data.gov no longer uses.
+- **`missing_docs` is denied in every crate** (#59, #118), clearing 273
+  undocumented public items. In `data-gov-catalog`, the 60 DCAT-US 3 model
+  fields; in `data-gov`, the whole `ui` module, the error variants' fields, and
+  the `client` and `error` module docs; in `data-gov-ckan`, all 173 remaining
+  items across its 29 model files and its two crate-root modules.
 
 - **Working docs are plain ASCII, and CI enforces it.** `CLAUDE.md` and the
   `justfile` used em-dashes and arrow glyphs throughout - characters nobody

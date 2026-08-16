@@ -10,19 +10,28 @@
 
 use serde::{Deserialize, Serialize};
 
+/// One user suggestion from `user_autocomplete`.
 #[derive(Clone, Default, Debug, PartialEq, Serialize, Deserialize)]
 pub struct UserAutocomplete {
+    /// Identifier of the suggested user.
+    ///
+    /// CKAN's `id` column is unconstrained text; see
+    /// [`crate::models::Package::id`] for why this is a `String`.
     #[serde(rename = "id", skip_serializing_if = "Option::is_none")]
     pub id: Option<String>,
+    /// Username of the suggested user.
     #[serde(rename = "name", skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
+    /// The user's full name, where they set one.
     #[serde(rename = "fullname", skip_serializing_if = "Option::is_none")]
     pub fullname: Option<String>,
+    /// The name the portal shows, falling back to the username.
     #[serde(rename = "display_name", skip_serializing_if = "Option::is_none")]
     pub display_name: Option<String>,
 }
 
 impl UserAutocomplete {
+    /// Create an empty [`UserAutocomplete`]; every field starts as `None`.
     pub fn new() -> UserAutocomplete {
         UserAutocomplete {
             id: None,

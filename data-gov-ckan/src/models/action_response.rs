@@ -10,6 +10,13 @@
 
 use serde::{Deserialize, Serialize};
 
+/// The envelope every Action API call returns.
+///
+/// CKAN wraps every response, success or failure, in this shape: `help`
+/// points at the action's documentation, `success` says whether it worked,
+/// and the payload sits in [`Self::result`] or the failure in
+/// [`Self::error`]. A failed action is still HTTP 200, so `success` is what
+/// distinguishes them, not the status code.
 #[derive(Clone, Default, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ActionResponse {
     /// URL to documentation for this action
@@ -37,6 +44,9 @@ pub struct ActionResponse {
 }
 
 impl ActionResponse {
+    /// Create an [`ActionResponse`] from the three members CKAN always sends.
+    ///
+    /// [`Self::changed_entities`] and [`Self::error`] start as `None`.
     pub fn new(help: String, success: bool, result: Option<serde_json::Value>) -> ActionResponse {
         ActionResponse {
             help,

@@ -10,17 +10,25 @@
 
 use serde::{Deserialize, Serialize};
 
+/// One group suggestion from `group_autocomplete`.
 #[derive(Clone, Default, Debug, PartialEq, Serialize, Deserialize)]
 pub struct GroupAutocomplete {
+    /// Identifier of the suggested group.
+    ///
+    /// CKAN's `id` column is unconstrained text; see
+    /// [`crate::models::Package::id`] for why this is a `String`.
     #[serde(rename = "id", skip_serializing_if = "Option::is_none")]
     pub id: Option<String>,
+    /// URL-friendly name (slug) of the suggested group.
     #[serde(rename = "name", skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
+    /// Human-readable title of the suggested group.
     #[serde(rename = "title", skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
 }
 
 impl GroupAutocomplete {
+    /// Create an empty [`GroupAutocomplete`]; every field starts as `None`.
     pub fn new() -> GroupAutocomplete {
         GroupAutocomplete {
             id: None,

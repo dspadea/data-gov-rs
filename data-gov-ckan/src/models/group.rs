@@ -11,6 +11,11 @@
 use crate::models;
 use serde::{Deserialize, Serialize};
 
+/// A group or an organization.
+///
+/// CKAN models both with one type and tells them apart with
+/// [`Self::is_organization`]. An organization owns datasets and controls who
+/// may edit them; a group is a looser collection a dataset can belong to.
 #[derive(Clone, Default, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Group {
     /// Unique identifier for the group or organization.
@@ -34,30 +39,49 @@ pub struct Group {
     /// URL to group image
     #[serde(rename = "image_url", skip_serializing_if = "Option::is_none")]
     pub image_url: Option<String>,
+    /// Fully-qualified URL of the image, resolved by the portal.
+    ///
+    /// [`Self::image_url`] may be relative to the site, so prefer this one when
+    /// fetching the image.
     #[serde(rename = "image_display_url", skip_serializing_if = "Option::is_none")]
     pub image_display_url: Option<String>,
+    /// The group type, `group` or `organization` by default.
+    ///
+    /// A portal with a custom group-type extension can send others.
     #[serde(rename = "type", skip_serializing_if = "Option::is_none")]
     pub r#type: Option<String>,
+    /// Whether the group is active or has been deleted.
     #[serde(rename = "state", skip_serializing_if = "Option::is_none")]
     pub state: Option<State>,
+    /// Whether a site administrator has approved the group.
     #[serde(rename = "approval_status", skip_serializing_if = "Option::is_none")]
     pub approval_status: Option<String>,
+    /// Whether this is an organization rather than a plain group.
+    ///
+    /// This is the only thing separating the two, since CKAN returns both
+    /// through this type.
     #[serde(rename = "is_organization", skip_serializing_if = "Option::is_none")]
     pub is_organization: Option<bool>,
+    /// When the group was created, as an ISO 8601 timestamp.
     #[serde(rename = "created", skip_serializing_if = "Option::is_none")]
     pub created: Option<String>,
     /// Number of packages in this group
     #[serde(rename = "package_count", skip_serializing_if = "Option::is_none")]
     pub package_count: Option<i32>,
+    /// Members of the group, present only when the call asked for them.
     #[serde(rename = "users", skip_serializing_if = "Option::is_none")]
     pub users: Option<Vec<models::User>>,
+    /// Parent groups this group belongs to.
     #[serde(rename = "groups", skip_serializing_if = "Option::is_none")]
     pub groups: Option<Vec<models::Group>>,
+    /// Free-form key/value pairs attached to the group.
     #[serde(rename = "extras", skip_serializing_if = "Option::is_none")]
     pub extras: Option<std::collections::HashMap<String, String>>,
 }
 
 impl Group {
+    /// Create a [`Group`] with the required `name`; every other field starts as
+    /// `None`.
     pub fn new(name: String) -> Group {
         Group {
             id: None,
@@ -78,13 +102,17 @@ impl Group {
         }
     }
 }
+/// Whether a group is live or has been deleted.
 #[derive(
     Clone, Copy, Debug, Default, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize,
 )]
 pub enum State {
+    /// The group is live.
     #[serde(rename = "active")]
     #[default]
     Active,
+    /// The group has been deleted. CKAN deletes softly, so the record is still
+    /// returned.
     #[serde(rename = "deleted")]
     Deleted,
 }

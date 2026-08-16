@@ -10,31 +10,50 @@
 
 use serde::{Deserialize, Serialize};
 
+/// One licence from the portal's licence register.
+///
+/// The register is configurable per portal, so the set of ids a deployment
+/// offers is not fixed and the compliance flags below reflect that
+/// portal's own register rather than a canonical source.
 #[derive(Clone, Default, Debug, PartialEq, Serialize, Deserialize)]
 pub struct License {
+    /// Identifier the portal uses for this licence, such as `cc-by`.
+    ///
+    /// This is the value that appears in
+    /// [`crate::models::Package::license_id`].
     #[serde(rename = "id", skip_serializing_if = "Option::is_none")]
     pub id: Option<String>,
+    /// Human-readable name of the licence.
     #[serde(rename = "title", skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
+    /// URL of the licence text.
     #[serde(rename = "url", skip_serializing_if = "Option::is_none")]
     pub url: Option<String>,
+    /// Who maintains the licence.
     #[serde(rename = "maintainer", skip_serializing_if = "Option::is_none")]
     pub maintainer: Option<String>,
+    /// Licence family the portal groups this one under.
     #[serde(rename = "family", skip_serializing_if = "Option::is_none")]
     pub family: Option<String>,
+    /// Whether the register marks this licence as conforming to the Open Definition.
     #[serde(rename = "is_okd_compliant", skip_serializing_if = "Option::is_none")]
     pub is_okd_compliant: Option<bool>,
+    /// Whether the register marks this licence as OSI-approved.
     #[serde(rename = "is_osi_compliant", skip_serializing_if = "Option::is_none")]
     pub is_osi_compliant: Option<bool>,
+    /// Whether the licence is intended for content.
     #[serde(rename = "domain_content", skip_serializing_if = "Option::is_none")]
     pub domain_content: Option<bool>,
+    /// Whether the licence is intended for data.
     #[serde(rename = "domain_data", skip_serializing_if = "Option::is_none")]
     pub domain_data: Option<bool>,
+    /// Whether the licence is intended for software.
     #[serde(rename = "domain_software", skip_serializing_if = "Option::is_none")]
     pub domain_software: Option<bool>,
 }
 
 impl License {
+    /// Create an empty [`License`]; every field starts as `None`.
     pub fn new() -> License {
         License {
             id: None,

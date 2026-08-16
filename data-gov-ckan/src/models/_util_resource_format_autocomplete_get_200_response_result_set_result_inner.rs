@@ -10,13 +10,16 @@
 
 use serde::{Deserialize, Serialize};
 
+/// One format suggestion inside the utility resource-format-autocomplete envelope.
 #[derive(Clone, Default, Debug, PartialEq, Serialize, Deserialize)]
 pub struct UtilResourceFormatAutocompleteGet200ResponseResultSetResultInner {
+    /// The suggested format.
     #[serde(rename = "Format", skip_serializing_if = "Option::is_none")]
     pub format: Option<String>,
 }
 
 impl UtilResourceFormatAutocompleteGet200ResponseResultSetResultInner {
+    /// Create an empty [`UtilResourceFormatAutocompleteGet200ResponseResultSetResultInner`]; every field starts as `None`.
     pub fn new() -> UtilResourceFormatAutocompleteGet200ResponseResultSetResultInner {
         UtilResourceFormatAutocompleteGet200ResponseResultSetResultInner { format: None }
     }

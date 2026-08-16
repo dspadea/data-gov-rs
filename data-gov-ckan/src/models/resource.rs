@@ -10,6 +10,11 @@
 
 use serde::{Deserialize, Serialize};
 
+/// One file or API endpoint attached to a dataset.
+///
+/// A dataset's data lives here rather than on the dataset itself: one
+/// dataset commonly carries the same data as several resources in different
+/// formats.
 #[derive(Clone, Default, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Resource {
     /// Unique identifier for the resource.
@@ -68,10 +73,13 @@ pub struct Resource {
         skip_serializing_if = "Option::is_none"
     )]
     pub size: Option<i64>,
+    /// When the resource was created, as an ISO 8601 timestamp.
     #[serde(rename = "created", skip_serializing_if = "Option::is_none")]
     pub created: Option<String>,
+    /// When the resource's file was last changed, as an ISO 8601 timestamp.
     #[serde(rename = "last_modified", skip_serializing_if = "Option::is_none")]
     pub last_modified: Option<String>,
+    /// When the portal last refreshed its cached copy, as an ISO 8601 timestamp.
     #[serde(rename = "cache_last_updated", skip_serializing_if = "Option::is_none")]
     pub cache_last_updated: Option<String>,
     /// Whether the resource is in the datastore
@@ -80,6 +88,7 @@ pub struct Resource {
 }
 
 impl Resource {
+    /// Create an empty [`Resource`]; every field starts as `None`.
     pub fn new() -> Resource {
         Resource {
             id: None,
