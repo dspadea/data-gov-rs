@@ -4,7 +4,7 @@ use data_gov::DataGovClient;
 use data_gov::catalog::models::{Distribution, SearchHit};
 use serde_json::{Value, json};
 use std::collections::HashSet;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use tokio::time::timeout;
 
 use crate::server::DataGovMcpServer;
@@ -285,29 +285,37 @@ impl DataGovMcpServer {
             // match every distribution.
             let filters = normalized_format_filters(formats);
 
-            let distribution_matches = |d: &Distribution, filter: &str| -> bool {
-                d.format
-                    .as_deref()
-                    .is_some_and(|f| f.to_ascii_lowercase().contains(filter))
-                    || d.media_type
+            // A filter list that reduces to nothing matches every
+            // distribution, so it means the same as no filter at all: an
+            // empty array, or one holding only blanks. Retaining on it
+            // instead cleared the list, and the caller was told nothing
+            // matched without being told which format to try, because there
+            // was no format to name.
+            if !filters.is_empty() {
+                let distribution_matches = |d: &Distribution, filter: &str| -> bool {
+                    d.format
                         .as_deref()
-                        .is_some_and(|m| m.to_ascii_lowercase().contains(filter))
-            };
+                        .is_some_and(|f| f.to_ascii_lowercase().contains(filter))
+                        || d.media_type
+                            .as_deref()
+                            .is_some_and(|m| m.to_ascii_lowercase().contains(filter))
+                };
 
-            for (raw, normalized) in &filters {
-                if !distributions
-                    .iter()
-                    .any(|d| distribution_matches(d, normalized))
-                {
-                    unavailable_formats.push(raw.clone());
+                for (raw, normalized) in &filters {
+                    if !distributions
+                        .iter()
+                        .any(|d| distribution_matches(d, normalized))
+                    {
+                        unavailable_formats.push(raw.clone());
+                    }
                 }
-            }
 
-            distributions.retain(|d| {
-                filters
-                    .iter()
-                    .any(|(_, normalized)| distribution_matches(d, normalized))
-            });
+                distributions.retain(|d| {
+                    filters
+                        .iter()
+                        .any(|(_, normalized)| distribution_matches(d, normalized))
+                });
+            }
         }
 
         if distributions.is_empty() {
@@ -574,7 +582,7 @@ pub(crate) fn resolve_output_dir(
     let base = match requested {
         None => default_base.to_path_buf(),
         Some(dir) => {
-            if dir.contains("..") {
+            if names_a_parent_directory(dir) {
                 return Err(ServerError::InvalidParams(
                     "output_dir must not contain '..' path components".to_string(),
                 ));
@@ -606,6 +614,24 @@ fn dataset_subdirectory(base: &Path, safe_dataset_slug: &str) -> Result<PathBuf,
         ServerError::InvalidParams(format!(
             "dataset slug does not name a directory inside the chosen download directory: {err}"
         ))
+    })
+}
+
+/// True when `dir` carries a parent-directory step.
+///
+/// Reads path components rather than searching for the two characters, so a
+/// name that merely contains dots - `/data/v1..v2/exports` - is the ordinary
+/// directory it looks like and not a traversal. This is the same reading
+/// [`data_gov::util::join_inside`] takes of the component it joins on.
+///
+/// Backslash-separated segments are read too. On a host whose separator is
+/// `/`, `..\\escape` is one ordinary component and would otherwise pass, and
+/// the caller of an MCP server is free to be a Windows client.
+fn names_a_parent_directory(dir: &str) -> bool {
+    dir.split('\\').any(|segment| {
+        Path::new(segment)
+            .components()
+            .any(|component| matches!(component, Component::ParentDir))
     })
 }
 
@@ -657,6 +683,37 @@ mod tests {
         )
         .expect_err("'..' inside backslash path must be rejected");
         assert!(matches!(err, ServerError::InvalidParams(_)));
+    }
+
+    /// Dots in a directory name are not a parent-directory step.
+    /// `/data/v1..v2/exports` names an ordinary directory, and refusing it on
+    /// the substring `..` both blocks a legitimate path and tells the caller
+    /// something about it that is not true.
+    #[test]
+    fn resolve_output_dir_accepts_a_directory_name_that_contains_dots() {
+        for dir in [
+            "/data/v1..v2/exports",
+            "/srv/archive..2024",
+            "/tmp/..hidden",
+        ] {
+            let resolved = resolve_output_dir(Some(dir), false, "slug", default_base())
+                .unwrap_or_else(|err| panic!("{dir} has no `..` component, got: {err:?}"));
+            assert_eq!(resolved, PathBuf::from(dir));
+        }
+    }
+
+    /// The other half: dots in a name buy a real traversal nothing. The check
+    /// reads path components, so a `..` step beside such a name is still
+    /// refused - under either separator.
+    #[test]
+    fn resolve_output_dir_rejects_traversal_beside_a_name_that_contains_dots() {
+        for dir in ["/data/v1..v2/../escape", "/srv/a..b/..", "..\\v1..v2"] {
+            let outcome = resolve_output_dir(Some(dir), false, "slug", default_base());
+            assert!(
+                matches!(outcome, Err(ServerError::InvalidParams(_))),
+                "{dir} leaves its parent and must be refused, got: {outcome:?}"
+            );
+        }
     }
 
     /// The `..` check covers the string the caller supplied. The slug is joined

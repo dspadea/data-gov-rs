@@ -377,6 +377,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`unavailableFormats` names the right format** (#70). A `.filter()` dropped
   blank entries, so the vector no longer index-aligned with the one it was
   zipped against and the report paired the wrong strings.
+- **A `formats` filter that names no format downloads everything again.**
+  `"formats": []`, `["  "]`, or any array whose entries are all blank left an
+  empty filter list, and retaining on an empty list cleared every
+  distribution. The tool then answered `isError: true` with "no matching
+  downloadable distributions" and an empty `unavailableFormats`, naming no
+  format the model could correct - a dead end for an agent, which is the only
+  caller this server has. A filter that matches everything now means the same
+  as no filter at all.
+- **`outputDir` accepts a directory whose name contains dots.** The guard was
+  a substring test for `..`, so `/data/v1..v2/exports` and
+  `/srv/archive..2024` were refused with "output_dir must not contain '..'
+  path components", which was not true of either path. It now reads path
+  components, the same reading `data_gov::util::join_inside` takes of the
+  component it joins on. Every traversal is still refused, including a
+  backslash-separated one on a host whose separator is `/`.
 - **An interrupted download no longer destroys the file it was replacing** (#49).
   `File::create` is create-plus-truncate, so an existing complete file was zeroed
   the moment the request succeeded, and every error path left a partial file
