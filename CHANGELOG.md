@@ -655,6 +655,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   poll rather than letting the probe retry inside the loop that is already
   the retry, and the timeout message reports the seconds that actually
   elapsed instead of a product that understated them.
+- **The index wait is tested against a poll sequence that changes its
+  answer.** Every wait case held one answer for all of its polls, so the poll
+  loop never had to overwrite what an earlier poll left behind - and the "not
+  yet visible" arm writes exactly what the initialisers above the loop already
+  hold. Proved by mutation: deleting that arm whole left the suite green at 27
+  passed, 0 failed. A forty-poll, ten-minute production wait is not uniform.
+  One transient 500 followed by clean 404s ended with "the index could not be
+  reached. The publish itself may well have succeeded" when the truth was that
+  the version never appeared - the opposite instruction to the operator of a
+  real release. Two cases now drive mixed sequences, one in each direction,
+  and each asserts that the final message describes the last poll rather than
+  a stale earlier one.
 - **`clippy::missing_errors_doc` and `clippy::missing_panics_doc` are denied
   workspace-wide** (#59), and the 24 public `Result`-returning functions that
   had no `# Errors` section now have one naming the variants that call path can
