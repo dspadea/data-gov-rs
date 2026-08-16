@@ -51,9 +51,15 @@ check-home-paths:
     python3 scripts/check-home-paths.py --self-test
     python3 scripts/check-home-paths.py
 
-# Fail if the CLI prints with `println!`/`eprintln!`, which panic when the
-# reader closes the pipe (#115). `outln!`/`errln!` handle that; see
-# data-gov/tools/cli/ui/output.rs.
+# Fail if the CLI or a library crate prints with `println!`/`eprintln!`.
+#
+# Two defects, two remedies. In the CLI those macros panic when the reader
+# closes the pipe (#115); use `outln!`/`errln!`, see
+# data-gov/tools/cli/ui/output.rs. In data-gov, data-gov-catalog and
+# data-gov-ckan the line lands on a terminal the library does not own and an
+# embedder cannot route it; use `tracing`. The script prints the remedy for
+# the scope it fired on. data-gov-mcp-server is deliberately not scanned; the
+# script's own docstring says why.
 check-print-macros:
     python3 scripts/check-print-macros.py --self-test
     python3 scripts/check-print-macros.py

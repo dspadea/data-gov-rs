@@ -199,11 +199,12 @@ impl DataGovConfig {
     /// folder in [`OperatingMode::Interactive`], the process working directory
     /// in [`OperatingMode::CommandLine`].
     ///
-    /// When the working directory cannot be read, this falls back to `"."` and
-    /// reports the reason as a `tracing` warning. It never fails silently
-    /// (#53). A download that names no directory of its own comes through
-    /// here, so the same warning can repeat: it goes somewhere an embedder
-    /// can filter, rather than onto a stderr the library does not own.
+    /// When the working directory cannot be read, this falls back to `"."`.
+    /// The fallback is always reported, through `tracing`, at `warn` (#53) --
+    /// and through `tracing` only, so install a subscriber to receive it. A
+    /// download that names no directory of its own comes through here, so the
+    /// same warning can repeat: it goes somewhere an embedder can route,
+    /// filter or silence, rather than onto a stderr the library does not own.
     pub fn get_base_download_dir(&self) -> PathBuf {
         if let Some(dir) = &self.base_download_dir {
             return dir.clone();
