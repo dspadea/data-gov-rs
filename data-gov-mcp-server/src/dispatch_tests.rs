@@ -1103,3 +1103,139 @@ async fn a_download_where_some_files_arrived_reports_is_error_false() {
         "the partial failure must still be visible in the payload: {summary}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// A format filter that names no format
+// ---------------------------------------------------------------------------
+
+/// A dataset with one distribution the mock server actually serves.
+///
+/// The `formats` tests need a download that can succeed, so the failure they
+/// report can only come from the filter.
+fn one_csv_dataset(slug: &str, mock_uri: &str) -> Value {
+    json!({
+        "results": [{
+            "slug": slug,
+            "title": "One CSV",
+            "dcat": {
+                "@type": "dcat:Dataset",
+                "title": "One CSV",
+                "distribution": [{
+                    "@type": "dcat:Distribution",
+                    "title": "readings",
+                    "downloadURL": format!("{mock_uri}/readings.csv"),
+                    "mediaType": "text/csv"
+                }]
+            }
+        }],
+        "sort": "relevance"
+    })
+}
+
+/// Dispatch `data_gov_download_resources` for `one_csv_dataset` with the given
+/// `formats` argument, and return the tool result.
+async fn download_with_formats(scratch: &str, formats: Value) -> Value {
+    let mock = MockServer::start().await;
+    let slug = "one-csv";
+    Mock::given(wm_method("GET"))
+        .and(wm_path(format!("/api/dataset/{slug}")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(one_csv_dataset(slug, &mock.uri())))
+        .mount(&mock)
+        .await;
+    Mock::given(wm_method("GET"))
+        .and(wm_path("/readings.csv"))
+        .respond_with(ResponseTemplate::new(200).set_body_string("a,b\n1,2\n"))
+        .mount(&mock)
+        .await;
+
+    let server = test_server(&mock.uri());
+    let output_dir = scratch_dir(scratch);
+
+    let value = server
+        .dispatch(
+            "tools/call",
+            Some(json!({
+                "name": "data_gov_download_resources",
+                "arguments": {
+                    "datasetId": slug,
+                    "formats": formats,
+                    "outputDir": output_dir.to_string_lossy(),
+                    "datasetSubdirectory": false
+                }
+            })),
+        )
+        .await
+        .expect("a download is a tool result, not a JSON-RPC error");
+
+    let _ = std::fs::remove_dir_all(&output_dir);
+    value
+}
+
+/// An empty `formats` array names no format to keep out, so it keeps
+/// everything - the same as omitting the argument.
+///
+/// Filtering on it instead removed every distribution and reported "no
+/// matching downloadable distributions" with an empty `unavailableFormats`,
+/// naming no format the model could correct.
+#[tokio::test]
+async fn an_empty_formats_array_downloads_every_distribution() {
+    let value = download_with_formats("empty-formats", json!([])).await;
+
+    assert!(
+        !tool_error_flag(&value),
+        "an empty filter names no format to exclude: {value}"
+    );
+    let summary = &value["structuredContent"];
+    assert_eq!(summary["successfulCount"], json!(1), "{summary}");
+    assert_eq!(summary["failedCount"], json!(0), "{summary}");
+}
+
+/// Blank entries are dropped because each would match every distribution, so
+/// an array of nothing but blanks is a filter that matches everything.
+#[tokio::test]
+async fn a_formats_array_of_only_blanks_downloads_every_distribution() {
+    let value = download_with_formats("blank-formats", json!(["", "  ", "\t"])).await;
+
+    assert!(
+        !tool_error_flag(&value),
+        "every entry matches everything, so the filter excludes nothing: {value}"
+    );
+    let summary = &value["structuredContent"];
+    assert_eq!(summary["successfulCount"], json!(1), "{summary}");
+    assert_eq!(summary["failedCount"], json!(0), "{summary}");
+}
+
+/// The other half: a filter that does name a format still filters. Without
+/// this, "keep everything when the list is empty" could be written as "keep
+/// everything", and both tests above would still pass.
+#[tokio::test]
+async fn a_format_filter_that_names_a_format_still_excludes_the_rest() {
+    let mock = MockServer::start().await;
+    Mock::given(wm_method("GET"))
+        .and(wm_path("/api/dataset/csv-only"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(csv_only_dataset("csv-only")))
+        .mount(&mock)
+        .await;
+
+    let server = test_server(&mock.uri());
+
+    let value = server
+        .dispatch(
+            "tools/call",
+            Some(json!({
+                "name": "data_gov_download_resources",
+                "arguments": {"datasetId": "csv-only", "formats": ["", "XLSX"]}
+            })),
+        )
+        .await
+        .expect("nothing matched, which is an outcome rather than a fault");
+
+    assert!(
+        tool_error_flag(&value),
+        "XLSX matches no distribution, so nothing is left to download: {value}"
+    );
+    assert!(
+        tool_text(&value).contains("XLSX"),
+        "the model needs to be told which format was unavailable: {value}"
+    );
+}
