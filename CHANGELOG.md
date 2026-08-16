@@ -701,6 +701,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `missing_docs` lint once the outstanding gaps are documented (#59).
 - **Added an OSV/GHSA lockfile scan** alongside `cargo audit` (#46). The seven
   `openssl` advisories were GHSA-only and invisible to `cargo audit`.
+- **`Configuration::try_with_timeouts` now has a test that fails when it
+  ignores its arguments**, on both `data-gov-catalog` and `data-gov-ckan`. The
+  only test touching the new constructor built one with a 1s connect and 2s
+  overall timeout and then asserted `base_path` - a field with no relation to
+  timeouts - so replacing both function bodies with the crate defaults kept the
+  whole suite green. A consumer asking for a 100ms bound would have waited the
+  30s default against a host that accepts the connection and never answers, and
+  nothing would have reported it. Each crate now drives a real request through a
+  wiremock server that delays far past the configured timeout and asserts the
+  call returns inside it, matching the tests that already covered the infallible
+  `with_timeouts`. Only the overall timeout is exercised; the connect timeout
+  needs a peer that never answers the TCP handshake, which an in-process mock
+  server cannot offer. The old test is renamed to what it checks - that both
+  fallible constructors leave the non-timeout fields at their defaults.
 
 ## [0.4.0] - 2026-04-25
 

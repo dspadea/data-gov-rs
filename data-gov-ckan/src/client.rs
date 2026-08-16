@@ -1282,10 +1282,19 @@ mod tests {
         );
     }
 
-    /// On a host that can build a client at all, the fallible constructors
-    /// return the same configuration as the panicking ones.
+    /// On a host that can build a client at all, both fallible constructors
+    /// leave every non-timeout field at the value the panicking constructors
+    /// use.
+    ///
+    /// The timeouts themselves are out of reach here: a built
+    /// [`reqwest::Client`] does not expose the values it was configured with,
+    /// so nothing in this test can distinguish a client that honours its
+    /// argument from one that ignored it. That property is behavioural and is
+    /// proved against a delaying server by
+    /// `try_with_timeouts_bounds_a_call_to_the_given_duration` in
+    /// `tests/unit_tests.rs`.
     #[test]
-    fn try_new_and_try_with_timeouts_return_the_documented_defaults() {
+    fn try_new_and_try_with_timeouts_leave_the_non_timeout_fields_at_their_defaults() {
         let config = Configuration::try_new().expect("a client builds on this host");
         assert_eq!(config.base_path, Configuration::new().base_path);
         assert_eq!(config.user_agent, Configuration::new().user_agent);
@@ -1295,5 +1304,7 @@ mod tests {
             Configuration::try_with_timeouts(Duration::from_secs(1), Duration::from_secs(2))
                 .expect("a client builds on this host");
         assert_eq!(timed.base_path, config.base_path);
+        assert_eq!(timed.user_agent, config.user_agent);
+        assert!(timed.api_key.is_none(), "no credential is configured");
     }
 }
