@@ -266,6 +266,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   they cloned; three commits had already landed on `data-gov-catalog/src` while
   `data-gov` was pinned to a published version. Each edge now declares both
   `version` and `path`, and the patch table is gone.
+- **`DataGovConfig::with_max_concurrent_downloads(0)` no longer becomes 1**
+  (#73, #107). The setter clamped a zero to one and said nothing, so a caller
+  who asked for 0 got a working client built from a number they never chose -
+  while the sibling `with_download_timeout(0)` passed its zero straight through
+  to a named `ConfigError`, and `ConfigResolver` rejected a zero from the flag,
+  environment, or config file. One value had three paths and only the
+  documented happy path was silent. The value now reaches
+  `DataGovClient::with_config`, which refuses it with a `ConfigError` naming
+  `max_concurrent_downloads`.
+
+  **What changes for you:** if you passed `0` and relied on the clamp, pass `1`
+  instead - `with_config` now returns `Err` for `0`. Any other value behaves
+  exactly as before.
 - All dependencies refreshed to their latest semver-compatible releases.
   `rustyline` 17 → 18 is deliberately **not** included; it is a major bump
   under the whole REPL and is tracked separately.
@@ -347,6 +360,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   client with specific timeouts.
 
 ### Fixed
+- **A cancelled download no longer leaves its temporary file behind** (#125).
+  A transfer writes to a hidden `.data-gov-<pid>-<serial>.part` beside the
+  destination and renames it into place at the end. Every error path removed
+  that file before returning, but a cancelled download returns from none of
+  them: the future is dropped where it stands and no code in the function body
+  runs. The MCP server does exactly that on two deliberate paths - the
+  per-request timeout, and `notifications/cancelled` - and nothing anywhere
+  swept the leftovers, so a user who cancelled a few large downloads
+  accumulated hidden files in the download directory forever. The temporary
+  file is now owned by a guard whose `Drop` removes it, disarmed once the
+  rename onto the destination has succeeded. `std::process::exit` still skips
+  `Drop`, so a process that exits without unwinding can leave one.
 - **A failure to build the HTTP client now names its cause instead of
   reqwest's `Client::new()`.** Both client crates fell back to
   `reqwest::Client::new()` / `Client::default()` when `ClientBuilder::build()`
@@ -378,11 +403,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   on a write error. That is one of the most ordinary ways a Unix CLI is used,
   and every command with enough output was affected, not just this one. The
   CLI now writes user-facing lines through `outln!` and `errln!`, which
-  recognise `BrokenPipe`: stdout stops the process quietly with exit 0,
-  because a reader that has seen enough is not an error; stderr drops the
-  line and lets the command finish, so a lost stderr cannot overwrite a
-  failing exit code with success. Any other write error stays as loud as it
-  was. The usual `SIGPIPE` fix needs `unsafe`, which this project forbids.
+  recognise `BrokenPipe`: the closed pipe is recorded, every later line to
+  that stream is dropped, and the command runs to its natural end and exits
+  with the code it would have returned anyway. A reader that has seen enough
+  is not an error, so a command that succeeded still exits 0 - but a command
+  that failed still exits non-zero, and destructors still run, neither of
+  which survives a `process::exit` taken at the first broken write. The cost
+  is that `data-gov list organizations | head -5` now finishes fetching
+  rather than stopping at the fifth line. Any other write error stays as loud
+  as it was. The usual `SIGPIPE` fix needs `unsafe`, which this project
+  forbids.
   `just check-print-macros` now fails the build if a bare `println!` returns
   to the CLI.
 - **`DataGovError::sanitized_message` no longer leaks the paths it promises to
@@ -409,6 +439,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`unavailableFormats` names the right format** (#70). A `.filter()` dropped
   blank entries, so the vector no longer index-aligned with the one it was
   zipped against and the report paired the wrong strings.
+- **A `formats` filter that names no format downloads everything again.**
+  `"formats": []`, `["  "]`, or any array whose entries are all blank left an
+  empty filter list, and retaining on an empty list cleared every
+  distribution. The tool then answered `isError: true` with "no matching
+  downloadable distributions" and an empty `unavailableFormats`, naming no
+  format the model could correct - a dead end for an agent, which is the only
+  caller this server has. A filter that matches everything now means the same
+  as no filter at all.
+- **`outputDir` accepts a directory whose name contains dots.** The guard was
+  a substring test for `..`, so `/data/v1..v2/exports` and
+  `/srv/archive..2024` were refused with "output_dir must not contain '..'
+  path components", which was not true of either path. It now reads path
+  components, the same reading `data_gov::util::join_inside` takes of the
+  component it joins on. Every traversal is still refused, including a
+  backslash-separated one on a host whose separator is `/`.
 - **An interrupted download no longer destroys the file it was replacing** (#49).
   `File::create` is create-plus-truncate, so an existing complete file was zeroed
   the moment the request succeeded, and every error path left a partial file
@@ -495,6 +540,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `data_gov::catalog` re-export. The lockfile drops from 308 to 279 crates.
 
 ### Infrastructure
+- **A crates.io index it cannot reach no longer reads as "not published"**.
+  The release workflow probed the sparse index with
+  `curl -fsS ... | grep -q`, which exits non-zero identically for a genuine
+  404, a 500, a DNS failure and a reset connection. `publish-crate.sh` read
+  that single non-zero as "not on crates.io; publish it", so one transient
+  blip would run `cargo publish` against a version that was already live and
+  hard-fail on "crate version already exists" - the exact failure the skip
+  exists to prevent - blocking every crate behind it in the dependency chain.
+  That path is the documented recovery for a half-finished release, and a
+  publish cannot be undone, only yanked. The probe now reads curl's HTTP
+  status rather than inferring from its exit code, retries a bounded number
+  of times, and answers three ways: published, absent, or unknown. Unknown
+  stops the job with an error naming the situation instead of publishing on a
+  guess. The version is matched with `grep -F`, so the dots in `0.5.0` are
+  no longer wildcards that also match `0X5X0`.
+- **The release helpers are tracked scripts under `scripts/release/`, and
+  tested.** They were heredocs written to `/tmp` inside the workflow, which
+  cannot be unit-tested and so had never been run against a failing index.
+  `just check-release-helpers` now drives them against a stub index that
+  serves a 404, a 500, a rate-limit and a refused connection on demand - none
+  of which the live service can be asked for - and asserts that `cargo` is
+  never invoked when the index state is unknown. The workflow's behaviour,
+  publish order and dependency waits are unchanged.
+- **The index wait now has a ceiling it actually keeps**. `wait-for-crate.sh`
+  reported a bound of `attempts * delay`, but its `curl` had no timeout at
+  all, so a connection that hung stalled the release job with no limit. Each
+  probe is now capped by `--max-time`, the poll loop spends one probe per
+  poll rather than letting the probe retry inside the loop that is already
+  the retry, and the timeout message reports the seconds that actually
+  elapsed instead of a product that understated them.
 - **`clippy::missing_errors_doc` and `clippy::missing_panics_doc` are denied
   workspace-wide** (#59), and the 24 public `Result`-returning functions that
   had no `# Errors` section now have one naming the variants that call path can
