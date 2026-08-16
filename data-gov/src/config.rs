@@ -84,7 +84,12 @@ pub struct DataGovConfig {
     /// [`get_base_download_dir`](Self::get_base_download_dir) discarded it
     /// whenever the mode was `CommandLine`.
     pub base_download_dir: Option<PathBuf>,
-    /// Maximum concurrent downloads
+    /// Maximum concurrent downloads.
+    ///
+    /// Must be at least 1.
+    /// [`DataGovClient::with_config`](crate::DataGovClient::with_config)
+    /// refuses a zero, which would build a semaphore with no permits and
+    /// stall every download with no error (#73).
     pub max_concurrent_downloads: usize,
     /// How long a download may stall, in seconds.
     ///
@@ -243,9 +248,18 @@ impl DataGovConfig {
             .unwrap_or(DEFAULT_USER_AGENT)
     }
 
-    /// Set the maximum concurrent downloads.
+    /// Set how many downloads may run at once.
+    ///
+    /// The value is stored as given, `0` included.
+    /// [`DataGovClient::with_config`](crate::DataGovClient::with_config)
+    /// refuses `0`, naming the setting, because a zero-permit semaphore
+    /// never closes and would stall every download with no error (#73).
+    /// Failing there beats clamping here: a clamp builds a working client
+    /// from a number the caller never chose and says nothing about it. The
+    /// sibling [`with_download_timeout`](Self::with_download_timeout)
+    /// passes its own zero through to the same named error.
     pub fn with_max_concurrent_downloads(mut self, max: usize) -> Self {
-        self.max_concurrent_downloads = max.max(1);
+        self.max_concurrent_downloads = max;
         self
     }
 
@@ -344,6 +358,22 @@ mod tests {
 
     struct NullReporter;
     impl StatusReporter for NullReporter {}
+
+    /// The builder is a convenience, never the enforcement. A clamp here
+    /// would quietly substitute 1 for the 0 the caller asked for, hiding a
+    /// value that [`crate::DataGovClient::with_config`] rejects by name -
+    /// and the sibling setter `with_download_timeout` already passes its
+    /// own zero straight through to that same named error.
+    #[test]
+    fn with_max_concurrent_downloads_keeps_the_zero_the_caller_asked_for() {
+        let config = DataGovConfig::new().with_max_concurrent_downloads(0);
+
+        assert_eq!(
+            config.max_concurrent_downloads, 0,
+            "the builder must not override the caller: 0 has to survive to \
+             with_config, which refuses it by name"
+        );
+    }
 
     /// #77: `without_status_reporter` had zero callers, zero tests. It is
     /// the natural complement of `with_status_reporter`, which the CLI does

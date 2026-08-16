@@ -266,6 +266,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   they cloned; three commits had already landed on `data-gov-catalog/src` while
   `data-gov` was pinned to a published version. Each edge now declares both
   `version` and `path`, and the patch table is gone.
+- **`DataGovConfig::with_max_concurrent_downloads(0)` no longer becomes 1**
+  (#73, #107). The setter clamped a zero to one and said nothing, so a caller
+  who asked for 0 got a working client built from a number they never chose -
+  while the sibling `with_download_timeout(0)` passed its zero straight through
+  to a named `ConfigError`, and `ConfigResolver` rejected a zero from the flag,
+  environment, or config file. One value had three paths and only the
+  documented happy path was silent. The value now reaches
+  `DataGovClient::with_config`, which refuses it with a `ConfigError` naming
+  `max_concurrent_downloads`.
+
+  **What changes for you:** if you passed `0` and relied on the clamp, pass `1`
+  instead - `with_config` now returns `Err` for `0`. Any other value behaves
+  exactly as before.
 - All dependencies refreshed to their latest semver-compatible releases.
   `rustyline` 17 → 18 is deliberately **not** included; it is a major bump
   under the whole REPL and is tracked separately.
@@ -358,11 +371,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   on a write error. That is one of the most ordinary ways a Unix CLI is used,
   and every command with enough output was affected, not just this one. The
   CLI now writes user-facing lines through `outln!` and `errln!`, which
-  recognise `BrokenPipe`: stdout stops the process quietly with exit 0,
-  because a reader that has seen enough is not an error; stderr drops the
-  line and lets the command finish, so a lost stderr cannot overwrite a
-  failing exit code with success. Any other write error stays as loud as it
-  was. The usual `SIGPIPE` fix needs `unsafe`, which this project forbids.
+  recognise `BrokenPipe`: the closed pipe is recorded, every later line to
+  that stream is dropped, and the command runs to its natural end and exits
+  with the code it would have returned anyway. A reader that has seen enough
+  is not an error, so a command that succeeded still exits 0 - but a command
+  that failed still exits non-zero, and destructors still run, neither of
+  which survives a `process::exit` taken at the first broken write. The cost
+  is that `data-gov list organizations | head -5` now finishes fetching
+  rather than stopping at the fifth line. Any other write error stays as loud
+  as it was. The usual `SIGPIPE` fix needs `unsafe`, which this project
+  forbids.
   `just check-print-macros` now fails the build if a bare `println!` returns
   to the CLI.
 - **`DataGovError::sanitized_message` no longer leaks the paths it promises to

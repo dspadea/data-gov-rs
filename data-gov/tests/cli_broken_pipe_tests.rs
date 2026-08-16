@@ -15,9 +15,11 @@
 //!
 //! The project forbids `unsafe` (CLAUDE.md), which rules out the usual
 //! `signal(SIGPIPE, SIG_DFL)` fix, so the contract under test is the safe
-//! one: recognise the closed pipe at the print boundary and exit quietly.
+//! one: recognise the closed pipe at the print boundary, drop the line and
+//! every later one, and let the command finish and exit with its own code.
+//! A command that succeeded still exits 0; one that failed still does not.
 
-use std::io::Read;
+use std::io::{Read, Write};
 use std::process::{Command, Stdio};
 
 /// Path to the `data-gov` binary under test, built by cargo.
@@ -120,5 +122,41 @@ fn a_closed_stdout_pipe_does_not_silence_a_real_error() {
         run.status.code(),
         Some(0),
         "an unknown command must still exit non-zero when stdout is closed"
+    );
+}
+
+/// A closed stdout must not overwrite a failing exit code with success.
+///
+/// The script writes to stdout on its first line and fails on its second,
+/// which is the shape that mattered: any command that prints before it
+/// fails - the download path reporting "N of M download(s) failed" is the
+/// live example - reached stdout first, and an exit taken there discarded
+/// the failure the caller was waiting for. The exit code is the only
+/// signal left once the pipe is closed, so it has to be the command's own.
+#[test]
+fn a_failing_command_still_exits_non_zero_when_stdout_is_closed() {
+    let mut script = tempfile::NamedTempFile::new().expect("temp script file");
+    // `info` prints to stdout with no network; the closed pipe is hit here.
+    writeln!(script, "info").expect("write script");
+    // A known command with an unknown subject: fails locally, no network.
+    writeln!(script, "list bogus-subject").expect("write script");
+    script.flush().expect("flush script");
+    let path = script.path().display().to_string();
+
+    let run = run_with_closed_stdout(&["--color", "never", &path]);
+
+    assert_ne!(
+        run.status.code(),
+        Some(0),
+        "a command that failed must report that failure in its exit code even \
+         though nobody was reading stdout. Got exit {:?}, stderr: {}",
+        run.status.code(),
+        run.stderr
+    );
+    assert!(
+        run.stderr.contains("Error:"),
+        "the command must run to its natural end and report the failure on \
+         stderr, got stderr: {}",
+        run.stderr
     );
 }

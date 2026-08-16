@@ -1263,6 +1263,27 @@ mod tests {
         }
     }
 
+    /// The builder path and the struct-literal path must end in the same
+    /// place. A clamp inside `with_max_concurrent_downloads` would hand a
+    /// caller who asked for 0 a working client built from a number they
+    /// never chose, with no error anywhere saying so.
+    #[test]
+    fn a_zero_from_the_builder_reaches_the_named_error_rather_than_being_clamped() {
+        let config = crate::config::DataGovConfig::new().with_max_concurrent_downloads(0);
+
+        let err = DataGovClient::with_config(config)
+            .expect_err("a zero from the builder must be refused, not silently become 1");
+        match err {
+            DataGovError::ConfigError { message } => {
+                assert!(
+                    message.contains("max_concurrent_downloads"),
+                    "the error must name the field, got: {message}"
+                );
+            }
+            other => panic!("expected ConfigError, got {other:?}"),
+        }
+    }
+
     #[test]
     fn with_config_accepts_the_smallest_valid_values() {
         let config = crate::config::DataGovConfig {
